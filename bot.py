@@ -1,9 +1,7 @@
 import os
 import discord
 from google import genai
-from google.genai import types
 
-# Grab credentials securely from cloud environment variables
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 
@@ -33,15 +31,14 @@ async def on_message(message):
 
     async with message.channel.typing():
       try:
-        # Gemini calls live Google Search grounding to verify facts dynamically
-response = client.models.generate_content(
-            model="gemini-3.5-flash",
+        # Standard fast generation using gemini-3.8-flash without search overhead
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
             contents=(
                 "You are Oatmeal AI, representing Oatmeal Joey Arnold"
-                " (@JOEYARNOLDVN). Use Google Search grounding to verify"
-                f" facts when asked: {prompt}"
+                " (@JOEYARNOLDVN). Answer the user's question accurately:"
+                f" {prompt}"
             ),
-            config=types.GenerateContentConfig(tools=[{"google_search": {}}]),
         )
         reply_text = response.text
       except Exception as e:
