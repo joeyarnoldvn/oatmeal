@@ -35,7 +35,7 @@ async def on_message(message):
       try:
         # Gemini calls live Google Search grounding to verify facts dynamically
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3.8-flash",
             contents=(
                 "You are Oatmeal AI, representing Oatmeal Joey Arnold"
                 " (@JOEYARNOLDVN). Use Google Search grounding to verify"
