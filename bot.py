@@ -165,10 +165,15 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
+  # Print EVERY single packet received from Discord immediately
+  print(
+      f"DEBUG EVENT: author={message.author}, content='{message.content}',"
+      f" mention_bot={bot.user.mentioned_in(message)}"
+  )
+
   if message.author == bot.user:
     return
-  print(f"Incoming Discord message detected from {message.author}: {message.content}")
-  await message_queue.put(message)
 
+  await message_queue.put(message)
 
 bot.run(DISCORD_TOKEN)
