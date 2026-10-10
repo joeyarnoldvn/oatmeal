@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import os
+import random
 import threading
 import time
 from flask import Flask
@@ -30,11 +31,31 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
-# Configuration for Keywords and Safeguards
-KEYWORDS = ["oatmeal joey", "joeyarnoldvn", "oatmeal english"]
-cooldowns = {}  # Tracks last trigger timestamps
+# Safeguards & Tracking
+cooldowns = {}  # Tracks last trigger timestamps per channel
 daily_request_count = 0
 last_reset_date = datetime.now().date()
+
+# Unique random fallback messages when the API hits high demand (503 / errors)
+ERROR_FALLBACKS = [
+    (
+        "My brain is currently marinating in oatmeal, try back in a bit."
+    ),
+    (
+        "The Arnold Attic circuits are taking a quick nap, check back in an"
+        " hour."
+    ),
+    (
+        "Too much data flowing through the network right now, give me a brief"
+        " breather."
+    ),
+    (
+        "Spike in the mainframe! I'm resting my digital eyes for a moment."
+    ),
+    (
+        "Even Oatmeal Joey needs a coffee break. Catch you in a little bit!"
+    ),
+]
 
 
 def load_knowledge():
@@ -56,6 +77,7 @@ async def on_ready():
 async def on_message(message):
   global daily_request_count, last_reset_date
 
+  # Ignore messages sent by the bot itself
   if message.author == bot.user:
     return
 
@@ -65,51 +87,52 @@ async def on_message(message):
     daily_request_count = 0
     last_reset_date = current_date
 
-  # Check triggers: Direct mention, command prefix, or distinct keywords
-  content_lower = message.content.lower()
-  has_keyword = any(kw in content_lower for kw in KEYWORDS)
-  is_mentioned = bot.user.mentioned_in(message) or message.content.startswith(
-      "!oatmeal"
-  )
+  # Enforce 1,000 Daily Requests Limit safely below the free tier ceiling
+  if daily_request_count >= 1000:
+    return
 
-  if is_mentioned or has_keyword:
-    # Enforce 1,000 Daily Requests Limit
-    if daily_request_count >= 1000:
-      return  # Silently skip if daily cap is reached
+  # Enforce 10-Second Cooldown per channel to keep things organic and avoid spam loops
+  channel_id = message.channel.id
+  now = time.time()
+  if channel_id in cooldowns and (now - cooldowns[channel_id] < 10):
+    return
 
-    # Enforce 10-Second Cooldown per channel
-    channel_id = message.channel.id
-    now = time.time()
-    if channel_id in cooldowns and (now - cooldowns[channel_id] < 10):
-      return  # Skip if triggered less than 10 seconds ago
+  # Random chance modifier (e.g., 60% chance to react to any general message to keep it dynamic and varied)
+  # You can remove this random check if you want it to trigger on 100% of messages.
+  if random.random() > 0.60 and not bot.user.mentioned_in(message):
+    return
 
-    cooldowns[channel_id] = now
-    daily_request_count += 1
+  cooldowns[channel_id] = now
+  daily_request_count += 1
 
-    # Strip out the mention tag if present to clean up the prompt
-    prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
-    if not prompt:
-      prompt = (
-          "Introduce yourself as Oatmeal AI, representing Oatmeal Joey Arnold."
+  # Clean up the prompt text
+  prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+  if not prompt:
+    prompt = "Say something in your signature style."
+
+  knowledge_context = load_knowledge()
+
+  async with message.channel.typing():
+    try:
+      response = client.models.generate_content(
+          model="gemini-3.8-flash",
+          contents=(
+              "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
+              " (@JOEYARNOLDVN). Respond to the incoming message with high"
+              " variety—mix short sentences, long thoughts, creative"
+              " associations, retro pop-culture nods (Star Trek, 90s, Vietnam"
+              " teaching days), or philosophical twists. Relate the subject"
+              " back to your worldview and background using the following"
+              f" facts:\n\n{knowledge_context}\n\nIncoming"
+              f" Message: {prompt}"
+          ),
       )
+      reply_text = response.text
+    except Exception as e:
+      # If any 503 or quota error happens, pick a random unique friendly message instead of a raw traceback
+      reply_text = random.choice(ERROR_FALLBACKS)
 
-    knowledge_context = load_knowledge()
-
-    async with message.channel.typing():
-      try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=(
-                "You are Oatmeal AI, representing Oatmeal Joey Arnold"
-                " (@JOEYARNOLDVN). Use the following background knowledge facts"
-                f" to answer accurately and avoid hallucinating:\n\n{knowledge_context}\n\nUser Message: {prompt}"
-            ),
-        )
-        reply_text = response.text
-      except Exception as e:
-        reply_text = f"Cloud AI error: {str(e)}"
-
-    await message.reply(reply_text)
+  await message.reply(reply_text)
 
 
 bot.run(DISCORD_TOKEN)
