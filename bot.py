@@ -60,9 +60,8 @@ ai_client = OpenAI(
     api_key=GROQ_API_KEY
 )
 
-# List of candidate models to attempt sequentially
-PRIMARY_MODEL = "llama-3.3-70b-versatile"
-FALLBACK_MODEL = "llama-3.1-8b-instant"
+# Updated to Groq's active open-weights model ID
+MODEL_NAME = "openai/gpt-oss-20b"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -110,30 +109,21 @@ async def on_message(message):
     if not clean_prompt:
         clean_prompt = "Hello!"
 
-    # --- 5. GROQ API GENERATION (With Fallback Model Handling) ---
-    def generate_completion(model_name):
-        return ai_client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": f"You are Oatmeal AI. Use the following background knowledge base to help inform your answers if relevant:\n{KNOWLEDGE_TEXT}"},
-                {"role": "user", "content": clean_prompt}
-            ],
-            temperature=0.7,
-        )
-
+    # --- 5. GROQ API GENERATION (Non-Blocking Executor) ---
     try:
         async with message.channel.typing():
-            try:
-                # First attempt with Primary Model
-                response = await bot.loop.run_in_executor(None, lambda: generate_completion(PRIMARY_MODEL))
-            except Exception as primary_err:
-                if "404" in str(primary_err) or "NotFoundError" in str(primary_err):
-                    print(f"Primary model {PRIMARY_MODEL} returned 404. Attempting fallback: {FALLBACK_MODEL}")
-                    # Fallback attempt
-                    response = await bot.loop.run_in_executor(None, lambda: generate_completion(FALLBACK_MODEL))
-                else:
-                    raise primary_err
-
+            response = await bot.loop.run_in_executor(
+                None,
+                lambda: ai_client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": f"You are Oatmeal AI. Use the following background knowledge base to help inform your answers if relevant:\n{KNOWLEDGE_TEXT}"},
+                        {"role": "user", "content": clean_prompt}
+                    ],
+                    temperature=0.7,
+                )
+            )
+            
             reply_text = response.choices[0].message.content
 
         if len(reply_text) > 2000:
