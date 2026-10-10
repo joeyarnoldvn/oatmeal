@@ -102,22 +102,19 @@ async def process_queue():
       reply_text = None
       async with message.channel.typing():
         try:
-          response = await asyncio.wait_for(
-              asyncio.to_thread(
-                  client.models.generate_content,
-                  model="gemini-3.8-flash",
-                  contents=(
-                      "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
-                      " (@JOEYARNOLDVN). Respond to the incoming message with high"
-                      " variety—mix short sentences, long thoughts, creative"
-                      " associations, retro pop-culture nods (Star Trek, 90s,"
-                      " Vietnam teaching days), or philosophical twists. Relate"
-                      " the subject back to your worldview and background using"
-                      f" the following facts:\n\n{knowledge_context}\n\nIncoming"
-                      f" Message: {prompt}"
-                  ),
+          # Use native asynchronous client call to prevent hanging or thread pool timeouts
+          response = await client.aio.models.generate_content(
+              model="gemini-3.8-flash",
+              contents=(
+                  "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
+                  " (@JOEYARNOLDVN). Respond to the incoming message with high"
+                  " variety—mix short sentences, long thoughts, creative"
+                  " associations, retro pop-culture nods (Star Trek, 90s,"
+                  " Vietnam teaching days), or philosophical twists. Relate"
+                  " the subject back to your worldview and background using"
+                  f" the following facts:\n\n{knowledge_context}\n\nIncoming"
+                  f" Message: {prompt}"
               ),
-              timeout=15.0,
           )
           if response and response.text:
             reply_text = response.text
@@ -130,7 +127,7 @@ async def process_queue():
           traceback.print_exc()
           global_error_lockout_until = time.time() + 60
 
-      # Only reply if Gemini successfully generated text; stay completely silent on error
+      # Stay completely silent if there's an error or no text
       if reply_text:
         try:
           await message.reply(reply_text)
