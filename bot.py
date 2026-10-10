@@ -168,7 +168,7 @@ async def idle_search_loop():
     await asyncio.sleep(60)  # Check every 1 minute
     try:
       # 600 seconds = 10 minutes
-      if time.time() - last_bot_activity_time > 600:
+      if time.time() - last_bot_activity_time > 1
         print(
             "Bot idle for over 10 minutes. Searching history for a message to"
             " revive..."
