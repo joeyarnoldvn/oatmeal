@@ -159,18 +159,18 @@ async def worker(worker_id):
 
 
 async def idle_search_loop():
-  """If the bot hasn't spoken in 10 minutes (600 seconds), search history backwards to revive chat."""
+  """If the bot hasn't spoken in the threshold time, search history backwards to revive chat."""
   global last_bot_activity_time
   await bot.wait_until_ready()
-  await asyncio.sleep(30)  # Initial warm-up delay on bot startup
+  await asyncio.sleep(10)  # Quick 10-second warm-up on startup
 
   while True:
-    await asyncio.sleep(60)  # Check every 1 minute
+    await asyncio.sleep(5)  # Check every 5 seconds for rapid testing
     try:
-      # 600 seconds = 10 minutes
-      if time.time() - last_bot_activity_time > 1:
+      # Set to > 10 for a quick 10-second test (change back to > 600 later for 10 minutes)
+      if time.time() - last_bot_activity_time > 10:
         print(
-            "Bot idle for over 10 minutes. Searching history for a message to"
+            "Bot idle threshold reached. Searching history for a message to"
             " revive..."
         )
 
