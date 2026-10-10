@@ -123,8 +123,11 @@ async def on_message(message):
             reply_text = candidate.content.parts[0].text
             await message.reply(reply_text)
 
-    except Exception as e:
-      print(f"Error generating response: {e}")
+except Exception as e:
+      import traceback
+
+      print(f"CRITICAL ERROR processing message: {e}")
+      traceback.print_exc()
 
 
 if __name__ == "__main__":
