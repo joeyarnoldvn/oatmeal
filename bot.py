@@ -94,7 +94,6 @@ async def process_queue():
         if elapsed < 15:
           await asyncio.sleep(15 - elapsed)
 
-      # Use the exact message content as the prompt for universal triggers
       prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
       if not prompt:
         prompt = "Say something in your signature style."
@@ -120,13 +119,20 @@ async def process_queue():
           )
           reply_text = response.text
           if not reply_text:
-            raise ValueError("Empty response text")
+            raise ValueError("Empty response text returned from API")
 
           channel_cooldowns[channel_id] = time.time()
           daily_request_count += 1
 
         except Exception as e:
-          print(f"API Error encountered: {str(e)}")
+          # Print the FULL exception traceback and details to Render logs
+          import traceback
+
+          print("--- DETAILED GEMINI API ERROR ---")
+          traceback.print_exc()
+          print(f"Error message: {str(e)}")
+          print("---------------------------------")
+
           global_error_lockout_until = time.time() + 60
           reply_text = random.choice(ERROR_FALLBACKS)
 
@@ -150,11 +156,9 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-  # Ignore messages sent by the bot itself
   if message.author == bot.user:
     return
 
-  # Accept ALL messages (words, phrases, random text) into the queue unconditionally
   await message_queue.put(message)
 
 
