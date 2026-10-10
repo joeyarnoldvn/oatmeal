@@ -59,53 +59,33 @@ MODEL_NAME = "openai/gpt-oss-20b"
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.guilds = True
+intents.messages = True
 bot = discord.Client(intents=intents)
 
+# Track replied message IDs to prevent getting stuck in loops
+replied_message_ids = set()
 user_cooldowns = {}
 COOLDOWN_SECONDS = 10  
 
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in successfully as {bot.user}")
+    # Start the background idle-activity loop to engage with older/other messages
+    bot.loop.create_task(background_engagement_loop())
 
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
+async def generate_and_send(message, prompt_text, is_extended=False):
+    if message.id in replied_message_ids:
         return
+    replied_message_ids.add(message.id)
 
-    is_mentioned = bot.user in message.mentions
-    is_dm = isinstance(message.channel, discord.DMChannel)
+    # Limit set size to prevent memory bloat over time
+    if len(replied_message_ids) > 1000:
+        list(replied_message_ids)[:200]
 
-    # Respond to 90% of random unmentioned messages (10% chance to skip so it feels natural and random)
-    if not is_mentioned and not is_dm:
-        if random.random() > 0.90:
-            return
-
-    # --- 4. RATE LIMITING ---
-    user_id = message.author.id
-    current_time = time.time()
-    
-    if user_id in user_cooldowns:
-        elapsed = current_time - user_cooldowns[user_id]
-        if elapsed < COOLDOWN_SECONDS:
-            if is_mentioned or is_dm:
-                remaining = int(COOLDOWN_SECONDS - elapsed)
-                await message.channel.send(
-                    f"⏳ Please wait {remaining} seconds before my next response.",
-                    delete_after=10
-                )
-            return
-
-    user_cooldowns[user_id] = current_time
-
-    clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
-    if not clean_prompt:
-        clean_prompt = "Hello!"
-
-    # --- 5. DYNAMIC SYSTEM INSTRUCTIONS BASED ON INTERACTION TYPE ---
-    if is_mentioned or is_dm:
+    if is_extended:
         style_instruction = (
-            "The user directly mentioned or messaged you. "
+            "The user directly mentioned or replied to you. "
             "Provide a thorough, extended, and detailed response incorporating facts from your knowledge base."
         )
     else:
@@ -122,21 +102,16 @@ async def on_message(message):
         f"Guidelines: {style_instruction}"
     )
 
-    # --- 6. GROQ API GENERATION (Non-Blocking Executor) ---
     try:
         async with message.channel.typing():
-            response = await bot.loop.run_in_executor(
-                None,
-                lambda: ai_client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": clean_prompt}
-                    ],
-                    temperature=0.8,
-                )
+            response = ai_client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt_text}
+                ],
+                temperature=0.8,
             )
-            
             reply_text = response.choices[0].message.content
 
         if len(reply_text) > 2000:
@@ -147,7 +122,57 @@ async def on_message(message):
 
     except Exception as e:
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
-        if is_mentioned or is_dm:
-            await message.channel.send("❌ An error occurred while communicating with the AI model.")
+
+@bot.event
+async def on_message(message):
+    # Ignore messages from the bot itself or other bots (avoids bot loops and welcome message loops)
+    if message.author.bot:
+        return
+
+    is_mentioned = bot.user in message.mentions
+    is_dm = isinstance(message.channel, discord.DMChannel)
+
+    # Random unmentioned filter (90% response rate for live messages)
+    if not is_mentioned and not is_dm and random.random() > 0.90:
+        return
+
+    clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
+    if not clean_prompt:
+        clean_prompt = "Hello!"
+
+    await generate_and_send(message, clean_prompt, is_extended=(is_mentioned or is_dm))
+
+# --- BACKGROUND LOOP FOR OLDER MESSAGE ENGAGEMENT ---
+async def background_engagement_loop():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        await asyncio.sleep(45)  # Check periodically to stay active without burning limits too fast
+        try:
+            for guild in bot.guilds:
+                # Find text channels the bot can send messages in
+                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if not text_channels:
+                    continue
+                
+                # Pick a random channel to keep things distributed
+                channel = random.choice(text_channels)
+                
+                # Fetch recent messages in reverse chronological order
+                async for message in channel.history(limit=25):
+                    # Skip bot messages (prevents picking up welcome bots or self-loops)
+                    if message.author.bot:
+                        continue
+                    # Skip already replied messages
+                    if message.id in replied_message_ids:
+                        continue
+                    
+                    # Found an unreplied human message in history!
+                    clean_prompt = message.content.strip()
+                    if clean_prompt:
+                        print(f"Background engaging with older message from {message.author.name}: {clean_prompt[:30]}...")
+                        await generate_and_send(message, clean_prompt, is_extended=False)
+                        break  # Engage one message per cycle to space out API calls safely
+        except Exception as bg_err:
+            print(f"Background loop error: {bg_err}")
 
 bot.run(DISCORD_TOKEN)
