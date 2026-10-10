@@ -33,11 +33,12 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
-# Queue and Quota Safeguards
+# Queue, Quota Safeguards, and Activity Tracking
 message_queue = asyncio.Queue(maxsize=100)
 channel_cooldowns = {}  # Prevents quota drain from rapid spam in one channel
 daily_request_count = 0
 last_reset_date = datetime.now().date()
+last_bot_activity_time = time.time()  # Tracks when the bot last spoke
 
 
 def load_knowledge():
@@ -52,7 +53,7 @@ def load_knowledge():
 
 async def worker(worker_id):
   """Concurrent background worker that balances responsiveness, variety, and API conservation."""
-  global daily_request_count, last_reset_date
+  global daily_request_count, last_reset_date, last_bot_activity_time
   print(f"Worker {worker_id} started.")
 
   while True:
@@ -147,6 +148,7 @@ async def worker(worker_id):
       if reply_text:
         try:
           await message.reply(reply_text)
+          last_bot_activity_time = time.time()  # Update last active timestamp
         except Exception as send_error:
           print(f"Failed to send reply: {send_error}")
 
@@ -156,11 +158,59 @@ async def worker(worker_id):
       message_queue.task_done()
 
 
+async def idle_search_loop():
+  """If the bot hasn't spoken in 10 minutes (600 seconds), search history backwards to revive chat."""
+  global last_bot_activity_time
+  await bot.wait_until_ready()
+  await asyncio.sleep(30)  # Initial warm-up delay on bot startup
+
+  while True:
+    await asyncio.sleep(60)  # Check every 1 minute
+    try:
+      # 600 seconds = 10 minutes
+      if time.time() - last_bot_activity_time > 600:
+        print(
+            "Bot idle for over 10 minutes. Searching history for a message to"
+            " revive..."
+        )
+
+        for guild in bot.guilds:
+          for channel in guild.text_channels:
+            try:
+              perms = channel.permissions_for(guild.me)
+              if perms.read_message_history and perms.read_messages:
+                # Search back through history in reverse chronological order (up to 50 messages)
+                async for message in channel.history(limit=50):
+                  if message.author == bot.user:
+                    continue
+
+                  # Push the historical message into the queue to reply and revive chat
+                  await message_queue.put(message)
+                  print(
+                      f"Idle revive selected message from {message.author}:"
+                      f" {message.content}"
+                  )
+                  last_bot_activity_time = (
+                      time.time()
+                  )  # Reset timer to prevent rapid triggers
+                  break
+            except Exception as e:
+              print(f"Error scanning history in #{channel.name}: {e}")
+            break  # Process one channel per idle cycle
+    except Exception as loop_err:
+      print(f"Idle search loop error: {loop_err}")
+
+
 @bot.event
 async def on_ready():
   print(f"Oatmeal AI logged in successfully as {bot.user}")
-  for i in range(2):  # Run 2 parallel workers for balanced throughput
+
+  # Spawn 2 concurrent workers for balanced throughput
+  for i in range(2):
     bot.loop.create_task(worker(i + 1))
+
+  # Start the background idle revival task
+  bot.loop.create_task(idle_search_loop())
 
 
 @bot.event
