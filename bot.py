@@ -17,7 +17,6 @@ def run_web():
   app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 
-# Start web server in background thread
 threading.Thread(target=run_web, daemon=True).start()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -28,6 +27,17 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
+
+
+# Function to load your local knowledge text file
+def load_knowledge():
+  try:
+    if os.path.exists("knowledge.txt"):
+      with open("knowledge.txt", "r", encoding="utf-8") as f:
+        return f.read()
+  except Exception as e:
+    print(f"Error reading knowledge file: {e}")
+  return "No background info available."
 
 
 @bot.event
@@ -47,13 +57,17 @@ async def on_message(message):
           "Introduce yourself as Oatmeal AI, representing Oatmeal Joey Arnold."
       )
 
+    # Load your knowledge base on every query so edits update instantly
+    knowledge_context = load_knowledge()
+
     async with message.channel.typing():
       try:
         response = client.models.generate_content(
             model="gemini-3.8-flash",
             contents=(
                 "You are Oatmeal AI, representing Oatmeal Joey Arnold"
-                f" (@JOEYARNOLDVN). Answer accurately: {prompt}"
+                " (@JOEYARNOLDVN). Use the following background knowledge facts"
+                f" to answer accurately and avoid hallucinating:\n\n{knowledge_context}\n\nUser Question: {prompt}"
             ),
         )
         reply_text = response.text
