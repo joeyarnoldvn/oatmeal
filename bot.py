@@ -3,6 +3,7 @@ import re
 import time
 import asyncio
 import threading
+import random
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from openai import OpenAI
@@ -21,14 +22,13 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. LOAD KNOWLEDGE FILE CONTENT & TRIGGERS ---
+# --- 2. LOAD KNOWLEDGE FILE CONTENT ---
 FALLBACK_KNOWLEDGE = """
 Hawaii is a wonderful topic. The bot should remember information about Hawaii, 
 including its islands, culture, and history when asked.
 """
 
 KNOWLEDGE_TEXT = ""
-TRIGGER_WORDS = set()
 KNOWLEDGE_FILE = "knowledge.txt"
 current_dir = os.path.dirname(os.path.abspath(__file__))
 file_path = os.path.join(current_dir, KNOWLEDGE_FILE)
@@ -43,11 +43,6 @@ else:
     print(f"WARNING: {KNOWLEDGE_FILE} not found on disk. Using embedded fallback knowledge.")
     KNOWLEDGE_TEXT = FALLBACK_KNOWLEDGE
 
-# Extract trigger words from knowledge text
-words = re.findall(r'\b\w+\b', KNOWLEDGE_TEXT.lower())
-TRIGGER_WORDS = {w for w in words if len(w) > 3}
-print(f"Active trigger word count: {len(TRIGGER_WORDS)}")
-
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -60,7 +55,6 @@ ai_client = OpenAI(
     api_key=GROQ_API_KEY
 )
 
-# Updated to Groq's active open-weights model ID
 MODEL_NAME = "openai/gpt-oss-20b"
 
 intents = discord.Intents.default()
@@ -82,11 +76,10 @@ async def on_message(message):
     is_mentioned = bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
 
-    message_words = set(re.findall(r'\b\w+\b', message.content.lower()))
-    has_trigger_word = bool(TRIGGER_WORDS.intersection(message_words))
-
-    if not is_mentioned and not is_dm and not has_trigger_word:
-        return
+    # Respond to 90% of random unmentioned messages (10% chance to skip so it feels natural and random)
+    if not is_mentioned and not is_dm:
+        if random.random() > 0.90:
+            return
 
     # --- 4. RATE LIMITING ---
     user_id = message.author.id
@@ -109,7 +102,27 @@ async def on_message(message):
     if not clean_prompt:
         clean_prompt = "Hello!"
 
-    # --- 5. GROQ API GENERATION (Non-Blocking Executor) ---
+    # --- 5. DYNAMIC SYSTEM INSTRUCTIONS BASED ON INTERACTION TYPE ---
+    if is_mentioned or is_dm:
+        style_instruction = (
+            "The user directly mentioned or messaged you. "
+            "Provide a thorough, extended, and detailed response incorporating facts from your knowledge base."
+        )
+    else:
+        style_instruction = (
+            "This is a casual chat message. You must write a very short, punchy, casual message "
+            "(1 to 2 short sentences max). Act just like Oatmeal Joey Arnold. Cleverly and randomly "
+            "relate what the user said to facts, inside-baseball details, or easter eggs about your life "
+            "found in the knowledge base."
+        )
+
+    system_prompt = (
+        f"You are Oatmeal AI, embodying Joseph Scott Arnold (Oatmeal Joey Arnold). "
+        f"Use the following background knowledge base to inform your persona and life details:\n{KNOWLEDGE_TEXT}\n\n"
+        f"Guidelines: {style_instruction}"
+    )
+
+    # --- 6. GROQ API GENERATION (Non-Blocking Executor) ---
     try:
         async with message.channel.typing():
             response = await bot.loop.run_in_executor(
@@ -117,10 +130,10 @@ async def on_message(message):
                 lambda: ai_client.chat.completions.create(
                     model=MODEL_NAME,
                     messages=[
-                        {"role": "system", "content": f"You are Oatmeal AI. Use the following background knowledge base to help inform your answers if relevant:\n{KNOWLEDGE_TEXT}"},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": clean_prompt}
                     ],
-                    temperature=0.7,
+                    temperature=0.8,
                 )
             )
             
