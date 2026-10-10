@@ -82,12 +82,10 @@ async def process_queue():
 
       now = time.time()
 
-      # 1. If an error lockout is active, wait until it expires
       if now < global_error_lockout_until:
         wait_time = global_error_lockout_until - now
         await asyncio.sleep(wait_time)
 
-      # 2. Enforce channel cooldown: wait out any remaining time if messages are too close
       channel_id = message.channel.id
       if channel_id in channel_cooldowns:
         elapsed = time.time() - channel_cooldowns[channel_id]
@@ -101,52 +99,49 @@ async def process_queue():
       knowledge_context = load_knowledge()
       print(f"Processing queued message from {message.author}: {prompt}")
 
+      reply_text = None
       async with message.channel.typing():
         try:
-          response = await asyncio.to_thread(
-              client.models.generate_content,
-              model="gemini-3.8-flash",
-              contents=(
-                  "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
-                  " (@JOEYARNOLDVN). Respond to the incoming message with high"
-                  " variety—mix short sentences, long thoughts, creative"
-                  " associations, retro pop-culture nods (Star Trek, 90s,"
-                  " Vietnam teaching days), or philosophical twists. Relate"
-                  " the subject back to your worldview and background using"
-                  f" the following facts:\n\n{knowledge_context}\n\nIncoming"
-                  f" Message: {prompt}"
+          response = await asyncio.wait_for(
+              asyncio.to_thread(
+                  client.models.generate_content,
+                  model="gemini-3.8-flash",
+                  contents=(
+                      "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
+                      " (@JOEYARNOLDVN). Respond to the incoming message with high"
+                      " variety—mix short sentences, long thoughts, creative"
+                      " associations, retro pop-culture nods (Star Trek, 90s,"
+                      " Vietnam teaching days), or philosophical twists. Relate"
+                      " the subject back to your worldview and background using"
+                      f" the following facts:\n\n{knowledge_context}\n\nIncoming"
+                      f" Message: {prompt}"
+                  ),
               ),
+              timeout=15.0,
           )
-          reply_text = response.text
-          if not reply_text:
-            raise ValueError("Empty response text returned from API")
-
-          channel_cooldowns[channel_id] = time.time()
-          daily_request_count += 1
-
+          if response and response.text:
+            reply_text = response.text
+            channel_cooldowns[channel_id] = time.time()
+            daily_request_count += 1
         except Exception as e:
-          # Print the FULL exception traceback and details to Render logs
           import traceback
 
-          print("--- DETAILED GEMINI API ERROR ---")
+          print(f"API Error: {str(e)}")
           traceback.print_exc()
-          print(f"Error message: {str(e)}")
-          print("---------------------------------")
-
           global_error_lockout_until = time.time() + 60
-          reply_text = random.choice(ERROR_FALLBACKS)
 
-      try:
-        await message.reply(reply_text)
-        print("Queued reply successfully sent to Discord.")
-      except Exception as send_error:
-        print(f"Failed to send reply to Discord: {send_error}")
+      # Only reply if Gemini successfully generated text; stay completely silent on error
+      if reply_text:
+        try:
+          await message.reply(reply_text)
+          print("Reply successfully sent to Discord.")
+        except Exception as send_error:
+          print(f"Failed to send reply to Discord: {send_error}")
 
     except Exception as worker_error:
       print(f"Queue worker error: {worker_error}")
     finally:
       message_queue.task_done()
-
 
 @bot.event
 async def on_ready():
