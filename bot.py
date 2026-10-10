@@ -34,24 +34,10 @@ bot = discord.Client(intents=intents)
 
 # Queue and Safeguards
 message_queue = asyncio.Queue()
-channel_cooldowns = {}  # Tracks last successful response per channel
-global_error_lockout_until = 0  # Locks the bot if an error happens
+channel_cooldowns = {}
+global_error_lockout_until = 0
 daily_request_count = 0
 last_reset_date = datetime.now().date()
-
-ERROR_FALLBACKS = [
-    "My brain is currently marinating in oatmeal, try back in a bit.",
-    (
-        "The Arnold Attic circuits are taking a quick nap, check back in an"
-        " hour."
-    ),
-    (
-        "Too much data flowing through the network right now, give me a brief"
-        " breather."
-    ),
-    "Spike in the mainframe! I'm resting my digital eyes for a moment.",
-    "Even Oatmeal Joey needs a coffee break. Catch you in a little bit!",
-]
 
 
 def load_knowledge():
@@ -67,42 +53,46 @@ def load_knowledge():
 async def process_queue():
   """Background worker that processes messages one by one, respecting cooldowns."""
   global daily_request_count, last_reset_date, global_error_lockout_until
+  print("Queue worker started successfully.")
 
   while True:
     message = await message_queue.get()
     try:
+      print(f"Picked up message from queue: '{message.content}'")
       current_date = datetime.now().date()
       if current_date != last_reset_date:
         daily_request_count = 0
         last_reset_date = current_date
 
       if daily_request_count >= 1000:
+        print("Daily request limit reached.")
         message_queue.task_done()
         continue
 
       now = time.time()
-
       if now < global_error_lockout_until:
         wait_time = global_error_lockout_until - now
+        print(f"Error lockout active. Waiting {int(wait_time)}s...")
         await asyncio.sleep(wait_time)
 
       channel_id = message.channel.id
       if channel_id in channel_cooldowns:
         elapsed = time.time() - channel_cooldowns[channel_id]
         if elapsed < 15:
-          await asyncio.sleep(15 - elapsed)
+          wait_cd = 15 - elapsed
+          print(f"Channel cooldown active. Waiting {int(wait_cd)}s...")
+          await asyncio.sleep(wait_cd)
 
       prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
       if not prompt:
         prompt = "Say something in your signature style."
 
       knowledge_context = load_knowledge()
-      print(f"Processing queued message from {message.author}: {prompt}")
+      print(f"Calling Gemini API for prompt: {prompt}")
 
       reply_text = None
       async with message.channel.typing():
         try:
-          # Use native asynchronous client call to prevent hanging or thread pool timeouts
           response = await client.aio.models.generate_content(
               model="gemini-3.8-flash",
               contents=(
@@ -120,14 +110,16 @@ async def process_queue():
             reply_text = response.text
             channel_cooldowns[channel_id] = time.time()
             daily_request_count += 1
-        except Exception as e:
+            print("Gemini response generated successfully.")
+          else:
+            print("Gemini returned an empty response.")
+        except Exception as api_err:
           import traceback
 
-          print(f"API Error: {str(e)}")
+          print(f"API Error caught during generate_content: {str(api_err)}")
           traceback.print_exc()
           global_error_lockout_until = time.time() + 60
 
-      # Stay completely silent if there's an error or no text
       if reply_text:
         try:
           await message.reply(reply_text)
@@ -136,9 +128,13 @@ async def process_queue():
           print(f"Failed to send reply to Discord: {send_error}")
 
     except Exception as worker_error:
-      print(f"Queue worker error: {worker_error}")
+      import traceback
+
+      print(f"Queue worker inner exception: {worker_error}")
+      traceback.print_exc()
     finally:
       message_queue.task_done()
+
 
 @bot.event
 async def on_ready():
@@ -150,7 +146,7 @@ async def on_ready():
 async def on_message(message):
   if message.author == bot.user:
     return
-
+  print(f"Message received from {message.author}: {message.content}")
   await message_queue.put(message)
 
 
