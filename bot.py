@@ -1,5 +1,7 @@
+from datetime import datetime, timedelta
 import os
 import threading
+import time
 from flask import Flask
 import discord
 from google import genai
@@ -28,8 +30,13 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
+# Configuration for Keywords and Safeguards
+KEYWORDS = ["oatmeal joey", "joeyarnoldvn", "oatmeal english"]
+cooldowns = {}  # Tracks last trigger timestamps
+daily_request_count = 0
+last_reset_date = datetime.now().date()
 
-# Function to load your local knowledge text file
+
 def load_knowledge():
   try:
     if os.path.exists("knowledge.txt"):
@@ -47,17 +54,45 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
+  global daily_request_count, last_reset_date
+
   if message.author == bot.user:
     return
 
-  if bot.user.mentioned_in(message) or message.content.startswith("!oatmeal"):
+  # Reset daily counter if a new calendar day has started
+  current_date = datetime.now().date()
+  if current_date != last_reset_date:
+    daily_request_count = 0
+    last_reset_date = current_date
+
+  # Check triggers: Direct mention, command prefix, or distinct keywords
+  content_lower = message.content.lower()
+  has_keyword = any(kw in content_lower for kw in KEYWORDS)
+  is_mentioned = bot.user.mentioned_in(message) or message.content.startswith(
+      "!oatmeal"
+  )
+
+  if is_mentioned or has_keyword:
+    # Enforce 1,000 Daily Requests Limit
+    if daily_request_count >= 1000:
+      return  # Silently skip if daily cap is reached
+
+    # Enforce 10-Second Cooldown per channel
+    channel_id = message.channel.id
+    now = time.time()
+    if channel_id in cooldowns and (now - cooldowns[channel_id] < 10):
+      return  # Skip if triggered less than 10 seconds ago
+
+    cooldowns[channel_id] = now
+    daily_request_count += 1
+
+    # Strip out the mention tag if present to clean up the prompt
     prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
     if not prompt:
       prompt = (
           "Introduce yourself as Oatmeal AI, representing Oatmeal Joey Arnold."
       )
 
-    # Load your knowledge base on every query so edits update instantly
     knowledge_context = load_knowledge()
 
     async with message.channel.typing():
@@ -67,7 +102,7 @@ async def on_message(message):
             contents=(
                 "You are Oatmeal AI, representing Oatmeal Joey Arnold"
                 " (@JOEYARNOLDVN). Use the following background knowledge facts"
-                f" to answer accurately and avoid hallucinating:\n\n{knowledge_context}\n\nUser Question: {prompt}"
+                f" to answer accurately and avoid hallucinating:\n\n{knowledge_context}\n\nUser Message: {prompt}"
             ),
         )
         reply_text = response.text
