@@ -1,28 +1,34 @@
 import asyncio
 from datetime import datetime
+import http.server
 import os
 import threading
-from flask import Flask
 import discord
 from google import genai
 from google.genai import types
 
-# 1. Setup Flask web server for Render port binding
-app = Flask(__name__)
+# 1. Lightweight Native HTTP Server for Render Port Binding
+PORT = int(os.environ.get("PORT", 10000))
 
 
-@app.route("/")
-def home():
-  return "Oatmeal AI is running!"
+class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
+
+  def do_GET(self):
+    self.send_response(200)
+    self.end_headers()
+    self.wfile.write(b"Oatmeal AI is running!")
+
+  def log_message(self, format, *args):
+    pass  # Suppress noisy request logs
 
 
-def run_web():
-  port = int(os.environ.get("PORT", 10000))
-  app.run(host="0.0.0.0", port=port, use_reloader=False)
+def run_server():
+  server = http.server.HTTPServer(("0.0.0.0", PORT), HealthCheckHandler)
+  server.serve_forever()
 
 
-# Start Flask in a background daemon thread
-threading.Thread(target=run_web, daemon=True).start()
+threading.Thread(target=run_server, daemon=True).start()
+print(f"Health-check server active on port {PORT}")
 
 # 2. Initialize Discord and Gemini API
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -56,8 +62,9 @@ async def on_message(message):
   if message.author == bot.user:
     return
 
-  # Respond when mentioned or addressed directly
-  if bot.user.mentioned_in(message) or isinstance(message.channel, discord.DMChannel):
+  if bot.user.mentioned_in(message) or isinstance(
+      message.channel, discord.DMChannel
+  ):
     try:
       prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
       if not prompt:
