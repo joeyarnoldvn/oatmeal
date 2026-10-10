@@ -50,15 +50,18 @@ def load_knowledge():
   return "No background info available."
 
 
+from google.genai import types
+
+
 async def process_queue():
-  """Background worker that processes messages sequentially, respecting cooldowns."""
-  global daily_request_count, last_reset_date, global_error_lockout_until
+  """Background worker that processes every message immediately and safely handles responses."""
+  global daily_request_count, last_reset_date
   print("Background queue worker loop started successfully.")
 
   while True:
     message = await message_queue.get()
     try:
-      print(f"Queue worker picked up message from: {message.author}")
+      print(f"Queue worker picked up message: {message.content}")
       current_date = datetime.now().date()
       if current_date != last_reset_date:
         daily_request_count = 0
@@ -67,17 +70,6 @@ async def process_queue():
       if daily_request_count >= 1000:
         message_queue.task_done()
         continue
-
-      now = time.time()
-      if now < global_error_lockout_until:
-        wait_time = global_error_lockout_until - now
-        await asyncio.sleep(wait_time)
-
-      channel_id = message.channel.id
-      if channel_id in channel_cooldowns:
-        elapsed = time.time() - channel_cooldowns[channel_id]
-        if elapsed < 15:
-          await asyncio.sleep(15 - elapsed)
 
       prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
       if not prompt:
@@ -89,7 +81,29 @@ async def process_queue():
       reply_text = None
       async with message.channel.typing():
         try:
-          # Run the synchronous GenAI request safely in a thread
+          # Use loose safety settings so random words or casual chat aren't blocked
+          config = types.GenerateContentConfig(
+              safety_settings=[
+                  types.SafetySetting(
+                      category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                      threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                  ),
+                  types.SafetySetting(
+                      category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                      threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                  ),
+                  types.SafetySetting(
+                      category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                      threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                  ),
+                  types.SafetySetting(
+                      category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                      threshold=types.HarmBlockThreshold.BLOCK_NONE,
+                  ),
+              ],
+              temperature=0.9,
+          )
+
           response = await asyncio.to_thread(
               client.models.generate_content,
               model="gemini-3.8-flash",
@@ -103,18 +117,33 @@ async def process_queue():
                   f" the following facts:\n\n{knowledge_context}\n\nIncoming"
                   f" Message: {prompt}"
               ),
+              config=config,
           )
-          if response and response.text:
-            reply_text = response.text
-            channel_cooldowns[channel_id] = time.time()
-            daily_request_count += 1
-            print("Gemini successfully generated a response.")
+
+          # Safely extract text without crashing if candidates are empty or filtered
+          if response and response.candidates:
+            candidate = response.candidates[0]
+            if (
+                candidate.content
+                and candidate.content.parts
+                and candidate.content.parts[0].text
+            ):
+              reply_text = candidate.content.parts[0].text
+              daily_request_count += 1
+              print("Gemini successfully generated a response.")
+            else:
+              print(
+                  f"Gemini response candidate had no text. Finish reason:"
+                  f" {candidate.finish_reason}"
+              )
+          else:
+            print("Gemini returned no candidates.")
+
         except Exception as e:
           import traceback
 
           print(f"Gemini API Error: {str(e)}")
           traceback.print_exc()
-          global_error_lockout_until = time.time() + 60
 
       if reply_text:
         try:
@@ -127,7 +156,6 @@ async def process_queue():
       print(f"Queue worker exception: {worker_error}")
     finally:
       message_queue.task_done()
-
 
 @bot.event
 async def on_ready():
