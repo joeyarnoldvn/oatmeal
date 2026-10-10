@@ -164,8 +164,13 @@ async def worker(worker_id):
       message_queue.task_done()
 
 
+# Keep track of already-replied message IDs globally to prevent repeating
+replied_message_ids = set()
+last_bot_activity_time = time.time()
+
+
 async def idle_search_loop():
-  """If the bot hasn't spoken in 10 minutes (600 seconds), search history backwards to revive chat."""
+  """Scans history across all servers/channels, picks a random past message, and revives chat."""
   global last_bot_activity_time
   await bot.wait_until_ready()
   await asyncio.sleep(30)
@@ -173,33 +178,49 @@ async def idle_search_loop():
   while True:
     await asyncio.sleep(60)  # Check every 1 minute
     try:
+      # Change threshold back to 600 (10 mins) after testing
       if time.time() - last_bot_activity_time > 600:
-        print(
-            "Bot idle for over 10 minutes. Searching history for a message to"
-            " revive..."
-        )
+        print("Bot idle threshold reached. Scanning servers for a message...")
 
+        eligible_messages = []
+
+        # Gather eligible messages across ALL guilds and text channels
         for guild in bot.guilds:
           for channel in guild.text_channels:
             try:
               perms = channel.permissions_for(guild.me)
               if perms.read_message_history and perms.read_messages:
-                async for message in channel.history(limit=50):
+                async for message in channel.history(limit=30):
+                  # Skip bot messages, system join messages, and already-replied messages
                   if message.author == bot.user:
                     continue
-                  await message_queue.put(message)
-                  print(
-                      f"Idle revive selected message from {message.author}:"
-                      f" {message.content}"
-                  )
-                  last_bot_activity_time = time.time()
-                  break
+                  if message.type != discord.MessageType.default:
+                    continue  # Skips member join/system notices
+                  if message.id in replied_message_ids:
+                    continue
+
+                  eligible_messages.append(message)
             except Exception as e:
               print(f"Error scanning history in #{channel.name}: {e}")
-            break
+
+        # If we found valid older messages, pick one completely at random!
+        if eligible_messages:
+          chosen_message = random.choice(eligible_messages)
+          replied_message_ids.add(chosen_message.id)
+
+          # Push to queue to trigger reply
+          await message_queue.put(chosen_message)
+          print(
+              f"Idle revive selected random message from"
+              f" {chosen_message.author} in #{chosen_message.channel.name}:"
+              f" {chosen_message.content}"
+          )
+          last_bot_activity_time = time.time()
+        else:
+          print("No eligible unreplied messages found across servers.")
+
     except Exception as loop_err:
       print(f"Idle search loop error: {loop_err}")
-
 
 @bot.event
 async def on_ready():
