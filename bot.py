@@ -1,6 +1,6 @@
 import os
+import re
 import time
-import random
 import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -19,29 +19,39 @@ def run_http_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# Start background web server thread for Render
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. CONFIGURATION & CLIENT SETUP ---
+# --- 2. LOAD KNOWLEDGE FILE CONTENT & TRIGGERS ---
+KNOWLEDGE_TEXT = ""
+TRIGGER_WORDS = set()
+KNOWLEDGE_FILE = "knowledge.txt"
+
+if os.path.exists(KNOWLEDGE_FILE):
+    with open(KNOWLEDGE_FILE, "r", encoding="utf-8") as f:
+        KNOWLEDGE_TEXT = f.read()
+        # Extract words for triggering
+        words = re.findall(r'\b\w+\b', KNOWLEDGE_TEXT.lower())
+        TRIGGER_WORDS = set(words)
+    print(f"Loaded {len(TRIGGER_WORDS)} trigger words and file content from {KNOWLEDGE_FILE}")
+else:
+    print(f"Warning: {KNOWLEDGE_FILE} not found. Bot will only trigger on direct mentions.")
+
+# --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 if not DISCORD_TOKEN or not GEMINI_API_KEY:
     raise ValueError("Missing DISCORD_TOKEN or GEMINI_API_KEY in environment variables.")
 
-# Initialize the official Google GenAI SDK client
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 MODEL_NAME = "gemini-3.8-flash"
 
-# Setup Discord intents
 intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
-# Rate limiting and probability settings
 user_cooldowns = {}
-COOLDOWN_SECONDS = 30  # Enforces a 1-minute pause per user
-CHANCE_TO_RESPOND = 0.05  # 5% chance to respond to random unmentioned chat messages
+COOLDOWN_SECONDS = 30  # 30-second cooldown per user
 
 @bot.event
 async def on_ready():
@@ -49,20 +59,21 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Ignore messages from the bot itself
     if message.author == bot.user:
         return
 
-    # Check mention / DM conditions
     is_mentioned = bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
 
-    # If NOT mentioned and NOT a DM, roll the probability check
-    if not is_mentioned and not is_dm:
-        if random.random() > CHANCE_TO_RESPOND:
-            return  # Skip responding to save API quota
+    # Check if message contains any word from knowledge.txt
+    message_words = set(re.findall(r'\b\w+\b', message.content.lower()))
+    has_trigger_word = bool(TRIGGER_WORDS.intersection(message_words))
 
-    # --- 3. RATE LIMITING & QUOTA PROTECTION ---
+    # Trigger IF mentioned, DM'd, OR contains a knowledge word
+    if not is_mentioned and not is_dm and not has_trigger_word:
+        return
+
+    # --- 4. RATE LIMITING ---
     user_id = message.author.id
     current_time = time.time()
     
@@ -79,19 +90,25 @@ async def on_message(message):
 
     user_cooldowns[user_id] = current_time
 
-    # Clean message content by stripping the bot mention
     clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
     if not clean_prompt:
         clean_prompt = "Hello!"
 
-    # --- 4. GEMINI API GENERATION ---
+    # Combine knowledge file text with the user prompt so Gemini has full context
+    full_prompt = f"Use the following background knowledge base to answer the user if relevant:\n{KNOWLEDGE_TEXT}\n\nUser Message: {clean_prompt}"
+
+    # --- 5. GEMINI API GENERATION (Non-Blocking Executor) ---
     try:
         async with message.channel.typing():
             await asyncio.sleep(6)  # Safety spacer for per-minute rate limits
 
-            response = ai_client.models.generate_content(
-                model=MODEL_NAME,
-                contents=clean_prompt,
+            # Run synchronous SDK call in an executor thread to prevent Discord heartbeat blocks
+            response = await bot.loop.run_in_executor(
+                None,
+                lambda: ai_client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=full_prompt,
+                )
             )
             
             reply_text = response.text
@@ -106,9 +123,6 @@ async def on_message(message):
         print(f"API Error: {e}")
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
             if is_mentioned or is_dm:
-                await message.channel.send("⚠️ Free-tier daily or minute request limit reached (Quota exhausted). Please try again later.")
-        else:
-            if is_mentioned or is_dm:
-                await message.channel.send("❌ An error occurred while communicating with the AI model.")
+                await message.channel.send("⚠️ Free-tier request limit reached. Please try again later.")
 
 bot.run(DISCORD_TOKEN)
