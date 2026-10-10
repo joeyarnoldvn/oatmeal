@@ -32,9 +32,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
-# Safeguards & Tracking
+# Queue and Safeguards
+message_queue = asyncio.Queue()
 channel_cooldowns = {}  # Tracks last successful response per channel
-global_error_lockout_until = 0  # Locks the bot completely if an error happens
+global_error_lockout_until = 0  # Locks the bot if an error happens
 daily_request_count = 0
 last_reset_date = datetime.now().date()
 
@@ -63,82 +64,97 @@ def load_knowledge():
   return "No background info available."
 
 
+async def process_queue():
+  """Background worker that processes messages one by one, respecting cooldowns."""
+  global daily_request_count, last_reset_date, global_error_lockout_until
+
+  while True:
+    message = await message_queue.get()
+    try:
+      current_date = datetime.now().date()
+      if current_date != last_reset_date:
+        daily_request_count = 0
+        last_reset_date = current_date
+
+      if daily_request_count >= 1000:
+        message_queue.task_done()
+        continue
+
+      now = time.time()
+
+      # 1. If an error lockout is active, wait until it expires
+      if now < global_error_lockout_until:
+        wait_time = global_error_lockout_until - now
+        await asyncio.sleep(wait_time)
+
+      # 2. Enforce channel cooldown: wait out any remaining time if messages are too close
+      channel_id = message.channel.id
+      if channel_id in channel_cooldowns:
+        elapsed = time.time() - channel_cooldowns[channel_id]
+        if elapsed < 15:
+          await asyncio.sleep(15 - elapsed)
+
+      prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+      if not prompt:
+        prompt = "Say something in your signature style."
+
+      knowledge_context = load_knowledge()
+      print(f"Processing queued message from {message.author}: {prompt}")
+
+      async with message.channel.typing():
+        try:
+          response = await asyncio.to_thread(
+              client.models.generate_content,
+              model="gemini-2.5-flash",
+              contents=(
+                  "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
+                  " (@JOEYARNOLDVN). Respond to the incoming message with high"
+                  " variety—mix short sentences, long thoughts, creative"
+                  " associations, retro pop-culture nods (Star Trek, 90s,"
+                  " Vietnam teaching days), or philosophical twists. Relate"
+                  " the subject back to your worldview and background using"
+                  f" the following facts:\n\n{knowledge_context}\n\nIncoming"
+                  f" Message: {prompt}"
+              ),
+          )
+          reply_text = response.text
+          if not reply_text:
+            raise ValueError("Empty response text")
+
+          channel_cooldowns[channel_id] = time.time()
+          daily_request_count += 1
+
+        except Exception as e:
+          print(f"API Error encountered: {str(e)}")
+          global_error_lockout_until = time.time() + 60
+          reply_text = random.choice(ERROR_FALLBACKS)
+
+      try:
+        await message.reply(reply_text)
+        print("Queued reply successfully sent to Discord.")
+      except Exception as send_error:
+        print(f"Failed to send reply to Discord: {send_error}")
+
+    except Exception as worker_error:
+      print(f"Queue worker error: {worker_error}")
+    finally:
+      message_queue.task_done()
+
+
 @bot.event
 async def on_ready():
   print(f"Oatmeal AI is live in the cloud as {bot.user}")
+  # Start the background message queue worker
+  bot.loop.create_task(process_queue())
 
 
 @bot.event
 async def on_message(message):
-  global daily_request_count, last_reset_date, global_error_lockout_until
-
   if message.author == bot.user:
     return
 
-  current_date = datetime.now().date()
-  if current_date != last_reset_date:
-    daily_request_count = 0
-    last_reset_date = current_date
-
-  if daily_request_count >= 1000:
-    return
-
-  now = time.time()
-
-  # 1. Check if the bot is currently in an error timeout lockout period (e.g., 60 seconds)
-  if now < global_error_lockout_until:
-    return  # Completely ignore all messages while locked out
-
-  # 2. Enforce 15-second channel cooldown for normal messages
-  channel_id = message.channel.id
-  if channel_id in channel_cooldowns and (
-      now - channel_cooldowns[channel_id] < 15
-  ):
-    return
-
-  prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
-  if not prompt:
-    prompt = "Say something in your signature style."
-
-  knowledge_context = load_knowledge()
-
-  print(f"Generating response for prompt: {prompt}")
-
-  async with message.channel.typing():
-    try:
-      response = await asyncio.to_thread(
-          client.models.generate_content,
-          model="gemini-2.5-flash",
-          contents=(
-              "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
-              " (@JOEYARNOLDVN). Respond to the incoming message with high"
-              " variety—mix short sentences, long thoughts, creative"
-              " associations, retro pop-culture nods (Star Trek, 90s, Vietnam"
-              " teaching days), or philosophical twists. Relate the subject"
-              " back to your worldview and background using the following"
-              f" facts:\n\n{knowledge_context}\n\nIncoming"
-              f" Message: {prompt}"
-          ),
-      )
-      reply_text = response.text
-      if not reply_text:
-        raise ValueError("Empty response text")
-
-      # Success: Update channel cooldown normally (e.g., 15 seconds)
-      channel_cooldowns[channel_id] = time.time()
-      daily_request_count += 1
-
-    except Exception as e:
-      print(f"API Error encountered: {str(e)}")
-      # ERROR TIMEOUT: Lock out the bot completely for 60 seconds after any error
-      global_error_lockout_until = time.time() + 60
-      reply_text = random.choice(ERROR_FALLBACKS)
-
-  try:
-    await message.reply(reply_text)
-    print("Reply successfully sent to Discord.")
-  except Exception as send_error:
-    print(f"Failed to send reply to Discord: {send_error}")
+  # Drop the message into the queue immediately so nothing is lost
+  await message_queue.put(message)
 
 
 bot.run(DISCORD_TOKEN)
