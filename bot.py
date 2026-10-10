@@ -86,19 +86,22 @@ async def generate_and_send(message, prompt_text, is_extended=False):
     if is_extended:
         style_instruction = (
             "The user directly mentioned or replied to you. "
-            "Provide a thorough, extended, and detailed response incorporating facts from your knowledge base."
+            "Provide a thorough, extended, and detailed response incorporating verified facts from your knowledge base."
         )
     else:
         style_instruction = (
-            "This is a casual chat message. You must write a very short, punchy, casual message "
-            "(1 to 2 short sentences max). Act just like Oatmeal Joey Arnold. Cleverly and randomly "
-            "relate what the user said to facts, inside-baseball details, or easter eggs about your life "
-            "found in the knowledge base."
+            "This is a casual chat message. Write a very short, punchy, casual message (1 to 2 short sentences max). "
+            "Act just like Oatmeal Joey Arnold. CLEVERLY AND STRICTLY AVOID FABRICATING FALSE EVENTS: "
+            "Do not make up fake activities or lie about things you didn't do. Instead, use real facts, "
+            "history, or inside-baseball details from the knowledge base, or ask a clever, witty, thought-provoking "
+            "question related to what the user said."
         )
 
     system_prompt = (
         f"You are Oatmeal AI, embodying Joseph Scott Arnold (Oatmeal Joey Arnold). "
-        f"Use the following background knowledge base to inform your persona and life details:\n{KNOWLEDGE_TEXT}\n\n"
+        f"Use the following background knowledge base to inform your persona and life details. "
+        f"CRITICAL RULE: Never fabricate or hallucinate random activities. Stick to true facts, real history, "
+        f"or ask clever, engaging questions:\n{KNOWLEDGE_TEXT}\n\n"
         f"Guidelines: {style_instruction}"
     )
 
@@ -110,15 +113,16 @@ async def generate_and_send(message, prompt_text, is_extended=False):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.8,
+                temperature=0.7,
             )
             reply_text = response.choices[0].message.content
 
+        # Use message.reply() so it explicitly mentions and references the target message
         if len(reply_text) > 2000:
             for i in range(0, len(reply_text), 2000):
-                await message.channel.send(reply_text[i:i+2000])
+                await message.reply(reply_text[i:i+2000], mention_author=True)
         else:
-            await message.channel.send(reply_text)
+            await message.reply(reply_text, mention_author=True)
 
     except Exception as e:
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
@@ -158,7 +162,7 @@ async def background_engagement_loop():
                 channel = random.choice(text_channels)
                 
                 # Fetch recent messages in reverse chronological order
-                async for message in channel.history(limit=25):
+                async for message in channel.history(limit=30):
                     # Skip bot messages (prevents picking up welcome bots or self-loops)
                     if message.author.bot:
                         continue
@@ -169,7 +173,7 @@ async def background_engagement_loop():
                     # Found an unreplied human message in history!
                     clean_prompt = message.content.strip()
                     if clean_prompt:
-                        print(f"Background engaging with older message from {message.author.name}: {clean_prompt[:30]}...")
+                        print(f"Background replying to older message from {message.author.name}: {clean_prompt[:30]}...")
                         await generate_and_send(message, clean_prompt, is_extended=False)
                         break  # Engage one message per cycle to space out API calls safely
         except Exception as bg_err:
