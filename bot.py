@@ -32,6 +32,8 @@ KNOWLEDGE_FILE = "knowledge.txt"
 current_dir = os.path.dirname(os.path.abspath(__file__))
 file_path = os.path.join(current_dir, KNOWLEDGE_FILE)
 
+print(f"Looking for knowledge file at: {file_path}")
+
 if os.path.exists(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         KNOWLEDGE_TEXT = f.read()
@@ -39,11 +41,6 @@ if os.path.exists(file_path):
 else:
     print(f"WARNING: {KNOWLEDGE_FILE} not found on disk. Using embedded fallback knowledge.")
     KNOWLEDGE_TEXT = FALLBACK_KNOWLEDGE
-
-# Extract trigger words from the active knowledge text
-words = re.findall(r'\b\w+\b', KNOWLEDGE_TEXT.lower())
-TRIGGER_WORDS = set(words)
-print(f"Active trigger word count: {len(TRIGGER_WORDS)}")
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -60,7 +57,7 @@ intents.message_content = True
 bot = discord.Client(intents=intents)
 
 user_cooldowns = {}
-COOLDOWN_SECONDS = 30  # 30-second cooldown per user
+COOLDOWN_SECONDS = 30  # 30-second cooldown per user to protect daily quotas
 
 @bot.event
 async def on_ready():
@@ -68,17 +65,12 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
+    # Ignore messages from the bot itself
     if message.author == bot.user:
         return
 
     is_mentioned = bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
-
-    message_words = set(re.findall(r'\b\w+\b', message.content.lower()))
-    has_trigger_word = bool(TRIGGER_WORDS.intersection(message_words))
-
-    if not is_mentioned and not is_dm and not has_trigger_word:
-        return
 
     # --- 4. RATE LIMITING ---
     user_id = message.author.id
@@ -101,7 +93,8 @@ async def on_message(message):
     if not clean_prompt:
         clean_prompt = "Hello!"
 
-    full_prompt = f"Use the following background knowledge base to answer the user if relevant:\n{KNOWLEDGE_TEXT}\n\nUser Message: {clean_prompt}"
+    # Combine knowledge file text with the user prompt so Gemini can draw answers from it
+    full_prompt = f"You are Oatmeal AI. Use the following background knowledge base to help inform your answers if relevant:\n{KNOWLEDGE_TEXT}\n\nUser Message: {clean_prompt}"
 
     # --- 5. GEMINI API GENERATION (Non-Blocking Executor) ---
     try:
