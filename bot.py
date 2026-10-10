@@ -38,9 +38,7 @@ last_reset_date = datetime.now().date()
 
 # Unique random fallback messages when the API hits high demand (503 / errors)
 ERROR_FALLBACKS = [
-    (
-        "My brain is currently marinating in oatmeal, try back in a bit."
-    ),
+    "My brain is currently marinating in oatmeal, try back in a bit.",
     (
         "The Arnold Attic circuits are taking a quick nap, check back in an"
         " hour."
@@ -49,12 +47,8 @@ ERROR_FALLBACKS = [
         "Too much data flowing through the network right now, give me a brief"
         " breather."
     ),
-    (
-        "Spike in the mainframe! I'm resting my digital eyes for a moment."
-    ),
-    (
-        "Even Oatmeal Joey needs a coffee break. Catch you in a little bit!"
-    ),
+    "Spike in the mainframe! I'm resting my digital eyes for a moment.",
+    "Even Oatmeal Joey needs a coffee break. Catch you in a little bit!",
 ]
 
 
@@ -95,11 +89,6 @@ async def on_message(message):
   channel_id = message.channel.id
   now = time.time()
   if channel_id in cooldowns and (now - cooldowns[channel_id] < 10):
-    return
-
-  # Random chance modifier (e.g., 60% chance to react to any general message to keep it dynamic and varied)
-  # You can remove this random check if you want it to trigger on 100% of messages.
-  if random.random() > 0.60 and not bot.user.mentioned_in(message):
     return
 
   cooldowns[channel_id] = now
