@@ -8,7 +8,23 @@ import discord
 from google import genai
 from google.genai import types
 
-# 1. Initialize Discord & Gemini
+# 1. Setup Flask web server in a background thread for Render port binding
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+  return "Oatmeal AI is running!"
+
+
+def run_web():
+  port = int(os.environ.get("PORT", 10000))
+  app.run(host="0.0.0.0", port=port, use_reloader=False)
+
+
+threading.Thread(target=run_web, daemon=True).start()
+
+# 2. Initialize Discord and Gemini API
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 
@@ -36,7 +52,7 @@ def load_knowledge():
 
 async def worker(worker_id):
   global daily_request_count, last_reset_date
-  print(f"Worker {worker_id} started.")
+  print(f"[WORKER {worker_id}] Started successfully.")
 
   while True:
     message = await message_queue.get()
@@ -124,9 +140,9 @@ async def worker(worker_id):
               daily_request_count += 1
               channel_cooldowns[channel_id] = time.time()
         except asyncio.TimeoutError:
-          print(f"Worker {worker_id}: Gemini API request timed out after 15s.")
+          print(f"[WORKER {worker_id}] Gemini API request timed out.")
         except Exception as e:
-          print(f"API Error in worker {worker_id}: {str(e)}")
+          print(f"[WORKER {worker_id}] API Error: {e}")
 
       if reply_text:
         try:
@@ -142,8 +158,8 @@ async def worker(worker_id):
 
 @bot.event
 async def on_ready():
-  print(f"Oatmeal AI logged in successfully as {bot.user}")
-  print(f"Active in {len(bot.guilds)} Discord server(s).")
+  print(f"[CONNECTED] Logged in successfully as {bot.user}")
+  print(f"[SERVERS] Active in {len(bot.guilds)} Discord server(s).")
   for i in range(2):
     bot.loop.create_task(worker(i + 1))
 
@@ -152,6 +168,10 @@ async def on_ready():
 async def on_message(message):
   if message.author == bot.user:
     return
+  print(
+      f"[MESSAGE RECEIVED] From {message.author} in #{message.channel.name}:"
+      f" {message.content}"
+  )
   try:
     if message_queue.full():
       try:
@@ -164,29 +184,5 @@ async def on_message(message):
     print(f"Queue insertion error: {e}")
 
 
-# 2. Run Discord in a background thread
-def run_discord():
-  if not DISCORD_TOKEN:
-    print("[CRITICAL] DISCORD_TOKEN is missing!")
-    return
-  try:
-    bot.run(DISCORD_TOKEN)
-  except Exception as e:
-    print(f"[DISCORD CRASH]: {e}")
-
-
-threading.Thread(target=run_discord, daemon=True).start()
-
-# 3. Run Flask on the main thread to satisfy Render port binding and prevent early exit
-app = Flask(__name__)
-
-
-@app.route("/")
-def home():
-  return "Oatmeal AI is running!"
-
-
 if __name__ == "__main__":
-  port = int(os.environ.get("PORT", 10000))
-  print(f"Starting Flask web server on port {port} (Main Thread)...")
-  app.run(host="0.0.0.0", port=port, use_reloader=False)
+  bot.run(DISCORD_TOKEN)
