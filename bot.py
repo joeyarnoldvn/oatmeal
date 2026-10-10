@@ -36,7 +36,6 @@ cooldowns = {}  # Tracks last trigger timestamps per channel
 daily_request_count = 0
 last_reset_date = datetime.now().date()
 
-# Unique random fallback messages when the API hits high demand (503 / errors)
 ERROR_FALLBACKS = [
     "My brain is currently marinating in oatmeal, try back in a bit.",
     (
@@ -71,21 +70,17 @@ async def on_ready():
 async def on_message(message):
   global daily_request_count, last_reset_date
 
-  # Ignore messages sent by the bot itself
   if message.author == bot.user:
     return
 
-  # Reset daily counter if a new calendar day has started
   current_date = datetime.now().date()
   if current_date != last_reset_date:
     daily_request_count = 0
     last_reset_date = current_date
 
-  # Enforce 1,000 Daily Requests Limit safely below the free tier ceiling
   if daily_request_count >= 1000:
     return
 
-  # Enforce 10-Second Cooldown per channel to keep things organic and avoid spam loops
   channel_id = message.channel.id
   now = time.time()
   if channel_id in cooldowns and (now - cooldowns[channel_id] < 10):
@@ -94,12 +89,13 @@ async def on_message(message):
   cooldowns[channel_id] = now
   daily_request_count += 1
 
-  # Clean up the prompt text
   prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
   if not prompt:
     prompt = "Say something in your signature style."
 
   knowledge_context = load_knowledge()
+
+  print(f"Generating response for prompt: {prompt}")
 
   async with message.channel.typing():
     try:
@@ -117,11 +113,17 @@ async def on_message(message):
           ),
       )
       reply_text = response.text
+      if not reply_text:
+        reply_text = random.choice(ERROR_FALLBACKS)
     except Exception as e:
-      # If any 503 or quota error happens, pick a random unique friendly message instead of a raw traceback
+      print(f"API Error encountered: {str(e)}")
       reply_text = random.choice(ERROR_FALLBACKS)
 
-  await message.reply(reply_text)
+  try:
+    await message.reply(reply_text)
+    print("Reply successfully sent to Discord.")
+  except Exception as send_error:
+    print(f"Failed to send reply to Discord: {send_error}")
 
 
 bot.run(DISCORD_TOKEN)
