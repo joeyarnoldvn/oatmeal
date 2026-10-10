@@ -39,6 +39,7 @@ channel_cooldowns = {}  # Prevents quota drain from rapid spam in one channel
 daily_request_count = 0
 last_reset_date = datetime.now().date()
 last_bot_activity_time = time.time()  # Tracks when the bot last spoke
+replied_message_ids = set()  # Tracks replied messages to prevent repeats
 
 
 def load_knowledge():
@@ -113,7 +114,6 @@ async def worker(worker_id):
       reply_text = None
       async with message.channel.typing():
         try:
-          # Wrap the blocking API call with a 15-second timeout to prevent indefinite hangs
           response = await asyncio.wait_for(
               asyncio.to_thread(
                   client.models.generate_content,
@@ -151,23 +151,18 @@ async def worker(worker_id):
         except Exception as e:
           print(f"API Error in worker {worker_id}: {str(e)}")
 
-if reply_text:
+      if reply_text:
         try:
           await message.reply(reply_text)
           replied_message_ids.add(message.id)
           last_bot_activity_time = time.time()
-        except Exception as send_source:
-          print(f"Failed to send reply: {send_source}")
+        except Exception as send_error:
+          print(f"Failed to send reply: {send_error}")
 
     except Exception as worker_error:
       print(f"Worker {worker_id} exception: {worker_error}")
     finally:
       message_queue.task_done()
-
-
-# Keep track of already-replied message IDs globally to prevent repeating
-replied_message_ids = set()
-last_bot_activity_time = time.time()
 
 
 async def idle_search_loop():
@@ -179,7 +174,7 @@ async def idle_search_loop():
   while True:
     await asyncio.sleep(60)  # Check every 1 minute
     try:
-      # Change threshold back to 600 (10 mins) after testing
+      # If silent for over 10 minutes (600 seconds)
       if time.time() - last_bot_activity_time > 600:
         print("Bot idle threshold reached. Scanning servers for a message...")
 
@@ -192,11 +187,11 @@ async def idle_search_loop():
               perms = channel.permissions_for(guild.me)
               if perms.read_message_history and perms.read_messages:
                 async for message in channel.history(limit=30):
-                  # Skip bot messages, system join messages, and already-replied messages
+                  # Skip bot messages, system/join notices, and already-replied messages
                   if message.author == bot.user:
                     continue
                   if message.type != discord.MessageType.default:
-                    continue  # Skips member join/system notices
+                    continue
                   if message.id in replied_message_ids:
                     continue
 
@@ -204,12 +199,11 @@ async def idle_search_loop():
             except Exception as e:
               print(f"Error scanning history in #{channel.name}: {e}")
 
-        # If we found valid older messages, pick one completely at random!
+        # Pick a random older message to avoid getting stuck on one message
         if eligible_messages:
           chosen_message = random.choice(eligible_messages)
           replied_message_ids.add(chosen_message.id)
 
-          # Push to queue to trigger reply
           await message_queue.put(chosen_message)
           print(
               f"Idle revive selected random message from"
@@ -222,6 +216,7 @@ async def idle_search_loop():
 
     except Exception as loop_err:
       print(f"Idle search loop error: {loop_err}")
+
 
 @bot.event
 async def on_ready():
