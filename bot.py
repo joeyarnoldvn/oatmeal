@@ -40,7 +40,7 @@ bot = discord.Client(intents=intents)
 
 # Rate limiting and probability settings
 user_cooldowns = {}
-COOLDOWN_SECONDS = 60  # Enforces a 1-minute pause per user
+COOLDOWN_SECONDS = 30  # Enforces a 1-minute pause per user
 CHANCE_TO_RESPOND = 0.05  # 5% chance to respond to random unmentioned chat messages
 
 @bot.event
