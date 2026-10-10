@@ -174,4 +174,14 @@ async def on_message(message):
     print(f"[QUEUE ERROR]: {q_err}")
 
 
+
+if __name__ == "__main__":
+  try:
+    print("[STARTUP] Attempting to start bot client...")
+    bot.run(DISCORD_TOKEN)
+  except Exception as e:
+    print(f"[FATAL STARTUP CRASH]: {e}")
+
+
+
 bot.run(DISCORD_TOKEN)
