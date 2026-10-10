@@ -1,9 +1,7 @@
 import asyncio
 from datetime import datetime
 import os
-import random
 import threading
-import time
 from flask import Flask
 import discord
 from google import genai
@@ -33,13 +31,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
-# Queue, Quota Safeguards, and Activity Tracking
+# Queue and Quota Safeguards
 message_queue = asyncio.Queue(maxsize=100)
-channel_cooldowns = {}  # Prevents quota drain from rapid spam in one channel
 daily_request_count = 0
 last_reset_date = datetime.now().date()
-last_bot_activity_time = time.time()  # Tracks when the bot last spoke
-replied_message_ids = set()  # Tracks replied messages to prevent repeats
 
 
 def load_knowledge():
@@ -53,35 +48,21 @@ def load_knowledge():
 
 
 async def worker(worker_id):
-  """Concurrent background worker with strict timeouts to prevent freezing."""
-  global daily_request_count, last_reset_date, last_bot_activity_time
-  print(f"Worker {worker_id} started.")
+  """Reliable background worker with strict safety and timeout handling."""
+  global daily_request_count, last_reset_date
+  print(f"[INIT] Worker {worker_id} started successfully.")
 
   while True:
     message = await message_queue.get()
     try:
-      # Drop stale queue build-ups under heavy load
-      if message_queue.qsize() > 20:
-        message_queue.task_done()
-        continue
-
       current_date = datetime.now().date()
       if current_date != last_reset_date:
         daily_request_count = 0
         last_reset_date = current_date
 
-      # Hard stop at 950 requests to safely stay under the 1,000/day free limit
       if daily_request_count >= 950:
         message_queue.task_done()
         continue
-
-      # Enforce a short 6-second cooldown per channel to conserve quota against spam
-      channel_id = message.channel.id
-      if channel_id in channel_cooldowns:
-        elapsed = time.time() - channel_cooldowns[channel_id]
-        if elapsed < 6:
-          message_queue.task_done()
-          continue
 
       prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
       if not prompt:
@@ -145,100 +126,42 @@ async def worker(worker_id):
             ):
               reply_text = candidate.content.parts[0].text
               daily_request_count += 1
-              channel_cooldowns[channel_id] = time.time()
         except asyncio.TimeoutError:
-          print(f"Worker {worker_id}: Gemini API request timed out after 15s.")
-        except Exception as e:
-          print(f"API Error in worker {worker_id}: {str(e)}")
+          print(f"[WORKER {worker_id}] Gemini API request timed out.")
+        except Exception as api_err:
+          print(f"[WORKER {worker_id}] API Error: {api_err}")
 
       if reply_text:
         try:
           await message.reply(reply_text)
-          replied_message_ids.add(message.id)
-          last_bot_activity_time = time.time()
-        except Exception as send_error:
-          print(f"Failed to send reply: {send_error}")
+          print(f"[REPLY SENT] Responded to {message.author}: {reply_text}")
+        except Exception as send_err:
+          print(f"[SEND ERROR]: {send_err}")
 
-    except Exception as worker_error:
-      print(f"Worker {worker_id} exception: {worker_error}")
+    except Exception as worker_err:
+      print(f"[WORKER ERROR]: {worker_err}")
     finally:
       message_queue.task_done()
 
 
-async def idle_search_loop():
-  """Lightweight idle loop: picks ONE random channel per cycle to avoid rate limits."""
-  global last_bot_activity_time
-  await bot.wait_until_ready()
-  await asyncio.sleep(15)  # Startup warm-up
-
-  while True:
-    await asyncio.sleep(30)  # Check every 30 seconds
-    try:
-      # Use > 600 (10 minutes) for production; keep > 30 for quick testing
-      if time.time() - last_bot_activity_time > 30:
-        print("[IDLE LOOP] Searching for an inactive channel to revive...")
-
-        # Collect all valid text channels the bot has access to across all servers
-        valid_channels = []
-        for guild in bot.guilds:
-          for channel in guild.text_channels:
-            perms = channel.permissions_for(guild.me)
-            if perms.read_message_history and perms.read_messages:
-              valid_channels.append(channel)
-
-        if not valid_channels:
-          print("[IDLE LOOP] No valid channels found.")
-          continue
-
-        # Pick ONE random channel out of the 100-200 channels instead of scanning all of them!
-        chosen_channel = random.choice(valid_channels)
-        print(f"[IDLE LOOP] Randomly selected #{chosen_channel.name} to check.")
-
-        eligible_messages = []
-        try:
-          async for message in chosen_channel.history(limit=50):
-            if message.author == bot.user:
-              continue
-            if message.type != discord.MessageType.default:
-              continue
-            if message.id in replied_message_ids:
-              continue
-            if not message.content.strip():
-              continue
-
-            eligible_messages.append(message)
-        except Exception as chan_err:
-          print(f"[IDLE LOOP] Error reading history in #{chosen_channel.name}: {chan_err}")
-
-        # If we found unreplied messages in this channel, pick one at random
-        if eligible_messages:
-          chosen_message = random.choice(eligible_messages)
-          replied_message_ids.add(chosen_message.id)
-
-          await message_queue.put(chosen_message)
-          print(
-              f"[IDLE SUCCESS] Reviving chat with message from {chosen_message.author}"
-              f" in #{chosen_channel.name}: '{chosen_message.content}'"
-          )
-          last_bot_activity_time = time.time()
-        else:
-          print(f"[IDLE LOOP] No unreplied messages found in #{chosen_channel.name} this cycle.")
-
-    except Exception as loop_err:
-      print(f"[IDLE LOOP ERROR]: {loop_err}")
-
 @bot.event
 async def on_ready():
-  print(f"Oatmeal AI logged in successfully as {bot.user}")
+  print(f"[CONNECTED] Logged in successfully as {bot.user} (ID: {bot.user.id})")
+  print(f"[SERVERS] Connected to {len(bot.guilds)} Discord server(s).")
   for i in range(2):
     bot.loop.create_task(worker(i + 1))
-  bot.loop.create_task(idle_search_loop())
 
 
 @bot.event
 async def on_message(message):
   if message.author == bot.user:
     return
+
+  print(
+      f"[MESSAGE RECEIVED] From {message.author} in #{message.channel.name}:"
+      f" {message.content}"
+  )
+
   try:
     if message_queue.full():
       try:
@@ -247,8 +170,8 @@ async def on_message(message):
       except asyncio.QueueEmpty:
         pass
     await message_queue.put(message)
-  except Exception as e:
-    print(f"Queue insertion error: {e}")
+  except Exception as q_err:
+    print(f"[QUEUE ERROR]: {q_err}")
 
 
 bot.run(DISCORD_TOKEN)
