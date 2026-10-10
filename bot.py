@@ -60,8 +60,8 @@ ai_client = OpenAI(
     api_key=GROQ_API_KEY
 )
 
-# Updated to a standard active Groq model ID
-MODEL_NAME = "llama-3.3-70b-versatile"
+# Active Groq model with a 14,400 requests/day free tier limit
+MODEL_NAME = "llama-3.1-8b-instant"
 
 intents = discord.Intents.default()
 intents.message_content = True
