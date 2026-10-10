@@ -26,14 +26,19 @@ KNOWLEDGE_TEXT = ""
 TRIGGER_WORDS = set()
 KNOWLEDGE_FILE = "knowledge.txt"
 
-if os.path.exists(KNOWLEDGE_FILE):
-    with open(KNOWLEDGE_FILE, "r", encoding="utf-8") as f:
+current_dir = os.path.dirname(os.path.abspath(__file__))
+file_path = os.path.join(current_dir, KNOWLEDGE_FILE)
+
+print(f"Looking for knowledge file at: {file_path}")
+
+if os.path.exists(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
         KNOWLEDGE_TEXT = f.read()
         words = re.findall(r'\b\w+\b', KNOWLEDGE_TEXT.lower())
         TRIGGER_WORDS = set(words)
-    print(f"Loaded {len(TRIGGER_WORDS)} trigger words and file content from {KNOWLEDGE_FILE}")
+    print(f"SUCCESS: Loaded {len(TRIGGER_WORDS)} trigger words and file content from {KNOWLEDGE_FILE}")
 else:
-    print(f"Warning: {KNOWLEDGE_FILE} not found. Bot will only trigger on direct mentions.")
+    print(f"CRITICAL WARNING: {KNOWLEDGE_FILE} was NOT found in {current_dir}!")
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
