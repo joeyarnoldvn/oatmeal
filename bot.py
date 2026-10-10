@@ -19,7 +19,7 @@ class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
     self.wfile.write(b"Oatmeal AI is running!")
 
   def log_message(self, format, *args):
-    pass  # Suppress noisy request logs
+    pass
 
 
 def run_server():
@@ -28,7 +28,6 @@ def run_server():
 
 
 threading.Thread(target=run_server, daemon=True).start()
-print(f"Health-check server active on port {PORT}")
 
 # 2. Initialize Discord and Gemini API
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
