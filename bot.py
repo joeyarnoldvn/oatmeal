@@ -166,73 +166,63 @@ async def worker(worker_id):
 
 
 async def idle_search_loop():
-  """Scans history deeply across all servers/channels, picks a random past message, and revives chat."""
+  """Lightweight idle loop: picks ONE random channel per cycle to avoid rate limits."""
   global last_bot_activity_time
   await bot.wait_until_ready()
-  await asyncio.sleep(15)  # Quick startup warm-up
+  await asyncio.sleep(15)  # Startup warm-up
 
   while True:
-    await asyncio.sleep(30)  # Check every 30 seconds during testing
+    await asyncio.sleep(30)  # Check every 30 seconds
     try:
-      # Temporarily set to > 30 seconds for easy testing (change back to > 600 later)
+      # Use > 600 (10 minutes) for production; keep > 30 for quick testing
       if time.time() - last_bot_activity_time > 30:
-        print(
-            "[IDLE LOOP] Idle threshold reached. Scanning servers for older"
-            " messages..."
-        )
+        print("[IDLE LOOP] Searching for an inactive channel to revive...")
 
-        eligible_messages = []
-
-        # Gather eligible messages across ALL guilds and text channels
+        # Collect all valid text channels the bot has access to across all servers
+        valid_channels = []
         for guild in bot.guilds:
           for channel in guild.text_channels:
-            try:
-              perms = channel.permissions_for(guild.me)
-              if perms.read_message_history and perms.read_messages:
-                print(
-                    f"[IDLE LOOP] Checking #{channel.name} in guild"
-                    f" {guild.name}..."
-                )
-                # Increased limit to 100 to search deeper past system/join notices
-                async for message in channel.history(limit=100):
-                  # Skip bot messages
-                  if message.author == bot.user:
-                    continue
-                  # Skip system/join notices (like 'Wave to say hi!')
-                  if message.type != discord.MessageType.default:
-                    continue
-                  # Skip already-replied messages
-                  if message.id in replied_message_ids:
-                    continue
-                  # Skip empty content
-                  if not message.content.strip():
-                    continue
+            perms = channel.permissions_for(guild.me)
+            if perms.read_message_history and perms.read_messages:
+              valid_channels.append(channel)
 
-                  eligible_messages.append(message)
-            except Exception as e:
-              print(f"[IDLE LOOP] Error scanning #{channel.name}: {e}")
+        if not valid_channels:
+          print("[IDLE LOOP] No valid channels found.")
+          continue
 
-        print(
-            f"[IDLE LOOP] Total eligible unreplied messages found:"
-            f" {len(eligible_messages)}"
-        )
+        # Pick ONE random channel out of the 100-200 channels instead of scanning all of them!
+        chosen_channel = random.choice(valid_channels)
+        print(f"[IDLE LOOP] Randomly selected #{chosen_channel.name} to check.")
 
-        # Pick a random older message from the pool
+        eligible_messages = []
+        try:
+          async for message in chosen_channel.history(limit=50):
+            if message.author == bot.user:
+              continue
+            if message.type != discord.MessageType.default:
+              continue
+            if message.id in replied_message_ids:
+              continue
+            if not message.content.strip():
+              continue
+
+            eligible_messages.append(message)
+        except Exception as chan_err:
+          print(f"[IDLE LOOP] Error reading history in #{chosen_channel.name}: {chan_err}")
+
+        # If we found unreplied messages in this channel, pick one at random
         if eligible_messages:
           chosen_message = random.choice(eligible_messages)
           replied_message_ids.add(chosen_message.id)
 
           await message_queue.put(chosen_message)
           print(
-              f"[IDLE LOOP SUCCESS] Selected random message from"
-              f" {chosen_message.author} in #{chosen_message.channel.name}:"
-              f" '{chosen_message.content}'"
+              f"[IDLE SUCCESS] Reviving chat with message from {chosen_message.author}"
+              f" in #{chosen_channel.name}: '{chosen_message.content}'"
           )
           last_bot_activity_time = time.time()
         else:
-          print(
-              "[IDLE LOOP] No eligible user messages found in history scan."
-          )
+          print(f"[IDLE LOOP] No unreplied messages found in #{chosen_channel.name} this cycle.")
 
     except Exception as loop_err:
       print(f"[IDLE LOOP ERROR]: {loop_err}")
