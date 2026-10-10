@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 import os
 import random
@@ -99,7 +100,9 @@ async def on_message(message):
 
   async with message.channel.typing():
     try:
-      response = client.models.generate_content(
+      # Run the blocking Gemini request in a separate thread to prevent freezing Discord's event loop
+      response = await asyncio.to_thread(
+          client.models.generate_content,
           model="gemini-3.8-flash",
           contents=(
               "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
