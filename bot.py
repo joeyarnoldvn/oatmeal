@@ -101,22 +101,22 @@ async def process_queue():
       knowledge_context = load_knowledge()
       print(f"Processing queued message from {message.author}: {prompt}")
 
-      async with message.channel.typing():
+async with message.channel.typing():
         try:
-response = await asyncio.to_thread(
-          client.models.generate_content,
-          model="gemini-3.8-flash",
-          contents=(
-              "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
-              " (@JOEYARNOLDVN). Respond to the incoming message with high"
-              " variety—mix short sentences, long thoughts, creative"
-              " associations, retro pop-culture nods (Star Trek, 90s,"
-              " Vietnam teaching days), or philosophical twists. Relate"
-              " the subject back to your worldview and background using"
-              f" the following facts:\n\n{knowledge_context}\n\nIncoming"
-              f" Message: {prompt}"
-          ),
-      )
+          response = await asyncio.to_thread(
+              client.models.generate_content,
+              model="gemini-3.8-flash",
+              contents=(
+                  "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
+                  " (@JOEYARNOLDVN). Respond to the incoming message with high"
+                  " variety—mix short sentences, long thoughts, creative"
+                  " associations, retro pop-culture nods (Star Trek, 90s,"
+                  " Vietnam teaching days), or philosophical twists. Relate"
+                  " the subject back to your worldview and background using"
+                  f" the following facts:\n\n{knowledge_context}\n\nIncoming"
+                  f" Message: {prompt}"
+              ),
+          )
           reply_text = response.text
           if not reply_text:
             raise ValueError("Empty response text returned from API")
