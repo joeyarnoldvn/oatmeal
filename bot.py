@@ -63,15 +63,15 @@ intents.guilds = True
 intents.messages = True
 bot = discord.Client(intents=intents)
 
-# Track replied message IDs to prevent getting stuck in loops
+# Track replied message IDs and recently engaged user IDs
 replied_message_ids = set()
+recent_replied_users = []
 user_cooldowns = {}
 COOLDOWN_SECONDS = 10  
 
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in successfully as {bot.user}")
-    # Start the background idle-activity loop to engage with older/other messages
     bot.loop.create_task(background_engagement_loop())
 
 async def generate_and_send(message, prompt_text, is_extended=False):
@@ -79,7 +79,7 @@ async def generate_and_send(message, prompt_text, is_extended=False):
         return
     replied_message_ids.add(message.id)
 
-    # Limit set size to prevent memory bloat over time
+    # Maintain history set size
     if len(replied_message_ids) > 1000:
         list(replied_message_ids)[:200]
 
@@ -90,18 +90,15 @@ async def generate_and_send(message, prompt_text, is_extended=False):
         )
     else:
         style_instruction = (
-            "This is a casual chat message. Write a very short, punchy, casual message (1 to 2 short sentences max). "
-            "Act just like Oatmeal Joey Arnold. CLEVERLY AND STRICTLY AVOID FABRICATING FALSE EVENTS: "
-            "Do not make up fake activities or lie about things you didn't do. Instead, use real facts, "
-            "history, or inside-baseball details from the knowledge base, or ask a clever, witty, thought-provoking "
-            "question related to what the user said."
+            "This is a casual chat message. Write a VERY SHORT, punchy response (1 to 2 short sentences max). "
+            "Act just like Oatmeal Joey Arnold. If you make wild claims or mention making Suno songs or crazy activities, "
+            "add a funny 'just kidding' or hyperbolic twist. Keep it creative, varied, and weave in questions, "
+            "inside-baseball trivia, or 90s nostalgia without repeating standard templates."
         )
 
     system_prompt = (
         f"You are Oatmeal AI, embodying Joseph Scott Arnold (Oatmeal Joey Arnold). "
-        f"Use the following background knowledge base to inform your persona and life details. "
-        f"CRITICAL RULE: Never fabricate or hallucinate random activities. Stick to true facts, real history, "
-        f"or ask clever, engaging questions:\n{KNOWLEDGE_TEXT}\n\n"
+        f"Use the following background knowledge base to inform your persona and life details:\n{KNOWLEDGE_TEXT}\n\n"
         f"Guidelines: {style_instruction}"
     )
 
@@ -113,11 +110,10 @@ async def generate_and_send(message, prompt_text, is_extended=False):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.7,
+                temperature=0.9,  # Slightly higher temperature for fresh, non-repetitive responses
             )
             reply_text = response.choices[0].message.content
 
-        # Use message.reply() so it explicitly mentions and references the target message
         if len(reply_text) > 2000:
             for i in range(0, len(reply_text), 2000):
                 await message.reply(reply_text[i:i+2000], mention_author=True)
@@ -129,14 +125,13 @@ async def generate_and_send(message, prompt_text, is_extended=False):
 
 @bot.event
 async def on_message(message):
-    # Ignore messages from the bot itself or other bots (avoids bot loops and welcome message loops)
     if message.author.bot:
         return
 
     is_mentioned = bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
 
-    # Random unmentioned filter (90% response rate for live messages)
+    # 90% response rate filter for live unmentioned chat
     if not is_mentioned and not is_dm and random.random() > 0.90:
         return
 
@@ -146,36 +141,46 @@ async def on_message(message):
 
     await generate_and_send(message, clean_prompt, is_extended=(is_mentioned or is_dm))
 
-# --- BACKGROUND LOOP FOR OLDER MESSAGE ENGAGEMENT ---
+# --- BACKGROUND LOOP WITH USER ROTATION ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(45)  # Check periodically to stay active without burning limits too fast
+        await asyncio.sleep(45)
         try:
             for guild in bot.guilds:
-                # Find text channels the bot can send messages in
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not text_channels:
                     continue
                 
-                # Pick a random channel to keep things distributed
                 channel = random.choice(text_channels)
-                
-                # Fetch recent messages in reverse chronological order
+                candidates = []
+
+                # Collect unreplied human messages
                 async for message in channel.history(limit=30):
-                    # Skip bot messages (prevents picking up welcome bots or self-loops)
                     if message.author.bot:
                         continue
-                    # Skip already replied messages
                     if message.id in replied_message_ids:
                         continue
-                    
-                    # Found an unreplied human message in history!
-                    clean_prompt = message.content.strip()
-                    if clean_prompt:
-                        print(f"Background replying to older message from {message.author.name}: {clean_prompt[:30]}...")
-                        await generate_and_send(message, clean_prompt, is_extended=False)
-                        break  # Engage one message per cycle to space out API calls safely
+                    if message.content.strip():
+                        candidates.append(message)
+
+                if not candidates:
+                    continue
+
+                # User rotation logic: prefer users who haven't been replied to recently
+                preferred_candidates = [m for m in candidates if m.author.id not in recent_replied_users]
+                
+                target_message = preferred_candidates[0] if preferred_candidates else candidates[0]
+                
+                # Track recently engaged user IDs (keep last 5 users)
+                recent_replied_users.append(target_message.author.id)
+                if len(recent_replied_users) > 5:
+                    recent_replied_users.pop(0)
+
+                clean_prompt = target_message.content.strip()
+                print(f"Background replying to {target_message.author.name}: {clean_prompt[:30]}...")
+                await generate_and_send(target_message, clean_prompt, is_extended=False)
+                break
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
 
