@@ -151,12 +151,13 @@ async def worker(worker_id):
         except Exception as e:
           print(f"API Error in worker {worker_id}: {str(e)}")
 
-      if reply_text:
+if reply_text:
         try:
           await message.reply(reply_text)
+          replied_message_ids.add(message.id)
           last_bot_activity_time = time.time()
-        except Exception as send_error:
-          print(f"Failed to send reply: {send_error}")
+        except Exception as send_source:
+          print(f"Failed to send reply: {send_source}")
 
     except Exception as worker_error:
       print(f"Worker {worker_id} exception: {worker_error}")
