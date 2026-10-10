@@ -94,6 +94,7 @@ async def process_queue():
         if elapsed < 15:
           await asyncio.sleep(15 - elapsed)
 
+      # Use the exact message content as the prompt for universal triggers
       prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
       if not prompt:
         prompt = "Say something in your signature style."
@@ -144,16 +145,16 @@ async def process_queue():
 @bot.event
 async def on_ready():
   print(f"Oatmeal AI is live in the cloud as {bot.user}")
-  # Start the background message queue worker
   bot.loop.create_task(process_queue())
 
 
 @bot.event
 async def on_message(message):
+  # Ignore messages sent by the bot itself
   if message.author == bot.user:
     return
 
-  # Drop the message into the queue immediately so nothing is lost
+  # Accept ALL messages (words, phrases, random text) into the queue unconditionally
   await message_queue.put(message)
 
 
