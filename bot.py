@@ -5,7 +5,7 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
-from google import genai
+from openai import OpenAI
 
 # --- 1. RENDER HTTP SERVER BINDING ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -21,13 +21,14 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. LOAD KNOWLEDGE FILE (WITH EMBEDDED FALLBACK) ---
+# --- 2. LOAD KNOWLEDGE FILE CONTENT & TRIGGERS ---
 FALLBACK_KNOWLEDGE = """
 Hawaii is a wonderful topic. The bot should remember information about Hawaii, 
 including its islands, culture, and history when asked.
 """
 
 KNOWLEDGE_TEXT = ""
+TRIGGER_WORDS = set()
 KNOWLEDGE_FILE = "knowledge.txt"
 current_dir = os.path.dirname(os.path.abspath(__file__))
 file_path = os.path.join(current_dir, KNOWLEDGE_FILE)
@@ -42,22 +43,31 @@ else:
     print(f"WARNING: {KNOWLEDGE_FILE} not found on disk. Using embedded fallback knowledge.")
     KNOWLEDGE_TEXT = FALLBACK_KNOWLEDGE
 
+# Extract trigger words from knowledge text
+words = re.findall(r'\b\w+\b', KNOWLEDGE_TEXT.lower())
+TRIGGER_WORDS = {w for w in words if len(w) > 3}
+print(f"Active trigger word count: {len(TRIGGER_WORDS)}")
+
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-if not DISCORD_TOKEN or not GEMINI_API_KEY:
-    raise ValueError("Missing DISCORD_TOKEN or GEMINI_API_KEY in environment variables.")
+if not DISCORD_TOKEN or not GROQ_API_KEY:
+    raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY in environment variables.")
 
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL_NAME = "gemini-3.8-flash"
+# Initialize Groq client using its OpenAI-compatible base URL
+ai_client = OpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=GROQ_API_KEY
+)
+MODEL_NAME = "llama-3.1-8b-instant"
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
 user_cooldowns = {}
-COOLDOWN_SECONDS = 30  # 30-second cooldown per user to protect daily quotas
+COOLDOWN_SECONDS = 10  # Reduced cooldown since Groq has a massive free tier limit
 
 @bot.event
 async def on_ready():
@@ -65,12 +75,17 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Ignore messages from the bot itself
     if message.author == bot.user:
         return
 
     is_mentioned = bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
+
+    message_words = set(re.findall(r'\b\w+\b', message.content.lower()))
+    has_trigger_word = bool(TRIGGER_WORDS.intersection(message_words))
+
+    if not is_mentioned and not is_dm and not has_trigger_word:
+        return
 
     # --- 4. RATE LIMITING ---
     user_id = message.author.id
@@ -82,7 +97,7 @@ async def on_message(message):
             if is_mentioned or is_dm:
                 remaining = int(COOLDOWN_SECONDS - elapsed)
                 await message.channel.send(
-                    f"⏳ Please wait {remaining} seconds before my next response to conserve API free-tier quotas.",
+                    f"⏳ Please wait {remaining} seconds before my next response.",
                     delete_after=10
                 )
             return
@@ -93,23 +108,22 @@ async def on_message(message):
     if not clean_prompt:
         clean_prompt = "Hello!"
 
-    # Combine knowledge file text with the user prompt so Gemini can draw answers from it
-    full_prompt = f"You are Oatmeal AI. Use the following background knowledge base to help inform your answers if relevant:\n{KNOWLEDGE_TEXT}\n\nUser Message: {clean_prompt}"
-
-    # --- 5. GEMINI API GENERATION (Non-Blocking Executor) ---
+    # --- 5. GROQ API GENERATION (Non-Blocking Executor) ---
     try:
         async with message.channel.typing():
-            await asyncio.sleep(6)  # Safety spacer for per-minute rate limits
-
             response = await bot.loop.run_in_executor(
                 None,
-                lambda: ai_client.models.generate_content(
+                lambda: ai_client.chat.completions.create(
                     model=MODEL_NAME,
-                    contents=full_prompt,
+                    messages=[
+                        {"role": "system", "content": f"You are Oatmeal AI. Use the following background knowledge base to help inform your answers if relevant:\n{KNOWLEDGE_TEXT}"},
+                        {"role": "user", "content": clean_prompt}
+                    ],
+                    temperature=0.7,
                 )
             )
             
-            reply_text = response.text
+            reply_text = response.choices[0].message.content
 
         if len(reply_text) > 2000:
             for i in range(0, len(reply_text), 2000):
@@ -119,12 +133,7 @@ async def on_message(message):
 
     except Exception as e:
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            print("Quota limit (429 / RESOURCE_EXHAUSTED) hit.")
-            if is_mentioned or is_dm:
-                await message.channel.send("⚠️ Free-tier request limit reached. Please try again later.")
-        else:
-            if is_mentioned or is_dm:
-                await message.channel.send("❌ An error occurred while communicating with the AI model.")
+        if is_mentioned or is_dm:
+            await message.channel.send("❌ An error occurred while communicating with the AI model.")
 
 bot.run(DISCORD_TOKEN)
