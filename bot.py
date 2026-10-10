@@ -1,4 +1,6 @@
 import os
+import time
+import random
 import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -36,9 +38,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
-# Rate limiting dictionary to prevent spamming the free tier quota
+# Rate limiting and probability settings
 user_cooldowns = {}
-COOLDOWN_SECONDS = 60  # Enforces a 1-minute pause per user to respect strict daily/minute caps
+COOLDOWN_SECONDS = 60  # Enforces a 1-minute pause per user
+CHANCE_TO_RESPOND = 0.05  # 5% chance to respond to random unmentioned chat messages
 
 @bot.event
 async def on_ready():
@@ -50,23 +53,28 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Only respond if the bot is mentioned or it's a direct message
-    if bot.user not in message.mentions and not isinstance(message.channel, discord.DMChannel):
-        return
+    # Check mention / DM conditions
+    is_mentioned = bot.user in message.mentions
+    is_dm = isinstance(message.channel, discord.DMChannel)
+
+    # If NOT mentioned and NOT a DM, roll the probability check
+    if not is_mentioned and not is_dm:
+        if random.random() > CHANCE_TO_RESPOND:
+            return  # Skip responding to save API quota
 
     # --- 3. RATE LIMITING & QUOTA PROTECTION ---
     user_id = message.author.id
-    import time
     current_time = time.time()
     
     if user_id in user_cooldowns:
         elapsed = current_time - user_cooldowns[user_id]
         if elapsed < COOLDOWN_SECONDS:
-            remaining = int(COOLDOWN_SECONDS - elapsed)
-            await message.channel.send(
-                f"⏳ Please wait {remaining} seconds before my next response to conserve API free-tier quotas.",
-                delete_after=10
-            )
+            if is_mentioned or is_dm:
+                remaining = int(COOLDOWN_SECONDS - elapsed)
+                await message.channel.send(
+                    f"⏳ Please wait {remaining} seconds before my next response to conserve API free-tier quotas.",
+                    delete_after=10
+                )
             return
 
     user_cooldowns[user_id] = current_time
@@ -78,10 +86,8 @@ async def on_message(message):
 
     # --- 4. GEMINI API GENERATION ---
     try:
-        # Show typing indicator while generating content
         async with message.channel.typing():
-            # Strict safety spacer to honor per-minute rate limits (10 RPM baseline)
-            await asyncio.sleep(6)
+            await asyncio.sleep(6)  # Safety spacer for per-minute rate limits
 
             response = ai_client.models.generate_content(
                 model=MODEL_NAME,
@@ -90,7 +96,6 @@ async def on_message(message):
             
             reply_text = response.text
 
-        # Discord message chunking if response exceeds 2000 characters
         if len(reply_text) > 2000:
             for i in range(0, len(reply_text), 2000):
                 await message.channel.send(reply_text[i:i+2000])
@@ -100,9 +105,10 @@ async def on_message(message):
     except Exception as e:
         print(f"API Error: {e}")
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            await message.channel.send("⚠️ Free-tier daily or minute request limit reached (Quota exhausted). Please try again later.")
+            if is_mentioned or is_dm:
+                await message.channel.send("⚠️ Free-tier daily or minute request limit reached (Quota exhausted). Please try again later.")
         else:
-            await message.channel.send("❌ An error occurred while communicating with the AI model.")
+            if is_mentioned or is_dm:
+                await message.channel.send("❌ An error occurred while communicating with the AI model.")
 
-# Run the Discord Bot
 bot.run(DISCORD_TOKEN)
