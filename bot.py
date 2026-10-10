@@ -51,49 +51,47 @@ def load_knowledge():
 
 
 async def process_queue():
-  """Background worker that processes messages one by one, respecting cooldowns."""
+  """Background worker that processes messages sequentially, respecting cooldowns."""
   global daily_request_count, last_reset_date, global_error_lockout_until
-  print("Queue worker started successfully.")
+  print("Background queue worker loop started successfully.")
 
   while True:
     message = await message_queue.get()
     try:
-      print(f"Picked up message from queue: '{message.content}'")
+      print(f"Queue worker picked up message from: {message.author}")
       current_date = datetime.now().date()
       if current_date != last_reset_date:
         daily_request_count = 0
         last_reset_date = current_date
 
       if daily_request_count >= 1000:
-        print("Daily request limit reached.")
         message_queue.task_done()
         continue
 
       now = time.time()
       if now < global_error_lockout_until:
         wait_time = global_error_lockout_until - now
-        print(f"Error lockout active. Waiting {int(wait_time)}s...")
         await asyncio.sleep(wait_time)
 
       channel_id = message.channel.id
       if channel_id in channel_cooldowns:
         elapsed = time.time() - channel_cooldowns[channel_id]
         if elapsed < 15:
-          wait_cd = 15 - elapsed
-          print(f"Channel cooldown active. Waiting {int(wait_cd)}s...")
-          await asyncio.sleep(wait_cd)
+          await asyncio.sleep(15 - elapsed)
 
       prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
       if not prompt:
         prompt = "Say something in your signature style."
 
       knowledge_context = load_knowledge()
-      print(f"Calling Gemini API for prompt: {prompt}")
+      print(f"Sending prompt to Gemini: {prompt}")
 
       reply_text = None
       async with message.channel.typing():
         try:
-          response = await client.aio.models.generate_content(
+          # Run the synchronous GenAI request safely in a thread
+          response = await asyncio.to_thread(
+              client.models.generate_content,
               model="gemini-3.8-flash",
               contents=(
                   "You are Oatmeal AI, embodying Oatmeal Joey Arnold"
@@ -110,35 +108,30 @@ async def process_queue():
             reply_text = response.text
             channel_cooldowns[channel_id] = time.time()
             daily_request_count += 1
-            print("Gemini response generated successfully.")
-          else:
-            print("Gemini returned an empty response.")
-        except Exception as api_err:
+            print("Gemini successfully generated a response.")
+        except Exception as e:
           import traceback
 
-          print(f"API Error caught during generate_content: {str(api_err)}")
+          print(f"Gemini API Error: {str(e)}")
           traceback.print_exc()
           global_error_lockout_until = time.time() + 60
 
       if reply_text:
         try:
           await message.reply(reply_text)
-          print("Reply successfully sent to Discord.")
+          print("Reply sent to Discord successfully.")
         except Exception as send_error:
           print(f"Failed to send reply to Discord: {send_error}")
 
     except Exception as worker_error:
-      import traceback
-
-      print(f"Queue worker inner exception: {worker_error}")
-      traceback.print_exc()
+      print(f"Queue worker exception: {worker_error}")
     finally:
       message_queue.task_done()
 
 
 @bot.event
 async def on_ready():
-  print(f"Oatmeal AI is live in the cloud as {bot.user}")
+  print(f"Oatmeal AI logged in successfully as {bot.user}")
   bot.loop.create_task(process_queue())
 
 
@@ -146,7 +139,7 @@ async def on_ready():
 async def on_message(message):
   if message.author == bot.user:
     return
-  print(f"Message received from {message.author}: {message.content}")
+  print(f"Incoming Discord message detected from {message.author}: {message.content}")
   await message_queue.put(message)
 
 
