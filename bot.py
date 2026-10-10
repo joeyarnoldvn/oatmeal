@@ -55,19 +55,20 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 if not DISCORD_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY in environment variables.")
 
-# Initialize Groq client using its OpenAI-compatible base URL
 ai_client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
     api_key=GROQ_API_KEY
 )
-MODEL_NAME = "llama-3.1-8b-instant"
+
+# Updated to a standard active Groq model ID
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = discord.Client(intents=intents)
 
 user_cooldowns = {}
-COOLDOWN_SECONDS = 10  # Reduced cooldown since Groq has a massive free tier limit
+COOLDOWN_SECONDS = 10  
 
 @bot.event
 async def on_ready():
