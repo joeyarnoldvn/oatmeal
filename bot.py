@@ -101,7 +101,7 @@ async def process_queue():
       knowledge_context = load_knowledge()
       print(f"Processing queued message from {message.author}: {prompt}")
 
-async with message.channel.typing():
+      async with message.channel.typing():
         try:
           response = await asyncio.to_thread(
               client.models.generate_content,
