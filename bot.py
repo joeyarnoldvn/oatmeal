@@ -33,7 +33,8 @@ intents.message_content = True
 bot = discord.Client(intents=intents)
 
 # Safeguards & Tracking
-cooldowns = {}  # Tracks last trigger timestamps per channel
+channel_cooldowns = {}  # Tracks last successful response per channel
+global_error_lockout_until = 0  # Locks the bot completely if an error happens
 daily_request_count = 0
 last_reset_date = datetime.now().date()
 
@@ -69,7 +70,7 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-  global daily_request_count, last_reset_date
+  global daily_request_count, last_reset_date, global_error_lockout_until
 
   if message.author == bot.user:
     return
@@ -82,13 +83,18 @@ async def on_message(message):
   if daily_request_count >= 1000:
     return
 
-  channel_id = message.channel.id
   now = time.time()
-  if channel_id in cooldowns and (now - cooldowns[channel_id] < 10):
-    return
 
-  cooldowns[channel_id] = now
-  daily_request_count += 1
+  # 1. Check if the bot is currently in an error timeout lockout period (e.g., 60 seconds)
+  if now < global_error_lockout_until:
+    return  # Completely ignore all messages while locked out
+
+  # 2. Enforce 15-second channel cooldown for normal messages
+  channel_id = message.channel.id
+  if channel_id in channel_cooldowns and (
+      now - channel_cooldowns[channel_id] < 15
+  ):
+    return
 
   prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
   if not prompt:
@@ -100,7 +106,6 @@ async def on_message(message):
 
   async with message.channel.typing():
     try:
-      # Using gemini-2.5-flash for stable free-tier performance
       response = await asyncio.to_thread(
           client.models.generate_content,
           model="gemini-2.5-flash",
@@ -117,9 +122,16 @@ async def on_message(message):
       )
       reply_text = response.text
       if not reply_text:
-        reply_text = random.choice(ERROR_FALLBACKS)
+        raise ValueError("Empty response text")
+
+      # Success: Update channel cooldown normally (e.g., 15 seconds)
+      channel_cooldowns[channel_id] = time.time()
+      daily_request_count += 1
+
     except Exception as e:
       print(f"API Error encountered: {str(e)}")
+      # ERROR TIMEOUT: Lock out the bot completely for 60 seconds after any error
+      global_error_lockout_until = time.time() + 60
       reply_text = random.choice(ERROR_FALLBACKS)
 
   try:
