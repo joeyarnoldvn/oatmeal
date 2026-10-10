@@ -183,4 +183,10 @@ async def on_message(message):
 
 
 if __name__ == "__main__":
+  try:
+    print("[STARTUP] Initializing Discord client...")
+    bot.run(DISCORD_TOKEN)
+except Exception as e:
+  print(f"[CRASH ERROR] Bot failed to start: {e}")
+
   bot.run(DISCORD_TOKEN)
