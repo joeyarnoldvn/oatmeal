@@ -21,24 +21,29 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. LOAD KNOWLEDGE FILE CONTENT & TRIGGERS ---
-KNOWLEDGE_TEXT = ""
-TRIGGER_WORDS = set()
-KNOWLEDGE_FILE = "knowledge.txt"
+# --- 2. LOAD KNOWLEDGE FILE (WITH EMBEDDED FALLBACK) ---
+FALLBACK_KNOWLEDGE = """
+Hawaii is a wonderful topic. The bot should remember information about Hawaii, 
+including its islands, culture, and history when asked.
+"""
 
+KNOWLEDGE_TEXT = ""
+KNOWLEDGE_FILE = "knowledge.txt"
 current_dir = os.path.dirname(os.path.abspath(__file__))
 file_path = os.path.join(current_dir, KNOWLEDGE_FILE)
-
-print(f"Looking for knowledge file at: {file_path}")
 
 if os.path.exists(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         KNOWLEDGE_TEXT = f.read()
-        words = re.findall(r'\b\w+\b', KNOWLEDGE_TEXT.lower())
-        TRIGGER_WORDS = set(words)
-    print(f"SUCCESS: Loaded {len(TRIGGER_WORDS)} trigger words and file content from {KNOWLEDGE_FILE}")
+    print(f"SUCCESS: Loaded knowledge from {KNOWLEDGE_FILE}")
 else:
-    print(f"CRITICAL WARNING: {KNOWLEDGE_FILE} was NOT found in {current_dir}!")
+    print(f"WARNING: {KNOWLEDGE_FILE} not found on disk. Using embedded fallback knowledge.")
+    KNOWLEDGE_TEXT = FALLBACK_KNOWLEDGE
+
+# Extract trigger words from the active knowledge text
+words = re.findall(r'\b\w+\b', KNOWLEDGE_TEXT.lower())
+TRIGGER_WORDS = set(words)
+print(f"Active trigger word count: {len(TRIGGER_WORDS)}")
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
