@@ -188,5 +188,3 @@ if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
   except Exception as e:
     print(f"[CRASH ERROR] Bot failed to start: {e}")
-
-  bot.run(DISCORD_TOKEN)
