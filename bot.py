@@ -26,7 +26,6 @@ threading.Thread(target=run_http_server, daemon=True).start()
 
 # --- 2. FETCH KNOWLEDGE FROM GITHUB REPO (knowledge.txt) ---
 def fetch_knowledge_from_github():
-    # Fetching knowledge.txt directly from your GitHub repo to save tokens and ensure efficiency
     github_url = os.environ.get("KNOWLEDGE_GITHUB_URL", "https://raw.githubusercontent.com/joeyarnoldvn/oatmeal/main/knowledge.txt")
     headers = {'User-Agent': 'Mozilla/5.0'}
     
@@ -39,7 +38,6 @@ def fetch_knowledge_from_github():
     except Exception as e:
         print(f"Could not fetch knowledge from GitHub, using fallback text: {e}")
     
-    # Fallback essential knowledge if GitHub fetch fails
     return (
         "You are Joseph Scott Arnold, also known as Oatmeal Joey Arnold (joeyarnoldvn), "
         "born February 11, 1985 in Forest Grove, Oregon. You are a prolific blogger, filmmaker, "
@@ -71,7 +69,6 @@ bot = discord.Client(intents=intents)
 
 replied_message_ids = set()
 recent_replied_users = []
-COOLDOWN_SECONDS = 10  
 
 @bot.event
 async def on_ready():
@@ -95,9 +92,12 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         )
     else:
         style_instruction = (
-            "You MUST reply with EXACTLY ONE SINGLE WORD at least 90% of the time, or a very brief code/inside-baseball fragment. "
-            "Never repeat the exact same word every time. Be unique, use inside jokes, code fragments, metaphors, "
-            "absurdity, or unique references to your life facts from knowledge.txt."
+            "Be extremely unpredictable, random, and varied. Mix it up completely each time so no one can guess what you will do! "
+            "Priority 1: Reference your life history from knowledge.txt in some unique way (e.g. growing up in Forest Grove space 163, "
+            "living in Hawaii, teaching English in Vietnam, driving in Washington/Shelton, making Arnold Attic videos, farming, VCR archives). "
+            "Priority 2: Sometimes ask unique, unexpected questions (e.g. 'What do you want to be when you grow up?', 'If you were an animal...'). "
+            "Priority 3: Offer random insights, code snippets, inside jokes, or wisdom. "
+            "Length constraint: Most of the time write short sentences or 1-5 words. Keep everyone guessing!"
         )
 
     system_prompt = (
@@ -114,15 +114,16 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.95,
+                temperature=1.0,  # Maximize randomness and variety
             )
             reply_text = response.choices[0].message.content.strip()
 
         if not is_extended:
-            # Enforce single word or very short fragment for background / non-mentioned triggers
+            # Randomize length for background messages to keep it unpredictable (1 to 8 words)
             words = reply_text.split()
-            if words and random.random() < 0.90:
-                reply_text = words[0]
+            if words and random.random() < 0.85:
+                take_count = random.randint(1, min(6, len(words)))
+                reply_text = " ".join(words[:take_count])
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -145,7 +146,7 @@ async def on_message(message):
     is_mentioned = bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
 
-    if not is_mentioned and not is_dm and random.random() > 0.90:
+    if not is_mentioned and not is_dm and random.random() > 0.92:
         return
 
     clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
@@ -154,11 +155,12 @@ async def on_message(message):
 
     await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=(is_mentioned or is_dm))
 
-# --- BACKGROUND LOOP: FAIR ROTATION, ONE MESSAGE PER PERSON, NO LOOPS ---
+# --- BACKGROUND LOOP: SLOWED DOWN TO CONSERVE TOKENS & ALPHABETICAL MEMBER FALLBACK ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(60)
+        # Slowed down to 300 seconds (5 minutes) to protect tokens from rate limiting
+        await asyncio.sleep(300)
         try:
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
@@ -166,40 +168,46 @@ async def background_engagement_loop():
                     continue
                 
                 channel = random.choice(text_channels)
-                action_choice = random.choice(["chat", "member"])
-
-                if action_choice == "member" and guild.members:
-                    non_bot_members = [m for m in guild.members if not m.bot and m.id not in recent_replied_users]
-                    if non_bot_members:
-                        target_member = random.choice(non_bot_members)
-                        recent_replied_users.append(target_member.id)
-                        if len(recent_replied_users) > 15:
-                            recent_replied_users.pop(0)
-                        
-                        prompt = f"Give a unique one-word code, fragment, or inside reference to server member {target_member.display_name}."
-                        await generate_and_send(channel, prompt, reference_message=None, target_member=target_member, is_extended=False)
-                        break
-
+                
+                # Priority 1 & 2: Scan channel history for unique users (one reply per user, skipping duplicates)
                 candidates = []
-                async for message in channel.history(limit=30):
+                seen_authors_in_batch = set()
+                async for message in channel.history(limit=40):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
                         continue
                     if message.author.id in recent_replied_users:
-                        continue  
+                        continue
+                    if message.author.id in seen_authors_in_batch:
+                        continue # Skip consecutive/duplicate messages from the same user!
+                    
                     if message.content.strip():
+                        seen_authors_in_batch.add(message.author.id)
                         candidates.append(message)
 
                 if candidates:
                     target_message = random.choice(candidates)
                     recent_replied_users.append(target_message.author.id)
-                    if len(recent_replied_users) > 15:
+                    if len(recent_replied_users) > 20:
                         recent_replied_users.pop(0)
 
                     clean_prompt = target_message.content.strip()
                     await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
                     break
+                
+                # Priority 3: If no unique messages in channel history, fallback to alphabetical member shoutouts
+                if guild.members:
+                    sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
+                    if sorted_members:
+                        target_member = sorted_members[0] # Pick alphabetically first available
+                        recent_replied_users.append(target_member.id)
+                        if len(recent_replied_users) > 20:
+                            recent_replied_users.pop(0)
+                        
+                        prompt = f"Say something random, ask a question, or reference your life to server member {target_member.display_name}."
+                        await generate_and_send(channel, prompt, reference_message=None, target_member=target_member, is_extended=False)
+                        break
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
