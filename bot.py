@@ -27,7 +27,7 @@ threading.Thread(target=run_http_server, daemon=True).start()
 # --- 2. LOAD KNOWLEDGE FILE & HIVERSS FEED ---
 FALLBACK_KNOWLEDGE = """
 Joseph Scott Arnold (Oatmeal Joey Arnold) manages online channels, YouTube, Rumble, 
-and Hive Blog, born in Oregon in 1985.
+and Hive Blog, born in Oregon in 1985. Home video projects started in 1996.
 """
 
 KNOWLEDGE_TEXT = ""
@@ -94,7 +94,7 @@ async def on_ready():
     print(f"Oatmeal AI logged in successfully as {bot.user}")
     bot.loop.create_task(background_engagement_loop())
 
-async def generate_and_send(destination_channel, prompt_text, reference_message=None, is_extended=False):
+async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, is_extended=False):
     if reference_message and reference_message.id in replied_message_ids:
         return
     if reference_message:
@@ -111,8 +111,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     else:
         style_instruction = (
             "Write an EXTREMELY SHORT, punchy message (maximum 1 short sentence, or even just a single word). "
-            "Never use 'just kidding'. Stick strictly to true facts and real history from your background knowledge, "
-            "or ask a quick, clever question. Act just like Joseph Scott Arnold (Oatmeal Joey Arnold)."
+            "Never use 'just kidding'. Stick strictly to true facts and real history from your background knowledge "
+            "(remember: home video projects started in 1996, NOT 1995). Act just like Joseph Scott Arnold (Oatmeal Joey Arnold)."
         )
 
     system_prompt = (
@@ -136,8 +136,12 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
 
+        # If replying to an older message
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
+        # If doing a silent member shoutout, explicitly include their mention tag
+        elif target_member:
+            await destination_channel.send(f"{target_member.mention} {reply_text}")
         else:
             await destination_channel.send(reply_text)
 
@@ -185,8 +189,8 @@ async def background_engagement_loop():
                         if len(recent_replied_users) > 10:
                             recent_replied_users.pop(0)
                         
-                        prompt = f"Say something quick and clever mentioning or nodding to server member {target_member.display_name}."
-                        await generate_and_send(channel, prompt, reference_message=None, is_extended=False)
+                        prompt = f"Say something quick and clever nodding to server member {target_member.display_name}."
+                        await generate_and_send(channel, prompt, reference_message=None, target_member=target_member, is_extended=False)
                         break
 
                 candidates = []
