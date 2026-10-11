@@ -69,6 +69,7 @@ bot = discord.Client(intents=intents)
 
 replied_message_ids = set()
 recent_replied_users = []
+last_manual_interaction_time = 0  # Timestamp to enforce 10-minute cooldown after mentions/DMs
 
 @bot.event
 async def on_ready():
@@ -76,6 +77,8 @@ async def on_ready():
     bot.loop.create_task(background_engagement_loop())
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, is_extended=False):
+    global last_manual_interaction_time
+
     if reference_message and reference_message.id in replied_message_ids:
         return
     if reference_message:
@@ -85,19 +88,20 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         list(replied_message_ids)[:200]
 
     if is_extended:
+        last_manual_interaction_time = time.time()  # Trigger 10-minute pause for auto-scanning
         style_instruction = (
-            "The user directly mentioned or replied to you. Write an extended, detailed answer drawing directly "
+            "The user directly mentioned, replied to, or DM'd you. Write an extended, detailed answer drawing directly "
             "from your life facts and knowledge base in knowledge.txt. Talk like Joseph Scott Arnold / Oatmeal Joey Arnold: "
             "casual, reflective, high-energy, self-aware, and sequence-focused."
         )
     else:
         style_instruction = (
-            "Be extremely unpredictable, random, and varied. Mix it up completely each time so no one can guess what you will do! "
-            "Priority 1: Reference your life history from knowledge.txt in some unique way (e.g. growing up in Forest Grove space 163, "
-            "living in Hawaii, teaching English in Vietnam, driving in Washington/Shelton, making Arnold Attic videos, farming, VCR archives). "
-            "Priority 2: Sometimes ask unique, unexpected questions (e.g. 'What do you want to be when you grow up?', 'If you were an animal...'). "
-            "Priority 3: Offer random insights, code snippets, inside jokes, or wisdom. "
-            "Length constraint: Most of the time write short sentences or 1-5 words. Keep everyone guessing!"
+            "Be extremely unpredictable, random, and varied. Mix it up completely so no one can guess what you will do! "
+            "CRITICAL REQUIREMENT (50% frequency): Naturally reference specific details from your life history in knowledge.txt "
+            "(e.g., growing up at space 163 in Forest Grove, traveling or teaching English in Vietnam, moving to Shelton Washington, "
+            "filming Arnold Attic home videos, farming/gardening, VCR/Vtt archives, working landscaping). "
+            "For the other 50%, ask unique unexpected questions, drop wisdom, or share witty thoughts without being repetitive. "
+            "Length: Unpredictable and mixed. Sometimes 1 word, sometimes a short phrase, sometimes up to 5-8 words. Never use repetitive templates!"
         )
 
     system_prompt = (
@@ -114,15 +118,15 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=1.0,  # Maximize randomness and variety
+                temperature=1.0,
             )
             reply_text = response.choices[0].message.content.strip()
 
         if not is_extended:
-            # Randomize length for background messages to keep it unpredictable (1 to 8 words)
+            # Vary sentence/word count unpredictably (1 to 7 words mostly, occasionally slightly longer)
             words = reply_text.split()
-            if words and random.random() < 0.85:
-                take_count = random.randint(1, min(6, len(words)))
+            if words and random.random() < 0.80:
+                take_count = random.randint(1, min(7, len(words)))
                 reply_text = " ".join(words[:take_count])
 
         if len(reply_text) > 2000:
@@ -146,7 +150,7 @@ async def on_message(message):
     is_mentioned = bot.user in message.mentions
     is_dm = isinstance(message.channel, discord.DMChannel)
 
-    if not is_mentioned and not is_dm and random.random() > 0.92:
+    if not is_mentioned and not is_dm and random.random() > 0.94:
         return
 
     clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
@@ -155,13 +159,17 @@ async def on_message(message):
 
     await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=(is_mentioned or is_dm))
 
-# --- BACKGROUND LOOP: SLOWED DOWN TO CONSERVE TOKENS & ALPHABETICAL MEMBER FALLBACK ---
+# --- BACKGROUND LOOP: SLOWED DOWN TO CONSERVE TOKENS (<80% TPD) & 10-MIN PAUSE ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        # Slowed down to 300 seconds (5 minutes) to protect tokens from rate limiting
-        await asyncio.sleep(300)
+        # Slowed down significantly (600 seconds / 10 minutes per background check) to stay well below 80% TPD limit
+        await asyncio.sleep(600)
         try:
+            # Enforce 10-minute pause if someone recently mentioned, replied to, or DM'd the bot
+            if time.time() - last_manual_interaction_time < 600:
+                continue
+
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not text_channels:
@@ -172,7 +180,7 @@ async def background_engagement_loop():
                 # Priority 1 & 2: Scan channel history for unique users (one reply per user, skipping duplicates)
                 candidates = []
                 seen_authors_in_batch = set()
-                async for message in channel.history(limit=40):
+                async for message in channel.history(limit=30):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
@@ -189,7 +197,7 @@ async def background_engagement_loop():
                 if candidates:
                     target_message = random.choice(candidates)
                     recent_replied_users.append(target_message.author.id)
-                    if len(recent_replied_users) > 20:
+                    if len(recent_replied_users) > 25:
                         recent_replied_users.pop(0)
 
                     clean_prompt = target_message.content.strip()
@@ -202,10 +210,10 @@ async def background_engagement_loop():
                     if sorted_members:
                         target_member = sorted_members[0] # Pick alphabetically first available
                         recent_replied_users.append(target_member.id)
-                        if len(recent_replied_users) > 20:
+                        if len(recent_replied_users) > 25:
                             recent_replied_users.pop(0)
                         
-                        prompt = f"Say something random, ask a question, or reference your life to server member {target_member.display_name}."
+                        prompt = f"Say something varied, random, or referencing your life history to server member {target_member.display_name}."
                         await generate_and_send(channel, prompt, reference_message=None, target_member=target_member, is_extended=False)
                         break
 
