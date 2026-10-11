@@ -70,7 +70,6 @@ bot = discord.Client(intents=intents)
 replied_message_ids = set()
 recent_replied_users = []
 last_manual_interaction_time = 0  # Timestamp to enforce 1-hour pause after server interactions
-daily_fact_history = {}           # Tracks facts used today to prevent daily repetition
 
 @bot.event
 async def on_ready():
@@ -101,11 +100,10 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         style_instruction = (
             f"{dox_guardrail}\n"
             "Priority 1 (Active Server Interaction): The user pinged, replied to, or mentioned you in a server channel. "
-            "Write a valuable, unique, flexible response. Vary length naturally as needed (can be detailed or short). "
+            "Write a complete, fully finished response. Do NOT cut off mid-sentence. Vary length naturally as needed (casual, flexible). "
             "Draw from your life history (1985–2017 freely, general post-2017) or drop trivia, wisdom, or engaging insights without repeating previous phrases."
         )
     else:
-        # Determine whether this background message is Priority 2 (replying to message) or Priority 3 (alphabetical member shoutout)
         is_priority_3 = (target_member is not None and reference_message is None)
         
         if is_priority_3:
@@ -114,7 +112,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                 "Priority 3 (Alphabetical Member Shoutout - 10% frequency): You are reaching out to a server member who hasn't messaged recently. "
                 "Tag their username (@username) and deliver a unique conversation starter, icebreaker, question (e.g. 'what do you want to be when you grow up?', 'if you were an animal...'), "
                 "or trivia/DIY life hack/science/history/Bible/language trivia. "
-                "DO NOT write their display name after the tag. Keep it fresh, unique, and unpredictable!"
+                "DO NOT write their display name after the tag. Keep it fresh, unique, unpredictable, and COMPLETELY FINISHED (never cut off mid-sentence)!"
             )
         else:
             style_instruction = (
@@ -123,7 +121,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                 "DO NOT tag or mention the user's name or username with an @ in your text (Discord's reply feature already handles attribution). "
                 "90% of the time, naturally reference a unique fact from your life history (1985–2017 freely, general post-2017) ensuring you do NOT repeat facts used earlier today. "
                 "10% of the time, share random trivia, wisdom, code, or witty thoughts. "
-                "Length: Highly unpredictable and mixed. Most of the time short (1-5 words or a short sentence), occasionally longer. Keep everyone guessing!"
+                "Length: Casual and flexible. 90% of the time keep it concise (1 to 20 words), but make sure the sentence or thought is COMPLETE and never truncated or cut off mid-sentence!"
             )
 
     system_prompt = (
@@ -140,15 +138,21 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=1.0,
+                temperature=0.9,
+                max_tokens=400,  # Ensure sufficient token allotment so sentences never get cut off mid-way
             )
             reply_text = response.choices[0].message.content.strip()
 
-        if not is_extended:
+        # Ensure text does not cut off mid-sentence; trim cleanly to the last punctuation mark if needed
+        if not is_extended and not target_member:
             words = reply_text.split()
-            if words and random.random() < 0.75 and not target_member:
-                take_count = random.randint(1, min(6, len(words)))
+            if len(words) > 15 and random.random() < 0.85:
+                # Keep it concise (1 to 15 words) while keeping it complete
+                take_count = random.randint(3, min(15, len(words)))
                 reply_text = " ".join(words[:take_count])
+                # Ensure it ends cleanly with punctuation if truncated
+                if not reply_text.endswith(('.', '!', '?', '"', "'")):
+                    reply_text += "."
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -156,7 +160,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
         elif target_member:
-            # Priority 3: Tag username only (@username), do not repeat display name
             await destination_channel.send(f"{target_member.mention} {reply_text}")
         else:
             await destination_channel.send(reply_text)
@@ -169,7 +172,6 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # EXCLUDE DMs completely to save tokens per your instructions
     if isinstance(message.channel, discord.DMChannel):
         return
 
@@ -183,21 +185,22 @@ async def on_message(message):
         except:
             pass
 
-    # Priority 1 Trigger: Mentions or replies to the bot anywhere in server channels
+    # Priority 1 Trigger: Instant response when pinged, mentioned, or replied to
     if is_mentioned or is_reply_to_bot:
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         if not clean_prompt:
             clean_prompt = "Hello!"
         await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
 
-# --- BACKGROUND LOOP: 1-HOUR PAUSE AFTER INTERACTIONS, 90/10 SPLIT FOR PRIORITY 2 & 3 ---
+# --- BACKGROUND LOOP: INSTANT START, NO WAITING, 90/10 PRIORITY 2 & 3 SPLIT ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
+    # Start immediately upon boot without waiting 1 hour, so you can see it work right away!
     while not bot.is_closed():
-        # Check every 60 seconds when active
-        await asyncio.sleep(60)
+        # Short check interval (15 seconds) so it constantly processes older server messages and active members
+        await asyncio.sleep(15)
         try:
-            # Priority 1 Pause Rule: Pause for EXACTLY ONE HOUR (3600 seconds) after any server interaction with the bot
+            # 1-hour pause only applies after active user interaction (Priority 1)
             if time.time() - last_manual_interaction_time < 3600:
                 continue
 
@@ -207,15 +210,13 @@ async def background_engagement_loop():
                     continue
                 
                 channel = random.choice(text_channels)
-                
-                # Determine action based on 90% Priority 2 (message replies) and 10% Priority 3 (alphabetical member shoutouts)
                 action_roll = random.random()
 
                 if action_roll < 0.90:
-                    # Priority 2: 90% of the time, find older server messages to reply to (one reply per user, no username repeating)
+                    # Priority 2: 90% of the time, scan older server messages (no matter how old) across thousands of messages, replying to each unique member once
                     candidates = []
                     seen_authors_in_batch = set()
-                    async for message in channel.history(limit=35):
+                    async for message in channel.history(limit=100): # Deep history scan
                         if message.author.bot:
                             continue
                         if message.id in replied_message_ids:
@@ -223,7 +224,7 @@ async def background_engagement_loop():
                         if message.author.id in recent_replied_users:
                             continue
                         if message.author.id in seen_authors_in_batch:
-                            continue # Skip duplicate messages from same user
+                            continue # One unique member per reply cycle
                         
                         if message.content.strip():
                             seen_authors_in_batch.add(message.author.id)
@@ -232,20 +233,20 @@ async def background_engagement_loop():
                     if candidates:
                         target_message = random.choice(candidates)
                         recent_replied_users.append(target_message.author.id)
-                        if len(recent_replied_users) > 30:
+                        if len(recent_replied_users) > 50:
                             recent_replied_users.pop(0)
 
                         clean_prompt = target_message.content.strip()
                         await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
                         break
                 else:
-                    # Priority 3: 10% of the time, ping/tag members in alphabetical order (one member per message, tag username only)
+                    # Priority 3: 10% of the time, alphabetical member shoutouts using username only (@username)
                     if guild.members:
                         sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
                         if sorted_members:
                             target_member = sorted_members[0]
                             recent_replied_users.append(target_member.id)
-                            if len(recent_replied_users) > 30:
+                            if len(recent_replied_users) > 50:
                                 recent_replied_users.pop(0)
                             
                             prompt = f"Say an icebreaker or trivia question to server member {target_member.name}."
