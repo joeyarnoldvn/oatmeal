@@ -121,7 +121,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                 "DO NOT tag or mention the user's name or username with an @ in your text (Discord's reply feature already handles attribution). "
                 "90% of the time, naturally reference a unique fact from your life history (1985–2017 freely, general post-2017) ensuring you do NOT repeat facts used earlier today. "
                 "10% of the time, share random trivia, wisdom, code, or witty thoughts. "
-                "Length: Casual and flexible. 90% of the time keep it concise (1 to 20 words), but make sure the sentence or thought is COMPLETE and never truncated or cut off mid-sentence!"
+                "Length: Casual and flexible. Keep it concise, but make sure the sentence or thought is COMPLETE and never truncated or cut off mid-sentence!"
             )
 
     system_prompt = (
@@ -139,18 +139,19 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "user", "content": prompt_text}
                 ],
                 temperature=0.9,
-                max_tokens=400,  # Ensure sufficient token allotment so sentences never get cut off mid-way
+                max_tokens=400,  # Ensure sufficient token allotment so sentences never get cut off
             )
             reply_text = response.choices[0].message.content.strip()
 
-        # Ensure text does not cut off mid-sentence; trim cleanly to the last punctuation mark if needed
+        # CRITICAL FIX: Prevent sending empty messages which cause Discord 400 Bad Request errors
+        if not reply_text:
+            reply_text = "Oatmeal"
+
         if not is_extended and not target_member:
             words = reply_text.split()
             if len(words) > 15 and random.random() < 0.85:
-                # Keep it concise (1 to 15 words) while keeping it complete
                 take_count = random.randint(3, min(15, len(words)))
                 reply_text = " ".join(words[:take_count])
-                # Ensure it ends cleanly with punctuation if truncated
                 if not reply_text.endswith(('.', '!', '?', '"', "'")):
                     reply_text += "."
 
@@ -192,13 +193,12 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
 
-# --- BACKGROUND LOOP: INSTANT START, NO WAITING, 90/10 PRIORITY 2 & 3 SPLIT ---
+# --- BACKGROUND LOOP: OPTIMIZED INTERVAL TO CONSERVE TOKENS & SCAN SERVER HISTORY ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
-    # Start immediately upon boot without waiting 1 hour, so you can see it work right away!
     while not bot.is_closed():
-        # Short check interval (15 seconds) so it constantly processes older server messages and active members
-        await asyncio.sleep(15)
+        # Set to 90 seconds to prevent hitting Groq rate limits / TPD caps while maintaining active server replies
+        await asyncio.sleep(90)
         try:
             # 1-hour pause only applies after active user interaction (Priority 1)
             if time.time() - last_manual_interaction_time < 3600:
@@ -213,10 +213,10 @@ async def background_engagement_loop():
                 action_roll = random.random()
 
                 if action_roll < 0.90:
-                    # Priority 2: 90% of the time, scan older server messages (no matter how old) across thousands of messages, replying to each unique member once
+                    # Priority 2: 90% of the time, scan older server messages across history, replying to each unique member once
                     candidates = []
                     seen_authors_in_batch = set()
-                    async for message in channel.history(limit=100): # Deep history scan
+                    async for message in channel.history(limit=100):
                         if message.author.bot:
                             continue
                         if message.id in replied_message_ids:
@@ -224,7 +224,7 @@ async def background_engagement_loop():
                         if message.author.id in recent_replied_users:
                             continue
                         if message.author.id in seen_authors_in_batch:
-                            continue # One unique member per reply cycle
+                            continue
                         
                         if message.content.strip():
                             seen_authors_in_batch.add(message.author.id)
