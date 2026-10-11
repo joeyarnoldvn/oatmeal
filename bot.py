@@ -5,7 +5,7 @@ import asyncio
 import threading
 import random
 import urllib.request
-import xml.etree.ElementTree as ET
+import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from openai import OpenAI
@@ -24,44 +24,37 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. LOAD KNOWLEDGE FILE & HIVERSS FEED ---
-FALLBACK_KNOWLEDGE = """
-Joseph Scott Arnold (Oatmeal Joey Arnold) manages online channels, YouTube, Rumble, 
-and Hive Blog, born in Oregon in 1985. Home video projects started in 1996.
-"""
-
-KNOWLEDGE_TEXT = ""
-KNOWLEDGE_FILE = "knowledge.txt"
-current_dir = os.path.dirname(os.path.abspath(__file__))
-file_path = os.path.join(current_dir, KNOWLEDGE_FILE)
-
-if os.path.exists(file_path):
-    with open(file_path, "r", encoding="utf-8") as f:
-        KNOWLEDGE_TEXT = f.read()
-else:
-    KNOWLEDGE_TEXT = FALLBACK_KNOWLEDGE
-
-# Fetch recent blog titles from your Hiverss feed (100% free, zero external API keys needed)
-def fetch_hiverss_updates():
+# --- 2. FETCH THE SPECIFIC HIVE ARTICLE FOR THE TEST ---
+def fetch_target_article():
+    # Fetching JSON/HTML data from the Hive post endpoint or fallback text
+    url = "https://api.hive.blog"
+    headers = {'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "method": "condenser_api.get_content",
+        "params": ["joeyarnoldvn", "npc-lolcow-trolls-v-oatmeal"],
+        "id": 1
+    }).encode('utf-8')
+    
     try:
-        url = "https://hiverss.com/@joeyarnoldvn"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(url, data=payload, headers=headers)
         with urllib.request.urlopen(req, timeout=5) as response:
-            xml_data = response.read()
-            root = ET.fromstring(xml_data)
-            titles = []
-            for item in root.findall('.//item')[:5]:
-                title = item.find('title')
-                if title is not None and title.text:
-                    titles.append(title.text)
-            if titles:
-                return "\nRecent Hiverss Blog Posts:\n- " + "\n- ".join(titles)
+            res_data = json.loads(response.read().decode('utf-8'))
+            if 'result' in res_data and res_data['result'] and 'body' in res_data['result']:
+                body_text = res_data['result']['body']
+                print("SUCCESS: Fetched target article content from Hive API!")
+                return body_text
     except Exception as e:
-        print(f"Could not fetch Hiverss feed: {e}")
-    return ""
+        print(f"Could not fetch target article via API, using fallback text: {e}")
+    
+    # Fallback text summarizing the article theme if API is restricted
+    return (
+        "I titled this article 'NPC Lolcow Trolls v Oatmeal' to talk about me versus the haters. "
+        "People fixated on a fake invisible shadow, easily debunkable lies, and trolls acting like NPCs "
+        "obsessed with talking about Crazy Oatmeal with the goal of pressuring me to leave the Internet."
+    )
 
-hiverss_updates = fetch_hiverss_updates()
-FULL_KNOWLEDGE_BASE = KNOWLEDGE_TEXT + "\n\n" + hiverss_updates
+ARTICLE_CONTENT = fetch_target_article()
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -81,7 +74,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.messages = True
-intents.members = True  # Required to rotate through all server members
+intents.members = True
 bot = discord.Client(intents=intents)
 
 replied_message_ids = set()
@@ -106,18 +99,18 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if is_extended:
         style_instruction = (
             "The user directly mentioned or replied to you. "
-            "Provide a thorough, detailed response incorporating verified facts from your knowledge base and blog."
+            "Provide a detailed response drawing directly on the thoughts and rants from your 'NPC Lolcow Trolls v Oatmeal' article."
         )
     else:
         style_instruction = (
-            "Write an EXTREMELY SHORT, punchy message (maximum 1 short sentence, or even just a single word). "
-            "Never use 'just kidding'. Stick strictly to true facts and real history from your background knowledge "
-            "(remember: home video projects started in 1996, NOT 1995). Act just like Joseph Scott Arnold (Oatmeal Joey Arnold)."
+            "Write an EXTREMELY SHORT, punchy message (1 word to maximum 1 short sentence). "
+            "Do NOT mention VHS tapes or 1996. Instead, draw strictly from the themes of trolls, NPCs, haters, "
+            "and commentary found in your 'NPC Lolcow Trolls v Oatmeal' article. Keep it random and varied."
         )
 
     system_prompt = (
         f"You are Oatmeal AI, embodying Joseph Scott Arnold (Oatmeal Joey Arnold). "
-        f"Use the following background knowledge base and recent Hiverss blog updates:\n{FULL_KNOWLEDGE_BASE}\n\n"
+        f"Base your persona, thoughts, and words EXCLUSIVELY on this specific article text:\n\n{ARTICLE_CONTENT}\n\n"
         f"Guidelines: {style_instruction}"
     )
 
@@ -129,17 +122,15 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.7,
+                temperature=0.95,  # High temperature for maximum variety and zero repetition
             )
             reply_text = response.choices[0].message.content
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
 
-        # If replying to an older message
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
-        # If doing a silent member shoutout, explicitly include their mention tag
         elif target_member:
             await destination_channel.send(f"{target_member.mention} {reply_text}")
         else:
@@ -169,7 +160,7 @@ async def on_message(message):
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(50)  # Safe interval to stay well within Groq limits
+        await asyncio.sleep(50)
         try:
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
@@ -177,8 +168,6 @@ async def background_engagement_loop():
                     continue
                 
                 channel = random.choice(text_channels)
-
-                # Alternate between engaging with chat history and mentioning a silent/un-engaged member
                 action_choice = random.choice(["chat", "member", "member"])
 
                 if action_choice == "member" and guild.members:
@@ -189,7 +178,7 @@ async def background_engagement_loop():
                         if len(recent_replied_users) > 10:
                             recent_replied_users.pop(0)
                         
-                        prompt = f"Say something quick and clever nodding to server member {target_member.display_name}."
+                        prompt = f"Say something quick and random about internet trolls or NPCs to server member {target_member.display_name}."
                         await generate_and_send(channel, prompt, reference_message=None, target_member=target_member, is_extended=False)
                         break
 
