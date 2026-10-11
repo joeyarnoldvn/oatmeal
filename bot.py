@@ -10,12 +10,16 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from openai import OpenAI
 
-# --- 1. RENDER HTTP SERVER BINDING ---
+# --- 1. RENDER HTTP SERVER BINDING (Handles GET and HEAD to prevent 501 errors) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Oatmeal AI is alive and running!")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
 def run_http_server():
     port = int(os.environ.get("PORT", 10000))
@@ -87,7 +91,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if len(replied_message_ids) > 1000:
         list(replied_message_ids)[:200]
 
-    # Anti-doxxing guardrail instruction
     dox_guardrail = (
         "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
         "Do NOT mention living in Shelton, Washington since 2018 (if asked or if it comes up, say 'I'd rather not say'). "
@@ -99,9 +102,10 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         last_manual_interaction_time = time.time()  # Trigger 1-hour pause for auto-scanning
         style_instruction = (
             f"{dox_guardrail}\n"
-            "Priority 1 (Active Server Interaction): The user pinged, replied to, or mentioned you in a server channel. "
-            "Write a complete, fully finished response. Do NOT cut off mid-sentence. Vary length naturally as needed (casual, flexible). "
-            "Draw from your life history (1985–2017 freely, general post-2017) or drop trivia, wisdom, or engaging insights without repeating previous phrases."
+            "Priority 1 (Active Server Interaction / Name Keyword Trigger): The user pinged, replied to, mentioned you, or said your name/alias "
+            "(Joey, Arnold, Oatmeal, joeyarnoldvn) in a server channel. "
+            "Write a complete, fully finished response. Do NOT cut off mid-sentence. Keep it casual, friendly, or inquisitive "
+            "(e.g., 'Hey, did somebody say my name?', 'What do you want?', or a natural life reference/insight). Never repeat phrases."
         )
     else:
         is_priority_3 = (target_member is not None and reference_message is None)
@@ -110,18 +114,17 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             style_instruction = (
                 f"{dox_guardrail}\n"
                 "Priority 3 (Alphabetical Member Shoutout - 10% frequency): You are reaching out to a server member who hasn't messaged recently. "
-                "Tag their username (@username) and deliver a unique conversation starter, icebreaker, question (e.g. 'what do you want to be when you grow up?', 'if you were an animal...'), "
-                "or trivia/DIY life hack/science/history/Bible/language trivia. "
-                "DO NOT write their display name after the tag. Keep it fresh, unique, unpredictable, and COMPLETELY FINISHED (never cut off mid-sentence)!"
+                "Tag their username (@username) and deliver a unique conversation starter, icebreaker, question, or trivia. "
+                "DO NOT write their display name after the tag. Keep it fresh, unique, unpredictable, and COMPLETELY FINISHED!"
             )
         else:
             style_instruction = (
                 f"{dox_guardrail}\n"
                 "Priority 2 (Server Message Reply - 90% frequency): Reply to an existing server message. "
-                "DO NOT tag or mention the user's name or username with an @ in your text (Discord's reply feature already handles attribution). "
-                "90% of the time, naturally reference a unique fact from your life history (1985–2017 freely, general post-2017) ensuring you do NOT repeat facts used earlier today. "
-                "10% of the time, share random trivia, wisdom, code, or witty thoughts. "
-                "Length: Casual and flexible. Keep it concise, but make sure the sentence or thought is COMPLETE and never truncated or cut off mid-sentence!"
+                "DO NOT tag or mention the user's name or username with an @ in your text (Discord's reply feature handles attribution). "
+                "90% of the time, naturally reference a unique fact from your life history (1985–2017 freely, general post-2017) ensuring no repetition. "
+                "10% of the time, share random trivia, wisdom, or witty thoughts. "
+                "Length: Casual and flexible (1 to 25 words), but make sure the sentence or thought is COMPLETE and never truncated."
             )
 
     system_prompt = (
@@ -139,21 +142,12 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "user", "content": prompt_text}
                 ],
                 temperature=0.9,
-                max_tokens=400,  # Ensure sufficient token allotment so sentences never get cut off
+                max_tokens=400,  # Ensure enough token allotment so sentences never get cut off
             )
             reply_text = response.choices[0].message.content.strip()
 
-        # CRITICAL FIX: Prevent sending empty messages which cause Discord 400 Bad Request errors
         if not reply_text:
             reply_text = "Oatmeal"
-
-        if not is_extended and not target_member:
-            words = reply_text.split()
-            if len(words) > 15 and random.random() < 0.85:
-                take_count = random.randint(3, min(15, len(words)))
-                reply_text = " ".join(words[:take_count])
-                if not reply_text.endswith(('.', '!', '?', '"', "'")):
-                    reply_text += "."
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -186,21 +180,26 @@ async def on_message(message):
         except:
             pass
 
-    # Priority 1 Trigger: Instant response when pinged, mentioned, or replied to
-    if is_mentioned or is_reply_to_bot:
+    # Check for name keywords in normal server messages (Joey, Arnold, Oatmeal, joeyarnoldvn)
+    content_lower = message.content.lower()
+    name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
+    has_name_keyword = any(kw in content_lower for kw in name_keywords)
+
+    # Priority 1 Trigger: Instant response when pinged, replied to, or when name keywords are spoken
+    if is_mentioned or is_reply_to_bot or has_name_keyword:
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         if not clean_prompt:
             clean_prompt = "Hello!"
         await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
 
-# --- BACKGROUND LOOP: OPTIMIZED INTERVAL TO CONSERVE TOKENS & SCAN SERVER HISTORY ---
+# --- BACKGROUND LOOP: SLOWED DOWN TO CONSERVE TOKENS & 90/10 SPLIT ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        # Set to 90 seconds to prevent hitting Groq rate limits / TPD caps while maintaining active server replies
-        await asyncio.sleep(90)
+        # Slowed down to 300 seconds (5 minutes) per background check to drastically conserve tokens and prevent Groq 429 limits
+        await asyncio.sleep(300)
         try:
-            # 1-hour pause only applies after active user interaction (Priority 1)
+            # 1-hour pause after active user interactions (Priority 1)
             if time.time() - last_manual_interaction_time < 3600:
                 continue
 
@@ -213,10 +212,10 @@ async def background_engagement_loop():
                 action_roll = random.random()
 
                 if action_roll < 0.90:
-                    # Priority 2: 90% of the time, scan older server messages across history, replying to each unique member once
+                    # Priority 2: 90% of the time, scan older server messages (deep history scan), replying to each unique member once
                     candidates = []
                     seen_authors_in_batch = set()
-                    async for message in channel.history(limit=100):
+                    async for message in channel.history(limit=50):
                         if message.author.bot:
                             continue
                         if message.id in replied_message_ids:
