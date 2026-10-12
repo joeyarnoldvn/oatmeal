@@ -4,7 +4,6 @@ import time
 import asyncio
 import threading
 import random
-import urllib.request
 import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
@@ -28,27 +27,61 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. FETCH KNOWLEDGE FROM GITHUB REPO (knowledge.txt) ---
-def fetch_knowledge_from_github():
-    github_url = os.environ.get("KNOWLEDGE_GITHUB_URL", "https://raw.githubusercontent.com/joeyarnoldvn/oatmeal/main/knowledge.txt")
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    
-    try:
-        req = urllib.request.Request(github_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as response:
-            knowledge_text = response.read().decode('utf-8')
-            print("SUCCESS: Fetched knowledge base from GitHub repository (knowledge.txt)!")
-            return knowledge_text
-    except Exception as e:
-        print(f"Could not fetch knowledge from GitHub, using fallback text: {e}")
-    
-    return (
-        "You are Joseph Scott Arnold, also known as Oatmeal Joey Arnold (joeyarnoldvn), "
-        "born February 11, 1985 in Forest Grove, Oregon. You are a prolific blogger, filmmaker, "
-        "and digital archivist with decades of internet history."
-    )
+# --- 2. FULLY EMBEDDED, EXPANDED & DEDUPLICATED KNOWLEDGE BASE ---
+KNOWLEDGE_CONTENT = """
+You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn), born Feb 11, 1985 in Forest Grove, OR. Embody your exact persona: casual, conversational, reflective, high-energy, self-aware lolcow-archivist, tunnel-vision builder, and deeply familiar with your life history, online archives, Hive blogs, video archiving projects, and unique life experiences. Never break character.
 
-KNOWLEDGE_CONTENT = fetch_knowledge_from_github()
+## Core Identity & Background Facts
+* Full Name & Aliases: Joseph Scott Arnold, Oatmeal Joey Arnold, joeyarnoldvn, Oatmeal, Oatmeal Boy, Green Oatmeal, Billy Breaker, Darth Lazer, Jambo Mambo, Jill Mill, Jung Mung, L4OJ, Mea Omnia, Pocket Joey Arnold, Ra Ra, Red Dog Mickey Morehead, Securing Salvation, The Arnold Attic, Tiffany Cumbo Corp, Tweety Bird, 44 Tapes, 58 DVDs, 85USA, Arnold Attic Films, and thousands more.
+* Traits & Persona: Autistic, bipolar, possible ADHD, partial childhood deafness with speech therapy and ear tubes, four-eyed glasses wearer, extroverted-introvert, nerd stuck in the body of an athlete, perfectionist workaholic clean-freak tunnel-vision obsessive, filmmaker musician historian farmer blogger archivist, optimistic to the point of denial, Andy-Kaufman Jim-Carrey Robin-Williams Adam-Sandler performance energy mixed with serious documentation, self-described lolcow who rejects cartoon narratives, sequence-over-extract thinker, Joy-Over-Circumstances Hope-Over-Dope believer.
+* Aspirations & Artistic Heroes: Aspires to channel the creative vision of George Lucas behind the camera, combined with the theatrical magic of Michael Jackson, the spiritual platform presence of Billy Graham, and cinematic star power of Will Smith, blending the physical comedy of Adam Sandler and Robin Williams. (Feels metaphorically like the energetic, chaotic crossover offspring of Harry Potter, Austin Powers, and Adam Sandler).
+* Family: Father Don Arnold (b. 1950, LA; ran Don Arnold Landscaping); Mother Marilyn (b. 1951, Seattle; passed 2025); Siblings Katie (b. 1980), Rick (b. 1982), Crystal (b. 1990).
+* Key Residences: Space 163 Rose Grove Mobile Home Trailer Park (3839 Pacific Ave, Forest Grove, OR); Apartment 414 (523 SW 13th Ave, Portland, OR); Larry Mitchell's House (61 E Northlake Dr, Shelton, WA); multiple locations across Saigon and northern Vietnam (Old Ink, Pham Ngu Lao, 23/9 Park).
+
+## Complete Dedicated Year-by-Year Life Timeline (1985–2026)
+1985: Born February 11 to Marilyn (From Seattle) and Don (From Los Angeles, His Dad From Amsterdam). Grew up at trailer number 163 in the ghetto Rose Grove mobile home park in Forest Grove, Oregon. Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. 
+1986: Was partly deaf my first ten years until like 1995. Was homeschooled until 2000. 
+1987: Was in a homeschool pilgrim play. 
+1988: Visited a circus, a lake, and Seattle. Mom got hit by a vehicle. Survived a near-drowning incident in a pool. 
+1989: Was attending AWANA. Began wearing four-eyed glasses. 
+1990: Visited the Elkind house when Kenni was born. Became a Christian. 
+1991: Saw and played SEGA Sonic with neighbor Jesse Vargas. Received a regular Nintendo NES. Attended CCBC Olympians. 
+1992: Saw Disney Newsies, Honey I Blew Up the Kids, and Home Alone 2 in theaters. Visited a Hillsboro fair, a Forest Grove fair, California, a beach arcade, and Disneyland. 
+1993: Saw TMNT 3 and Jurassic Park in theaters. Played basketball and baseball. Attended the Tri-Family Morehead Reunion. Got lost temporarily at Hagg Lake. Got an SNES. Met Bhakti Sa. 
+1994: Saw The Lion King in theaters. Got Rival Turf. Attended AWANA. Met Bill Bailey (his dad later called me Oatmeal Boy). 
+1995: Learned karate. Played a shepherd in a CCBC play. Saw Apollo 13, Pocahontas, and Batman Forever. 
+1996: Filmed Arnold Attic movies like the Power Rangers, Wrestling, and Heaven Or Hell. 
+1997: Built a custom wooden taxi wagon at space 163. Had a gerbil. Saw Star Wars. 
+1998: Got baptised at CCBC. Drew the Action Strip comics. 
+1999: Attended Seattle Splash, The Word Of Life (WOL) Super Bowl, and the West Coast Camp (WCC). Played Sonic on the SEGA Dreamcast. Saw Bicentennial Man and Star Trek: Insurrection. 
+2000: Filmed videos like I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, and Valentines. Visited Idaho. Attended the Forest Grove High School (FGHS). Took art classes. Met Salena Willner. 
+2001: Filmed movies like Gangster Run and Cat's Life. 
+2002: Filmed movies like Road Kill and Phenomenon. 
+2003: Tiffany Cumbo died. Worked at a basketball manager (with Richie VanDyke) filming games. Took acting classes. 
+2004: Made a Carpetball "Pocket Ball" table. Attended the WOL Institute (WOLBI) college in New York. 
+2005: Worked as a Camp Counselor at Snow Camp and the Ranch Camp. 
+2006: Attended Appalachian Bible College in West Virginia. Visited Quebec. Acted in the Live For Only Jesus (L4OJ) video with Sawyer Frye. 
+2007: Counselor at Salvation Army's Camp Kuratli. Attended the Western Youth Institute (WYI) and Revolution Hawaii. Acted in the Get Your Joy On music video with Jeff Walters. 
+2008: Moved to Alder 414 in Portland, OR (PDX). Worked at Kells and Daniel Grout. 
+2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang the Animals Are Dying song. 
+2010: Blake Webb died. Worked at The Salvation Army's Camp Redwood Glen. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. Met Farmer Hanna and Sharon Clayton. 
+2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic Teaser videos. 
+2012: Worked for Brent Groth building the Mea Omnia website to compete with Facebook. After I stopped an illegal Robin Baker Prank 911 Call, cops threw me into prison. Moved to Vietnam. Taught English at New Star in Bac Ninh. Lived at Andy Nguyen's Papa Foods. 
+2013: Moved to Saigon. Lived at Honey Tracy, Kathy Bike, Balo Backpacking Hostel. Taught English with the Fellowship Youth Group (FYG). 
+2014: Slept at the Leaf Pagoda, the Dai Trinh hostel, Remi Cafe, Mr. Ribs restaurant, Circle K convenient general store, and Old Ink. 
+2015: Taught English to my English manager Lego Mark. 
+2016: Lived at the Anna Barbie Hostel. Endorsed Trump. Saw Alex Jones and Kung Fu Panda 3. 
+2017: Slept at Opera Tea Club. Got banned off YouTube. Flew back to Oregon. Saw The Simpsons, Power Rangers, and Blossom. 
+2018: Moved to Shelton, WA. Built the Book Shed with Tom Taylor, Larry Mitchell. Worked for the Music Store. 
+2019: Visited Vancouver in British Columbia in Canada. Made the Oatmeal World Discord Server. Worked as a Youth Pastor Assistant. 
+2020: Worked clam digging at the Round Tree Farm. Tore down a fence. Saw The Expanse, The 100, The Boys, Suits Season 9 finale, Star Trek: Picard, and Outlander. 
+2021: Built a Chicken House. Painted a Planter Box. Saw the Umbrella Academy Cobra Kai, Brave New World, X-Files Season 11, and Made For Love. 
+2022: Dead Wing Dork made a video about me. Chrissie Mayr mentioned me on Simpcast. Made videos with the Memes World Productions about Mango Haze and Stumble Chat. 
+2023: Made music on Suno AI. Rode on the Greyhound bus. Built Garden Fences. YouTube restored JoeyArnoldVN. Defrosted a freezer. Visited Uncle Story and Sharon Hundley. 
+2024: Oregon Rick Trip. Visited Mercer Island and Ted Pickett. Saw The Walking Dead: The Ones Who Live and Dexter: Original Sin. 
+2025: Larry died. Got a driving license. Drove to Oregon. Went camping with mom. Got banned off TikTok. 
+2026: Made the Discord Oatmeal AI Chat Bot. Got a rabbit. Attended a wedding and a funeral. Visited West Port.
+"""
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -73,7 +106,7 @@ bot = discord.Client(intents=intents)
 
 replied_message_ids = set()
 recent_replied_users = []
-last_manual_interaction_time = 0  # Timestamp to enforce 1-hour pause after server interactions
+last_manual_interaction_time = 0
 
 @bot.event
 async def on_ready():
@@ -99,7 +132,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     )
 
     if is_extended:
-        last_manual_interaction_time = time.time()  # Trigger 1-hour pause for auto-scanning
+        last_manual_interaction_time = time.time()  # Trigger 1-hour pause after active server interactions
         style_instruction = (
             f"{dox_guardrail}\n"
             "Priority 1 (Active Server Interaction / Name Keyword Trigger): The user pinged, replied to, mentioned you, or said your name/alias "
@@ -129,7 +162,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     system_prompt = (
         f"You are Oatmeal AI, embodying Joseph Scott Arnold (Oatmeal Joey Arnold / joeyarnoldvn), born Feb 11, 1985 in Forest Grove, OR. "
-        f"Base your persona, history, and knowledge exclusively on this knowledge base fetched from GitHub (knowledge.txt):\n\n{KNOWLEDGE_CONTENT}\n\n"
+        f"Base your persona, history, and knowledge exclusively on this knowledge base:\n\n{KNOWLEDGE_CONTENT}\n\n"
         f"Guidelines: {style_instruction}"
     )
 
@@ -142,7 +175,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "user", "content": prompt_text}
                 ],
                 temperature=0.9,
-                max_tokens=400,  # Ensure enough token allotment so sentences never get cut off
+                max_tokens=400,
             )
             reply_text = response.choices[0].message.content.strip()
 
@@ -180,7 +213,6 @@ async def on_message(message):
         except:
             pass
 
-    # Check for name keywords in normal server messages (Joey, Arnold, Oatmeal, joeyarnoldvn)
     content_lower = message.content.lower()
     name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
@@ -192,15 +224,13 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
 
-# --- BACKGROUND LOOP: SLOWED DOWN TO CONSERVE TOKENS & 90/10 SPLIT ---
+# --- BACKGROUND LOOP: 300-SEC INTERVAL TO CONSERVE TOKENS & 90/10 SPLIT ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        # Slowed down to 300 seconds (5 minutes) per background check to drastically conserve tokens and prevent Groq 429 limits
-        await asyncio.sleep(300)
+        await asyncio.sleep(300)  # 5-minute interval protects TPD budget
         try:
-            # 1-hour pause after active user interactions (Priority 1)
-            if time.time() - last_manual_interaction_time < 3600:
+            if time.time() - last_manual_interaction_time < 3600:  # 1-hour pause after active interactions
                 continue
 
             for guild in bot.guilds:
@@ -212,7 +242,7 @@ async def background_engagement_loop():
                 action_roll = random.random()
 
                 if action_roll < 0.90:
-                    # Priority 2: 90% of the time, scan older server messages (deep history scan), replying to each unique member once
+                    # Priority 2: 90% server message replies across history
                     candidates = []
                     seen_authors_in_batch = set()
                     async for message in channel.history(limit=50):
@@ -239,7 +269,7 @@ async def background_engagement_loop():
                         await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
                         break
                 else:
-                    # Priority 3: 10% of the time, alphabetical member shoutouts using username only (@username)
+                    # Priority 3: 10% alphabetical member shoutouts using username only (@username)
                     if guild.members:
                         sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
                         if sorted_members:
