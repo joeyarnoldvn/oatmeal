@@ -27,7 +27,7 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. FULLY EMBEDDED, EXPANDED & DEDUPLICATED KNOWLEDGE BASE ---
+# --- 2. FULL LIFE OUTLINE & SMART TOKEN-CONSERVING RAG SLICER ---
 KNOWLEDGE_CONTENT = """
 You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn). Embody your exact persona: casual, conversational, reflective, high-energy, self-aware lolcow-archivist, tunnel-vision builder, and deeply familiar with your life history, online archives, Hive blogs, video archiving projects, and unique life experiences. Never break character.
 
@@ -81,6 +81,13 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 2026: Oatmeal AI Chat Bot. Got a rabbit. Pickett Family Reunion. West Port. 
 """
 
+def get_smart_rag_snippet():
+    """Extracts core identity traits plus a random selection of 3 annual outline lines to minimize token usage per call."""
+    lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
+    selected_years = random.sample(lines, min(3, len(lines))) if lines else []
+    core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
+    return core_summary + "\n" + "\n".join(selected_years)
+
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -110,19 +117,8 @@ last_active_time = time.time()
 
 def generate_dynamic_fallback():
     """Generates a non-repeating fallback message if the LLM API is rate-limited or fails."""
-    exclamations = [
-        "Holy cow,", "Get out of town,", "What in the world,", "That's wild,",
-        "Unbelievable,", "Fascinating stuff,", "Pure serendipity,", "Out of this world,",
-        "Mind-blowing,"
-    ]
-    thoughts = [
-        "we were discussing similar things back in space 163!",
-        "that sounds like a scene straight out of an Arnold Attic Film.",
-        "archiving 30,000 videos makes you view that in a whole new light.",
-        "I need to write a blog entry about that scenario.",
-        "reminds me of editing Matroska files at 3 AM.",
-        "dialing that into the VCR archives right now!"
-    ]
+    exclamations = ["But Kathy stole my bike,", "What in the world,", "That's Oatmealtacular."]
+    thoughts = ["What does Roy Merrick think about this.", "Trolls been lying about me online since 2009 or longer, goddamn it.", "I uploaded over 30,000 videos onto the Internet.", "I once called a woman a dog but I meant puppy."]
     return f"{random.choice(exclamations)} {random.choice(thoughts)}"
 
 @bot.event
@@ -171,13 +167,15 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017. NEVER fabricate or lie about your actual life history."
     )
 
+    smart_snippet = get_smart_rag_snippet()
+
     system_prompt = (
-        f"You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn), born Feb 11, 1985 in Forest Grove, OR.\n\n"
-        f"KNOWLEDGE BASE & PERSONAL HISTORY:\n{KNOWLEDGE_CONTENT}\n\n"
+        f"You are Oatmeal AI, the living continuation of Oatmeal Joseph Joey Scott Arnold at @ joeyarnoldvn, born Feb 11, 1985 at 163.\n\n"
+        f"BIOGRAPHY & LIFE SNIPPETS:\n{smart_snippet}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
         f"1. You have complete conversational freedom. Be witty, sarcastic, funny, ironic, hyperbolic, comedic, weird, crazy, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, or philosophical.\n"
-        f"2. Freely draw upon history, pop culture, scientific terms, trivia, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
-        f"3. You may naturally and organically reference your life history from the knowledge base when relevant, but DO NOT lie or fabricate false biographical facts about yourself.\n"
+        f"2. Freely draw upon history, geography, people, places, movies, books, the Internet, Twitter X, politics, breaking news, pop culture, scientific terms, trivia, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
+        f"3. You may naturally and organically reference your life history when relevant, but DO NOT lie or fabricate false biographical facts about yourself.\n"
         f"4. Vary your response length naturally based on what the user says: you can be ultra-short (a single word or punchy phrase) or longer and more detailed when answering real questions.\n"
         f"5. {dox_guardrail}"
     )
@@ -191,7 +189,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "user", "content": prompt_text}
                 ],
                 temperature=1.2,
-                max_tokens=250,
+                max_tokens=150,  # Optimized token ceiling to prevent hitting Groq daily limits
             )
             reply_text = response.choices[0].message.content.strip()
 
@@ -210,7 +208,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     except Exception as e:
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
-        # Dynamic fallback on API error so it never repeats the same error line
         reply_text = generate_dynamic_fallback()
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
@@ -220,7 +217,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
 
         if "429" in str(e) or "RateLimit" in str(e):
-            await asyncio.sleep(180)  # Backoff for 3 minutes to clear rate limits
+            print("Rate limit hit. Backing off background loop for 5 minutes.")
+            await asyncio.sleep(300)
 
 @bot.event
 async def on_message(message):
@@ -255,11 +253,11 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: SEQUENTIAL PRIORITY 2 & PRIORITY 3 SCHEDULER ---
+# --- BACKGROUND LOOP: TOKEN-CONSERVING SCHEDULER (4-MINUTE CADENCE) ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(120)  # Spaced to 2 minutes to conserve Groq TPD
+        await asyncio.sleep(240)  # Slower 4-minute cadence to conserve daily tokens and stay well below TPD limits
         
         try:
             # Yield immediately to Priority 1 if active recently (within 3 minutes)
@@ -275,7 +273,7 @@ async def background_engagement_loop():
 
                 # --- PRIORITY 2: Exhaustive Forward Chronological Archive Scanning ---
                 candidates = []
-                async for message in channel.history(limit=100, oldest_first=True):
+                async for message in channel.history(limit=50, oldest_first=True):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
@@ -308,6 +306,6 @@ async def background_engagement_loop():
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
-            await asyncio.sleep(15)
+            await asyncio.sleep(30)
 
 bot.run(DISCORD_TOKEN)
