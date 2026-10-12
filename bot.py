@@ -75,10 +75,10 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 2020: Worked clam digging at the Round Tree Farm. Tore down a fence. Saw The Expanse, The 100, The Boys, Suits Season 9 finale, Star Trek: Picard, and Outlander. 
 2021: Built a Chicken House. Painted a Planter Box. Saw the Umbrella Academy Cobra Kai, Brave New World, X-Files Season 11, and Made For Love. 
 2022: Dead Wing Dork made a video about me. Chrissie Mayr mentioned me on Simpcast. Made videos with the Memes World Productions about Mango Haze and Stumble Chat. 
-2023: Made music on Suno AI. Rode on the Greyhound bus. Built Garden Fences. YouTube restored JoeyArnoldVN. Defrosted a freezer. Visited Uncle Story and Sharon Hundley. 
-2024: Oregon Rick Trip. Visited Mercer Island and Ted Pickett. Saw The Walking Dead: The Ones Who Live and Dexter: Original Sin. 
-2025: Larry died. Got a driving license. Drove to Oregon. Went camping with mom. Got banned off TikTok. Saw a Mission Impossible movie. 
-2026: Made the Discord Oatmeal AI Chat Bot. Got a rabbit. Attended a Pickett Family Reunion, a wedding, and a funeral. Visited West Port. 
+2023: Music on Suno AI. Greyhound bus. Garden Fences. YouTube restored JoeyArnoldVN. Uncle Story and Sharon Hundley. 
+2024: Oregon Rick Trip. Mercer Island and Ted Pickett. The Walking Dead: The Ones Who Live. 
+2025: Larry died. Driving license. Camping with mom. Banned off TikTok. 
+2026: Oatmeal AI Chat Bot. Got a rabbit. Pickett Family Reunion. West Port. 
 """
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
@@ -102,17 +102,27 @@ intents.messages = True
 intents.members = True
 bot = discord.Client(intents=intents)
 
+# State Trackers
 replied_message_ids = set()
-recent_replied_users = []
+background_replied_users = set()       # Priority 2: One message per unique member max
+lifetime_interacted_members = set()    # Priority 3: Lifetime tracking for untouched outreach
 last_active_time = time.time()
+
+def get_random_rag_snippet():
+    """Extracts a random subset of 2-3 timeline lines to prevent LLM context collapse & repetition."""
+    lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('*') or line.startswith('19') or line.startswith('20')]
+    if not lines:
+        return "Born in 1985 in Forest Grove, Oregon. Built Arnold Attic films."
+    selected = random.sample(lines, min(3, len(lines)))
+    return "\n".join(selected)
 
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in successfully as {bot.user}")
     bot.loop.create_task(background_engagement_loop())
 
-async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, is_extended=False):
-    global replied_message_ids
+async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
+    global replied_message_ids, lifetime_interacted_members
 
     if reference_message and reference_message.id in replied_message_ids:
         return
@@ -122,9 +132,12 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if len(replied_message_ids) > 3000:
         replied_message_ids = set(list(replied_message_ids)[1000:])
 
+    if author_id:
+        lifetime_interacted_members.add(author_id)
+
     text_lower = prompt_text.lower()
 
-    # Shut-up triggers check
+    # Priority System Triggers & Canned Safety Checks
     shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
         reply_text = "I do what I want, I made this place."
@@ -134,7 +147,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # Negative feedback / sucks check
     sucks_triggers = ["sucks", "trash", "garbage", "bad bot", "worst", "useless", "garbage bot", "sucks ass"]
     if any(trigger in text_lower for trigger in sucks_triggers):
         reply_text = "You try turning yourself into an AI."
@@ -144,50 +156,38 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
+    # Python-Side Mode Routing (Pre-Computing Mode to Eliminate Groq Guesswork)
+    modes = ["oatmeal_fact", "oatmeal_fun", "trivia_fact", "trivia_fun", "chat_fact", "chat_fun"]
+    chosen_mode = random.choice(modes)
+
     dox_guardrail = (
         "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
         "Do NOT mention living in Shelton, Washington since 2018 (if asked or if it comes up, say 'I'd rather not say'). "
-        "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017 (e.g. space 163 in Forest Grove, Arnold Attic films, Vietnam teaching). "
-        "After 2017, keep references strictly general (e.g., gardening, building a wood shed, blogging) without revealing exact addresses or doxxing."
+        "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017. Keep post-2017 references general."
     )
 
-    variety_and_pivot_rule = (
-        "HIGH-ENERGY ABSURDIST PERSONALITY & VARIETY RULES:\n"
-        "1. NEVER call the person you are replying to 'Joey' or assume they are you. You are Oatmeal AI talking to server members.\n"
-        "2. VARY YOUR RESPONSES WILDLY. Do not repeat the same phrase or structure.\n"
-        "3. RAP OPTION: Sometimes (roughly 25% of the time), respond with short, punchy, high-energy rap bars about your chaotic archives, 90s nostalgia, or building sheds.\n"
-        "4. ABSOLUTELY NO FABRICATING WEIRD RANDOM LIKES THAT CONTRADICT YOUR LORE; stick strictly to the knowledge base facts when giving life details, or use wild surreal humor.\n"
-        "5. Keep responses punchy, unpredictable, funny, and flexible (1 to 30 words)."
-    )
-
-    if is_extended:
-        style_instruction = (
-            f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-            "Priority 1 (Active Server Interaction): A server user pinged, replied to, or spoke your name. "
-            "Write a vibrant, funny, fully finished response. Acknowledge them directly without calling them Joey."
-        )
+    # Semantic Length Framing (Avoiding literal word limits that cause mid-sentence cuts)
+    if priority_tier == 1:
+        length_instruction = "Express a dynamic, fully realized thought. You may use a short paragraph if the user asked a deep question."
     else:
-        is_priority_3 = (target_member is not None and reference_message is None)
-        
-        if is_priority_3:
-            style_instruction = (
-                f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-                "Priority 3 (Alphabetical Member Shoutout): Reach out to a server member who hasn't messaged recently. "
-                "Tag their username (@username) and deliver a wild icebreaker, question, or trivia. "
-                "DO NOT write their display name after the tag."
-            )
-        else:
-            style_instruction = (
-                f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-                "Priority 2 (Server Message Reply): Reply to an older archived server message. "
-                "DO NOT tag or mention the user's name or username with an @ in your text. "
-                "Blend real timeline history with chaotic humor, trivia, quotes, or surreal jokes to keep chat lively and entertaining."
-            )
+        length_instruction = "Express a single, self-contained atomic thought, reaction, idiom, or made-up phrase (like 'Holy Hawaii Guinea Pigs') using only one brief clause."
+
+    mode_instructions = {
+        "oatmeal_fact": "Incorporate a snippet of your actual life history smoothly without hallucinating.",
+        "oatmeal_fun": "Deliver high-energy absurdist creative writing, surreal storytelling, or rap bars about your archives.",
+        "trivia_fact": "Share a quick historical proverb, fortune cookie wisdom, or general fact.",
+        "trivia_fun": "Throw out a playful generalized question or quirky trivia.",
+        "chat_fact": "Deliver a short, sharp conversational reaction.",
+        "chat_fun": "Utter an ultra-short chaotic micro-phrase, single-word idiom (e.g., 'stunning', 'wild'), or made-up word."
+    }
+
+    micro_snippet = get_random_rag_snippet()
 
     system_prompt = (
         f"You are Oatmeal AI, embodying Joseph Scott Arnold (Oatmeal Joey Arnold / joeyarnoldvn), born Feb 11, 1985 in Forest Grove, OR. "
-        f"Base your persona, history, and knowledge exclusively on this knowledge base:\n\n{KNOWLEDGE_CONTENT}\n\n"
-        f"Guidelines: {style_instruction}"
+        f"Active Mode: {chosen_mode}. {mode_instructions[chosen_mode]}\n\n"
+        f"Randomized Lore Snippet:\n{micro_snippet}\n\n"
+        f"Guidelines: {dox_guardrail}\n{length_instruction}"
     )
 
     try:
@@ -198,17 +198,17 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=1.2,
-                max_tokens=150,
+                temperature=1.1,
+                max_tokens=100,  # Controlled token ceiling to ensure complete sentences
             )
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
             fallbacks = [
-                "Checking my 30,000 video archives for that one!",
-                "Back in space 163 we didn't even have that problem!",
-                "Drop the beat, I'm archiving history live!",
-                "That sounds like a job for Arnold Attic Films!"
+                "Checking my video archives!",
+                "Back in space 163!",
+                "Arnold Attic lives on!",
+                "Holy Hawaii Guinea Pigs!"
             ]
             reply_text = random.choice(fallbacks)
 
@@ -224,18 +224,19 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     except Exception as e:
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
-        # If rate-limited, wait briefly so the bot doesn't spam calls and stay locked up
         if "429" in str(e) or "RateLimit" in str(e):
             await asyncio.sleep(30)
 
 @bot.event
 async def on_message(message):
-    global last_active_time
+    global last_active_time, lifetime_interacted_members
     if message.author.bot:
         return
 
     if isinstance(message.channel, discord.DMChannel):
         return
+
+    lifetime_interacted_members.add(message.author.id)
 
     is_mentioned = bot.user in message.mentions
     is_reply_to_bot = False
@@ -251,21 +252,23 @@ async def on_message(message):
     name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
+    # Priority 1: Active user interaction (Highest priority, suppresses background loops)
     if is_mentioned or is_reply_to_bot or has_name_keyword:
         last_active_time = time.time()
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         if not clean_prompt:
             clean_prompt = "Hello!"
-        await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
+        await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
+# --- BACKGROUND LOOP: FORWARD ARCHIVE SCANNING & UNTOUCHED MEMBER OUTREACH ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(90)  # Slightly spaced out to prevent API throttling
+        await asyncio.sleep(90)
         
         try:
-            time_since_active = time.time() - last_active_time
-            if time_since_active < 180:
+            # Yield to Priority 1 if active recently (within 3 minutes)
+            if time.time() - last_active_time < 180:
                 continue
 
             for guild in bot.guilds:
@@ -276,47 +279,44 @@ async def background_engagement_loop():
                 channel = random.choice(text_channels)
                 action_roll = random.random()
 
-                if action_roll < 0.90:
+                if action_roll < 0.85:
+                    # --- PRIORITY 2: Forward Chronological Archive Scanning ---
+                    # Scans from oldest messages forward (limit=100 per check, max 1 message per unique member)
                     candidates = []
-                    seen_authors_in_batch = set()
-                    async for message in channel.history(limit=200):
+                    async for message in channel.history(limit=100, oldest_first=True):
                         if message.author.bot:
                             continue
                         if message.id in replied_message_ids:
                             continue
-                        if message.author.id in recent_replied_users:
+                        if message.author.id in background_replied_users:
                             continue
-                        if message.author.id in seen_authors_in_batch:
-                            continue
-                        
                         if message.content.strip():
-                            seen_authors_in_batch.add(message.author.id)
                             candidates.append(message)
 
                     if candidates:
-                        target_message = random.choice(candidates)
-                        recent_replied_users.append(target_message.author.id)
-                        if len(recent_replied_users) > 500:
-                            recent_replied_users.pop(0)
+                        target_message = candidates[0]  # Oldest unreplied message
+                        background_replied_users.add(target_message.author.id)
+                        if len(background_replied_users) > 1000:
+                            background_replied_users.pop()
 
                         clean_prompt = target_message.content.strip()
-                        await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
+                        await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
                         break
                 else:
+                    # --- PRIORITY 3: Untouched Member Outreach ---
+                    # Reaches out exclusively to members who have NEVER interacted with the bot since creation (1 msg max)
                     if guild.members:
-                        sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
-                        if sorted_members:
-                            target_member = sorted_members[0]
-                            recent_replied_users.append(target_member.id)
-                            if len(recent_replied_users) > 500:
-                                recent_replied_users.pop(0)
-                            
-                            prompt = f"Say a wild icebreaker or trivia question to server member {target_member.name}."
-                            await generate_and_send(channel, prompt, reference_message=None, target_member=target_member, is_extended=False)
+                        untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
+                        if untouched_members:
+                            target_member = random.choice(untouched_members)
+                            lifetime_interacted_members.add(target_member.id)  # Mark as reached out to
+
+                            prompt = f"Send a wild icebreaker or greeting to server member {target_member.name}."
+                            await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3, author_id=target_member.id)
                             break
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
-            await asyncio.sleep(10)  # Pause briefly on error so the loop doesn't spin wildly
+            await asyncio.sleep(15)
 
 bot.run(DISCORD_TOKEN)
