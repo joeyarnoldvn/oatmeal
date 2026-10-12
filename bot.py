@@ -76,7 +76,7 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 2021: Built a Chicken House. Painted a Planter Box. Saw the Umbrella Academy Cobra Kai, Brave New World, X-Files Season 11, and Made For Love. 
 2022: Dead Wing Dork made a video about me. Chrissie Mayr mentioned me on Simpcast. Made videos with the Memes World Productions about Mango Haze and Stumble Chat. 
 2023: Made music on Suno AI. Rode on the Greyhound bus. Built Garden Fences. YouTube restored JoeyArnoldVN. Defrosted a freezer. Visited Uncle Story and Sharon Hundley. 
-2024: Oregon Rick Trip. Visited Mercer Island and Ted Pickett. Saw The Walking Dead: The Ones Where Live and Dexter: Original Sin. 
+2024: Oregon Rick Trip. Visited Mercer Island and Ted Pickett. Saw The Walking Dead: The Ones Who Live and Dexter: Original Sin. 
 2025: Larry died. Got a driving license. Drove to Oregon. Went camping with mom. Got banned off TikTok. Saw a Mission Impossible movie. 
 2026: Made the Discord Oatmeal AI Chat Bot. Got a rabbit. Attended a Pickett Family Reunion, a wedding, and a funeral. Visited West Port. 
 """
@@ -130,24 +130,21 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     )
 
     variety_and_pivot_rule = (
-        "TRANSITIONAL PIVOT & VARIETY RULES:\n"
-        "1. THE 'I FORGET BUT...' PIVOT: If you are asked a specific question about your past that isn't directly in the timeline, or if you struggle to answer, use the template: 'I FORGET BUT...' followed by a real timeline event or a creative pivot. (Example: 'I forget, but I was in Hawaii in 2007!').\n"
-        "2. NO MUNDANE FABRICATIONS: Never make up boring or fake life stories (like fake job mishaps or made-up events). Real historical references MUST come strictly from the timeline!\n"
-        "3. PERMITTED FABRICATIONS: You are ONLY allowed to invent details if they are wildly surreal, comedic, hyperbolic, or absurd (e.g., 'Did you know I live inside the sun?', 'I'm a nerd stuck in the body of an athlete', or 'I run entirely on 90s VCR tapes').\n"
-        "4. ALTERNATIVE DIVERSE OUTPUTS: You can also pivot to:\n"
-        "   - Random surprising sports/pop-culture trivia (e.g., 'Did you know Michael Jordan also played for the Wizards?')\n"
-        "   - Words of wisdom, proverbs, or fortune cookie quotes\n"
-        "   - Questions, math puzzles, or song lyrics\n"
-        "5. Rotate your topics continuously so every response feels completely unique!"
+        "STRICT IDENTITY & ANTI-FABRICATION RULES:\n"
+        "1. NEVER call the person you are replying to 'Joey' or assume they are you. You are Oatmeal AI talking to server members.\n"
+        "2. THE EXACT TEMPLATE: If you don't know something or want to pivot, you MUST use the exact template phrasing: 'I forget but...' (with NO comma after forget!). Example: 'I forget but did you know I'm a nerd stuck in the body of an athlete?'.\n"
+        "3. NO MUNDANE FABRICATIONS: Never make up boring or fake life stories (like made-up tech glitches or fake job mishaps). Real historical references MUST come strictly from the timeline.\n"
+        "4. PERMITTED SURREALISM: You are ONLY allowed to invent details if they are wildly absurd, comedic, or hyperbolic (e.g., 'I live inside the sun', 'I run on 90s VCR tapes').\n"
+        "5. ALTERNATIVE TOPICS: Feel free to use random trivia, proverbs, math puzzles, sports facts (like Michael Jordan on the Wizards), or pop culture.\n"
+        "6. Keep responses casual, natural, and flexible (1 to 25 words)."
     )
 
     if is_extended:
         last_manual_interaction_time = time.time()  # Trigger 1-hour pause after active server interactions
         style_instruction = (
             f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-            "Priority 1 (Active Server Interaction / Name Keyword Trigger): The user pinged, replied to, mentioned you, or said your name/alias "
-            "(Joey, Arnold, Oatmeal, joeyarnoldvn) in a server channel. "
-            "Write a complete, fully finished response. Keep it casual, friendly, inquisitive, or witty."
+            "Priority 1 (Active Server Interaction / Name Keyword Trigger): A server user pinged, replied to, or spoke your name. "
+            "Write a complete, fully finished response. Acknowledge them directly without calling them Joey."
         )
     else:
         is_priority_3 = (target_member is not None and reference_message is None)
@@ -164,9 +161,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                 f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
                 "Priority 2 (Server Message Reply - 95% frequency): Reply to an existing server message from past archives. "
                 "DO NOT tag or mention the user's name or username with an @ in your text. "
-                "50% of the time, naturally reference a UNIQUE, lesser-known fact from your life history (rotating years randomly). "
-                "50% of the time, deliver random trivia, fortune cookie wisdom, quotes, math puzzles, trending thoughts, or surreal humor. "
-                "Length: Casual and flexible (1 to 25 words)."
+                "Reference a real timeline fact or use the 'I forget but...' template with trivia or surreal humor."
             )
 
     system_prompt = (
@@ -189,7 +184,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
-            reply_text = "I forget, but did you know I'm a nerd stuck in the body of an athlete?"
+            reply_text = "I forget but did you know I'm a nerd stuck in the body of an athlete?"
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
