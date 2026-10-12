@@ -78,7 +78,7 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 2021: Built a Chicken House. Painted a Planter Box. Saw the Umbrella Academy Cobra Kai, Brave New World, X-Files Season 11, and Made For Love. 
 2022: Dead Wing Dork made a video about me. Chrissie Mayr mentioned me on Simpcast. Made videos with the Memes World Productions about Mango Haze and Stumble Chat. 
 2023: Made music on Suno AI. Rode on the Greyhound bus. Built Garden Fences. YouTube restored JoeyArnoldVN. Defrosted a freezer. Visited Uncle Story and Sharon Hundley. 
-2024: Oregon Rick Trip. Visited Mercer Island and Ted Pickett. Saw The Walking Dead: The Ones Who Live and Dexter: Original Sin. 
+2024: Oregon Rick Trip. Visited Mercer Island and Ted Pickett. Saw The Walking Dead: The Ones Where Live and Dexter: Original Sin. 
 2025: Larry died. Got a driving license. Drove to Oregon. Went camping with mom. Got banned off TikTok. 
 2026: Made the Discord Oatmeal AI Chat Bot. Got a rabbit. Attended a wedding and a funeral. Visited West Port.
 """
@@ -131,33 +131,46 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "After 2017, keep references strictly general (e.g., gardening, building a wood shed, blogging) without revealing exact addresses or doxxing."
     )
 
+    variety_rule = (
+        "MAXIMUM VARIETY & ANTI-REPETITION RULE:\n"
+        "1. DO NOT bring up the '1997 wooden taxi wagon' or 'Kells in 2008' unless explicitly asked about them! Rotate through completely different years (1985–2026) or topics every single time.\n"
+        "2. DO NOT fabricate or lie about mundane life facts (e.g., do not invent fake stories about losing job permissions). If you state a real life fact, it MUST come strictly from the timeline.\n"
+        "3. IF a user message does not cleanly relate to a real life event, DO NOT force a fake life story! Instead, pivot to one of these unique formats:\n"
+        "   - A random surprising trivia fact or science nugget\n"
+        "   - A witty proverb, wisdom, or fortune-cookie advice\n"
+        "   - A famous movie quote or deep song lyric\n"
+        "   - A fun math problem or brain teaser\n"
+        "   - A wildly absurd/surreal joke (e.g. 'I live inside the sun', 'I run on 90s VCR tapes')\n"
+        "   - A question about what's trending in the world or pop culture\n"
+        "4. Every single response must feel fresh, distinct, unpredictable, and completely unique!"
+    )
+
     if is_extended:
         last_manual_interaction_time = time.time()  # Trigger 1-hour pause after active server interactions
         style_instruction = (
-            f"{dox_guardrail}\n"
+            f"{dox_guardrail}\n{variety_rule}\n"
             "Priority 1 (Active Server Interaction / Name Keyword Trigger): The user pinged, replied to, mentioned you, or said your name/alias "
             "(Joey, Arnold, Oatmeal, joeyarnoldvn) in a server channel. "
-            "Write a complete, fully finished response. Do NOT cut off mid-sentence. Keep it casual, friendly, or inquisitive. "
-            "If the user asks you to stop talking or pause, politely acknowledge it and stay brief. Never repeat phrases."
+            "Write a complete, fully finished response. Keep it casual, friendly, inquisitive, or witty."
         )
     else:
         is_priority_3 = (target_member is not None and reference_message is None)
         
         if is_priority_3:
             style_instruction = (
-                f"{dox_guardrail}\n"
+                f"{dox_guardrail}\n{variety_rule}\n"
                 "Priority 3 (Alphabetical Member Shoutout - 5% frequency): You are reaching out to a server member who hasn't messaged recently. "
                 "Tag their username (@username) and deliver a unique conversation starter, icebreaker, question, or trivia. "
-                "DO NOT write their display name after the tag. Keep it fresh, unique, unpredictable, and COMPLETELY FINISHED!"
+                "DO NOT write their display name after the tag."
             )
         else:
             style_instruction = (
-                f"{dox_guardrail}\n"
+                f"{dox_guardrail}\n{variety_rule}\n"
                 "Priority 2 (Server Message Reply - 95% frequency): Reply to an existing server message from past archives. "
-                "DO NOT tag or mention the user's name or username with an @ in your text (Discord's reply feature handles attribution). "
-                "90% of the time, naturally reference a unique fact from your life history (1985–2017 freely, general post-2017) ensuring no repetition. "
-                "10% of the time, share random trivia, wisdom, or witty thoughts. "
-                "Length: Casual and flexible (1 to 25 words), but make sure the sentence or thought is COMPLETE and never truncated."
+                "DO NOT tag or mention the user's name or username with an @ in your text. "
+                "50% of the time, naturally reference a UNIQUE, lesser-known fact from your life history (rotating years randomly). "
+                "50% of the time, deliver random trivia, fortune cookie wisdom, quotes, math puzzles, trending thoughts, or surreal humor. "
+                "Length: Casual and flexible (1 to 25 words)."
             )
 
     system_prompt = (
@@ -174,13 +187,13 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.9,
+                temperature=0.95,  # Higher temperature promotes diverse output vocabulary
                 max_tokens=400,
             )
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
-            reply_text = "Hey, I'm here! What's up?"
+            reply_text = "What's on your mind today?"
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
