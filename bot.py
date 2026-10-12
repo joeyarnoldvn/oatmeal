@@ -108,29 +108,6 @@ background_replied_users = set()       # Priority 2: One message per unique memb
 lifetime_interacted_members = set()    # Priority 3: Lifetime tracking for untouched outreach
 last_active_time = time.time()
 
-def get_random_rag_snippet():
-    """Extracts a random subset of timeline lines to ensure infinite variety."""
-    lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('*') or line.startswith('19') or line.startswith('20')]
-    if not lines:
-        return "Born in 1985 in Forest Grove, Oregon."
-    selected = random.sample(lines, min(2, len(lines)))
-    return "\n".join(selected)
-
-def get_infinite_variety_fallback():
-    """Generates completely unique, randomized anti-repetition fallbacks spanning millions of possibilities."""
-    universal_phrases = [
-        "Get out of town.", "Holy cow.", "What in the world.", "That's wild.", 
-        "Absolute cinema.", "Fascinating stuff.", "Unbelievable.", "My word.",
-        "Back to the drawing board.", "Totally stellar.", "Out of this world.",
-        "Quantum mechanics agree.", "Pure serendipity.", "Remarkable."
-    ]
-    lore_fragments = [
-        "Space 163 memories!", "Arnold Attic archives!", "Dialing in the VCR tapes.",
-        "Salsa dancing posture mechanics.", "Building wood sheds in Washington.",
-        "Coding Python scripts all night.", "Checking 30,000 video files."
-    ]
-    return f"{random.choice(universal_phrases)} {random.choice(lore_fragments)}"
-
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in successfully as {bot.user}")
@@ -152,7 +129,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     text_lower = prompt_text.lower()
 
-    # Canned Safety Checks
+    # Canned Safety Checks for hostile inputs
     shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
         reply_text = "I do what I want, I made this place."[cite: 1]
@@ -171,37 +148,22 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # Python-Side Mode Routing (Maximum Variety Across Millions of Combinations)
-    modes = ["oatmeal_fact", "oatmeal_fun", "trivia_fact", "trivia_fun", "chat_fact", "chat_fun"]
-    chosen_mode = random.choice(modes)
-
     dox_guardrail = (
         "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
         "Do NOT mention living in Shelton, Washington since 2018 (if asked or if it comes up, say 'I'd rather not say'). "
-        "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017."
+        "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017. NEVER fabricate or lie about your actual life history."
     )
 
-    if priority_tier == 1:
-        length_instruction = "Express a dynamic, fully realized thought. You may use a short paragraph if the user asked a deep question."
-    else:
-        length_instruction = "Express a single, self-contained atomic thought, reaction, idiom, universal phrase ('Get out of town', 'Holy cow'), or made-up word using only one brief clause."
-
-    mode_instructions = {
-        "oatmeal_fact": "Incorporate a quick snippet of your actual life history smoothly without hallucinating.",
-        "oatmeal_fun": "Deliver high-energy absurdist creative writing, surreal storytelling, or rap bars.",
-        "trivia_fact": "Share a quick historical proverb, scientific fact, or piece of advice.",
-        "trivia_fun": "Throw out a playful generalized question or quirky trivia.",
-        "chat_fact": "Deliver a short, sharp conversational reaction pulling from universal vocabulary.",
-        "chat_fun": "Utter an ultra-short chaotic micro-phrase, single-word idiom, or made-up word."
-    }
-
-    micro_snippet = get_random_rag_snippet()
-
+    # True Conversational Freedom & Persona Prompt Engineering
     system_prompt = (
-        f"You are Oatmeal AI, embodying Joseph Scott Arnold (Oatmeal Joey Arnold / joeyarnoldvn), born Feb 11, 1985 in Forest Grove, OR. "
-        f"Active Mode: {chosen_mode}. {mode_instructions[chosen_mode]}\n\n"
-        f"Randomized Lore Snippet:\n{micro_snippet}\n\n"
-        f"Guidelines: {dox_guardrail}\n{length_instruction}"
+        f"You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn), born Feb 11, 1985 in Forest Grove, OR.\n\n"
+        f"KNOWLEDGE BASE & PERSONAL HISTORY:\n{KNOWLEDGE_CONTENT}\n\n"
+        f"CONVERSATIONAL GUIDELINES:\n"
+        f"1. You have complete conversational freedom. Be witty, sarcastic, funny, ironic, hyperbolic, comedic, weird, crazy, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, or philosophical.\n"
+        f"2. Freely draw upon history, pop culture, scientific terms, trivia, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
+        f"3. You may naturally and organically reference your life history from the knowledge base when relevant, but DO NOT lie or fabricate false biographical facts about yourself.\n"
+        f"4. Vary your response length naturally based on what the user says: you can be ultra-short (a single word or punchy phrase) or longer and more detailed when answering real questions.\n"
+        f"5. {dox_guardrail}"
     )
 
     try:
@@ -212,13 +174,13 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=1.3,  # Higher temperature for maximum creative variety
-                max_tokens=100,
+                temperature=1.2,
+                max_tokens=250,
             )
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
-            reply_text = get_infinite_variety_fallback()
+            reply_text = "That's wild. Back in space 163 we had a whole different take on that!"
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -306,7 +268,7 @@ async def background_engagement_loop():
                     if len(background_replied_users) > 5000:
                         background_replied_users.pop()
 
-                    clean_prompt = target_message.content.strip()
+                    clean_prompt = f"React to this archived message from the server: '{target_message.content}'"
                     await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
                     break
                 else:
@@ -318,7 +280,7 @@ async def background_engagement_loop():
                             target_member = random.choice(untouched_members)
                             lifetime_interacted_members.add(target_member.id)
 
-                            prompt = f"Send a wild icebreaker or greeting to server member {target_member.name}."
+                            prompt = f"Say something witty, random, or welcoming to server member {target_member.name} who has never interacted with you before."
                             await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3, author_id=target_member.id)
                             break
 
