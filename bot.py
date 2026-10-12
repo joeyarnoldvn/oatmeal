@@ -121,8 +121,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if reference_message:
         replied_message_ids.add(reference_message.id)
 
-    if len(replied_message_ids) > 1000:
-        list(replied_message_ids)[:200]
+    if len(replied_message_ids) > 2000:
+        list(replied_message_ids)[:500]
 
     dox_guardrail = (
         "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
@@ -137,8 +137,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             f"{dox_guardrail}\n"
             "Priority 1 (Active Server Interaction / Name Keyword Trigger): The user pinged, replied to, mentioned you, or said your name/alias "
             "(Joey, Arnold, Oatmeal, joeyarnoldvn) in a server channel. "
-            "Write a complete, fully finished response. Do NOT cut off mid-sentence. Keep it casual, friendly, or inquisitive "
-            "(e.g., 'Hey, did somebody say my name?', 'What do you want?', or a natural life reference/insight). Never repeat phrases."
+            "Write a complete, fully finished response. Do NOT cut off mid-sentence. Keep it casual, friendly, or inquisitive. "
+            "If the user asks you to stop talking or pause, politely acknowledge it and stay brief. Never repeat phrases."
         )
     else:
         is_priority_3 = (target_member is not None and reference_message is None)
@@ -146,14 +146,14 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         if is_priority_3:
             style_instruction = (
                 f"{dox_guardrail}\n"
-                "Priority 3 (Alphabetical Member Shoutout - 10% frequency): You are reaching out to a server member who hasn't messaged recently. "
+                "Priority 3 (Alphabetical Member Shoutout - 5% frequency): You are reaching out to a server member who hasn't messaged recently. "
                 "Tag their username (@username) and deliver a unique conversation starter, icebreaker, question, or trivia. "
                 "DO NOT write their display name after the tag. Keep it fresh, unique, unpredictable, and COMPLETELY FINISHED!"
             )
         else:
             style_instruction = (
                 f"{dox_guardrail}\n"
-                "Priority 2 (Server Message Reply - 90% frequency): Reply to an existing server message. "
+                "Priority 2 (Server Message Reply - 95% frequency): Reply to an existing server message from past archives. "
                 "DO NOT tag or mention the user's name or username with an @ in your text (Discord's reply feature handles attribution). "
                 "90% of the time, naturally reference a unique fact from your life history (1985–2017 freely, general post-2017) ensuring no repetition. "
                 "10% of the time, share random trivia, wisdom, or witty thoughts. "
@@ -180,7 +180,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
-            reply_text = "Oatmeal"
+            reply_text = "Hey, I'm here! What's up?"
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -224,7 +224,7 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
 
-# --- BACKGROUND LOOP: 300-SEC INTERVAL TO CONSERVE TOKENS & 90/10 SPLIT ---
+# --- BACKGROUND LOOP: 300-SEC INTERVAL TO CONSERVE TOKENS & 95/5 SPLIT ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
@@ -241,11 +241,11 @@ async def background_engagement_loop():
                 channel = random.choice(text_channels)
                 action_roll = random.random()
 
-                if action_roll < 0.90:
-                    # Priority 2: 90% server message replies across history
+                if action_roll < 0.95:
+                    # Priority 2: 95% server message replies scanning deep history (up to 200 past messages)
                     candidates = []
                     seen_authors_in_batch = set()
-                    async for message in channel.history(limit=50):
+                    async for message in channel.history(limit=200):
                         if message.author.bot:
                             continue
                         if message.id in replied_message_ids:
@@ -262,20 +262,20 @@ async def background_engagement_loop():
                     if candidates:
                         target_message = random.choice(candidates)
                         recent_replied_users.append(target_message.author.id)
-                        if len(recent_replied_users) > 50:
+                        if len(recent_replied_users) > 500:
                             recent_replied_users.pop(0)
 
                         clean_prompt = target_message.content.strip()
                         await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
                         break
                 else:
-                    # Priority 3: 10% alphabetical member shoutouts using username only (@username)
+                    # Priority 3: 5% alphabetical member shoutouts using username only (@username)
                     if guild.members:
                         sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
                         if sorted_members:
                             target_member = sorted_members[0]
                             recent_replied_users.append(target_member.id)
-                            if len(recent_replied_users) > 50:
+                            if len(recent_replied_users) > 500:
                                 recent_replied_users.pop(0)
                             
                             prompt = f"Say an icebreaker or trivia question to server member {target_member.name}."
