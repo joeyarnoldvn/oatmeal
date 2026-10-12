@@ -127,7 +127,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     # Shut-up triggers check
     shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
-        reply_text = "I do what I want, I made this place."[cite: 1]
+        reply_text = "I do what I want, I made this place."
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
         else:
@@ -224,6 +224,9 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     except Exception as e:
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
+        # If rate-limited, wait briefly so the bot doesn't spam calls and stay locked up
+        if "429" in str(e) or "RateLimit" in str(e):
+            await asyncio.sleep(30)
 
 @bot.event
 async def on_message(message):
@@ -258,7 +261,7 @@ async def on_message(message):
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(60)
+        await asyncio.sleep(90)  # Slightly spaced out to prevent API throttling
         
         try:
             time_since_active = time.time() - last_active_time
@@ -314,5 +317,6 @@ async def background_engagement_loop():
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
+            await asyncio.sleep(10)  # Pause briefly on error so the loop doesn't spin wildly
 
 bot.run(DISCORD_TOKEN)
