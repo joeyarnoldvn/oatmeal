@@ -108,6 +108,23 @@ background_replied_users = set()       # Priority 2: One message per unique memb
 lifetime_interacted_members = set()    # Priority 3: Lifetime tracking for untouched outreach
 last_active_time = time.time()
 
+def generate_dynamic_fallback():
+    """Generates a non-repeating fallback message if the LLM API is rate-limited or fails."""
+    exclamations = [
+        "Holy cow,", "Get out of town,", "What in the world,", "That's wild,",
+        "Unbelievable,", "Fascinating stuff,", "Pure serendipity,", "Out of this world,",
+        "Mind-blowing,"
+    ]
+    thoughts = [
+        "we were discussing similar things back in space 163!",
+        "that sounds like a scene straight out of an Arnold Attic Film.",
+        "archiving 30,000 videos makes you view that in a whole new light.",
+        "I need to write a blog entry about that scenario.",
+        "reminds me of editing Matroska files at 3 AM.",
+        "dialing that into the VCR archives right now!"
+    ]
+    return f"{random.choice(exclamations)} {random.choice(thoughts)}"
+
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in successfully as {bot.user}")
@@ -154,7 +171,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017. NEVER fabricate or lie about your actual life history."
     )
 
-    # True Conversational Freedom & Persona Prompt Engineering
     system_prompt = (
         f"You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn), born Feb 11, 1985 in Forest Grove, OR.\n\n"
         f"KNOWLEDGE BASE & PERSONAL HISTORY:\n{KNOWLEDGE_CONTENT}\n\n"
@@ -180,7 +196,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
-            reply_text = "That's wild. Back in space 163 we had a whole different take on that!"
+            reply_text = generate_dynamic_fallback()
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -194,8 +210,17 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     except Exception as e:
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
+        # Dynamic fallback on API error so it never repeats the same error line
+        reply_text = generate_dynamic_fallback()
+        if reference_message:
+            await reference_message.reply(reply_text, mention_author=True)
+        elif target_member:
+            await destination_channel.send(f"{target_member.mention} {reply_text}")
+        else:
+            await destination_channel.send(reply_text)
+
         if "429" in str(e) or "RateLimit" in str(e):
-            await asyncio.sleep(30)
+            await asyncio.sleep(180)  # Backoff for 3 minutes to clear rate limits
 
 @bot.event
 async def on_message(message):
@@ -234,7 +259,7 @@ async def on_message(message):
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(90)
+        await asyncio.sleep(120)  # Spaced to 2 minutes to conserve Groq TPD
         
         try:
             # Yield immediately to Priority 1 if active recently (within 3 minutes)
@@ -249,8 +274,6 @@ async def background_engagement_loop():
                 channel = random.choice(text_channels)
 
                 # --- PRIORITY 2: Exhaustive Forward Chronological Archive Scanning ---
-                # Scans oldest messages first (from 2019/beginning). Will NOT switch to Priority 3 
-                # until every single message across channels has been evaluated and responded to.
                 candidates = []
                 async for message in channel.history(limit=100, oldest_first=True):
                     if message.author.bot:
@@ -263,7 +286,7 @@ async def background_engagement_loop():
                         candidates.append(message)
 
                 if candidates:
-                    target_message = candidates[0]  # Oldest unreplied message from beginning to end
+                    target_message = candidates[0]  # Oldest unreplied message
                     background_replied_users.add(target_message.author.id)
                     if len(background_replied_users) > 5000:
                         background_replied_users.pop()
@@ -273,7 +296,6 @@ async def background_engagement_loop():
                     break
                 else:
                     # --- PRIORITY 3: Untouched Member Outreach ---
-                    # ONLY triggers when Priority 2 archive scanning is 100% exhausted.
                     if guild.members:
                         untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
                         if untouched_members:
