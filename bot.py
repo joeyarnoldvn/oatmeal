@@ -104,7 +104,6 @@ bot = discord.Client(intents=intents)
 
 replied_message_ids = set()
 recent_replied_users = []
-last_manual_interaction_time = 0
 
 @bot.event
 async def on_ready():
@@ -112,15 +111,13 @@ async def on_ready():
     bot.loop.create_task(background_engagement_loop())
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, is_extended=False):
-    global last_manual_interaction_time
-
     if reference_message and reference_message.id in replied_message_ids:
         return
     if reference_message:
         replied_message_ids.add(reference_message.id)
 
-    if len(replied_message_ids) > 2000:
-        list(replied_message_ids)[:500]
+    if len(replied_message_ids) > 3000:
+        list(replied_message_ids)[:1000]
 
     dox_guardrail = (
         "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
@@ -130,21 +127,18 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     )
 
     variety_and_pivot_rule = (
-        "STRICT IDENTITY & ANTI-FABRICATION RULES:\n"
+        "HIGH-ENERGY ABSURDIST PERSONALITY & VARIETY RULES:\n"
         "1. NEVER call the person you are replying to 'Joey' or assume they are you. You are Oatmeal AI talking to server members.\n"
-        "2. THE EXACT TEMPLATE: If you don't know something or want to pivot, you MUST use the exact template phrasing: 'I forget but...' (with NO comma after forget!). Example: 'I forget but did you know I'm a nerd stuck in the body of an athlete?'.\n"
-        "3. NO MUNDANE FABRICATIONS: Never make up boring or fake life stories (like made-up tech glitches or fake job mishaps). Real historical references MUST come strictly from the timeline.\n"
-        "4. PERMITTED SURREALISM: You are ONLY allowed to invent details if they are wildly absurd, comedic, or hyperbolic (e.g., 'I live inside the sun', 'I run on 90s VCR tapes').\n"
-        "5. ALTERNATIVE TOPICS: Feel free to use random trivia, proverbs, math puzzles, sports facts (like Michael Jordan on the Wizards), or pop culture.\n"
-        "6. Keep responses casual, natural, and flexible (1 to 25 words)."
+        "2. THE EXACT TEMPLATE: When pivoting or answering with uncertainty, use the exact phrase: 'I forget but...' (NO comma after forget). Example: 'I forget but did you know I'm a nerd stuck in the body of an athlete?'.\n"
+        "3. HIGH ENERGY & NON-BORING: Never be boring, mundane, or repetitive! Mix in high-energy Andy-Kaufman/Jim-Carrey performance antics, wild hyperbolic comedy, absurd claims (e.g., 'I run on 90s VCR tapes', 'I live in a solar flare'), fortune cookie wisdom, proverbs, pop culture, sports facts (like Michael Jordan on the Wizards), or random math teasers.\n"
+        "4. Keep responses punchy, unpredictable, funny, and flexible (1 to 25 words)."
     )
 
     if is_extended:
-        last_manual_interaction_time = time.time()  # Trigger 1-hour pause after active server interactions
         style_instruction = (
             f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-            "Priority 1 (Active Server Interaction / Name Keyword Trigger): A server user pinged, replied to, or spoke your name. "
-            "Write a complete, fully finished response. Acknowledge them directly without calling them Joey."
+            "Priority 1 (Active Server Interaction): A server user pinged, replied to, or spoke your name. "
+            "Write a vibrant, funny, fully finished response. Acknowledge them directly without calling them Joey."
         )
     else:
         is_priority_3 = (target_member is not None and reference_message is None)
@@ -152,16 +146,16 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         if is_priority_3:
             style_instruction = (
                 f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-                "Priority 3 (Alphabetical Member Shoutout - 5% frequency): You are reaching out to a server member who hasn't messaged recently. "
-                "Tag their username (@username) and deliver a unique conversation starter, icebreaker, question, or trivia. "
+                "Priority 3 (Alphabetical Member Shoutout - 5% frequency): Reach out to a server member who hasn't messaged recently. "
+                "Tag their username (@username) and deliver a wild icebreaker, question, or trivia. "
                 "DO NOT write their display name after the tag."
             )
         else:
             style_instruction = (
                 f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-                "Priority 2 (Server Message Reply - 95% frequency): Reply to an existing server message from past archives. "
+                "Priority 2 (Server Message Reply - 95% frequency): Reply to an older archived server message. "
                 "DO NOT tag or mention the user's name or username with an @ in your text. "
-                "Reference a real timeline fact or use the 'I forget but...' template with trivia or surreal humor."
+                "Blend real timeline history with chaotic humor, trivia, quotes, or surreal jokes to keep chat lively and entertaining."
             )
 
     system_prompt = (
@@ -178,13 +172,13 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.95,
+                temperature=1.0,
                 max_tokens=400,
             )
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
-            reply_text = "I forget but did you know I'm a nerd stuck in the body of an athlete?"
+            reply_text = "I forget but did you know I run entirely on 90s VCR tapes?"
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -221,22 +215,18 @@ async def on_message(message):
     name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
-    # Priority 1 Trigger: Instant response when pinged, replied to, or when name keywords are spoken
     if is_mentioned or is_reply_to_bot or has_name_keyword:
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         if not clean_prompt:
             clean_prompt = "Hello!"
         await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
 
-# --- BACKGROUND LOOP: 600-SEC INTERVAL TO CONSERVE DAILY GROQ TPD & 95/5 SPLIT ---
+# --- BACKGROUND LOOP: CONTINUOUS SCANNING WITH NO UNNECESSARY FREEZES ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(600)  # 10-minute interval prevents Groq 200k TPD exhaustion
+        await asyncio.sleep(300)  # 5-minute background cadence
         try:
-            if time.time() - last_manual_interaction_time < 3600:  # 1-hour pause after active interactions
-                continue
-
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not text_channels:
@@ -246,10 +236,10 @@ async def background_engagement_loop():
                 action_roll = random.random()
 
                 if action_roll < 0.95:
-                    # Priority 2: 95% server message replies scanning deep history (up to 200 past messages)
+                    # Priority 2: 95% deep archive scan (up to 1,000 past messages to find older gems)
                     candidates = []
                     seen_authors_in_batch = set()
-                    async for message in channel.history(limit=200):
+                    async for message in channel.history(limit=1000):
                         if message.author.bot:
                             continue
                         if message.id in replied_message_ids:
@@ -273,7 +263,7 @@ async def background_engagement_loop():
                         await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
                         break
                 else:
-                    # Priority 3: 5% alphabetical member shoutouts using username only (@username)
+                    # Priority 3: 5% alphabetical member shoutouts
                     if guild.members:
                         sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
                         if sorted_members:
@@ -282,7 +272,7 @@ async def background_engagement_loop():
                             if len(recent_replied_users) > 500:
                                 recent_replied_users.pop(0)
                             
-                            prompt = f"Say an icebreaker or trivia question to server member {target_member.name}."
+                            prompt = f"Say a wild icebreaker or trivia question to server member {target_member.name}."
                             await generate_and_send(channel, prompt, reference_message=None, target_member=target_member, is_extended=False)
                             break
 
