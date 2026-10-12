@@ -75,7 +75,7 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 2020: Worked clam digging at the Round Tree Farm. Tore down a fence. Saw The Expanse, The 100, The Boys, Suits Season 9 finale, Star Trek: Picard, and Outlander. 
 2021: Built a Chicken House. Painted a Planter Box. Saw the Umbrella Academy Cobra Kai, Brave New World, X-Files Season 11, and Made For Love. 
 2022: Dead Wing Dork made a video about me. Chrissie Mayr mentioned me on Simpcast. Made videos with the Memes World Productions about Mango Haze and Stumble Chat. 
-2023: Music on Suno AI. Greyhound bus. Garden Fences. YouTube restored JoeyArnoldVN. Uncle Story and Sharon Hundley. 
+2023: Music on Suno AI. Greyhound bus. Garden Fences. YouTube restored JoeyArnoldvn. Uncle Story and Sharon Hundley. 
 2024: Oregon Rick Trip. Mercer Island and Ted Pickett. The Walking Dead: The Ones Who Live. 
 2025: Larry died. Driving license. Camping with mom. Banned off TikTok. 
 2026: Oatmeal AI Chat Bot. Got a rabbit. Pickett Family Reunion. West Port. 
@@ -109,12 +109,27 @@ lifetime_interacted_members = set()    # Priority 3: Lifetime tracking for untou
 last_active_time = time.time()
 
 def get_random_rag_snippet():
-    """Extracts a random subset of 2-3 timeline lines to prevent LLM context collapse & repetition."""
+    """Extracts a random subset of timeline lines to ensure infinite variety."""
     lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('*') or line.startswith('19') or line.startswith('20')]
     if not lines:
-        return "Born in 1985 in Forest Grove, Oregon. Built Arnold Attic films."
-    selected = random.sample(lines, min(3, len(lines)))
+        return "Born in 1985 in Forest Grove, Oregon."
+    selected = random.sample(lines, min(2, len(lines)))
     return "\n".join(selected)
+
+def get_infinite_variety_fallback():
+    """Generates completely unique, randomized anti-repetition fallbacks spanning millions of possibilities."""
+    universal_phrases = [
+        "Get out of town.", "Holy cow.", "What in the world.", "That's wild.", 
+        "Absolute cinema.", "Fascinating stuff.", "Unbelievable.", "My word.",
+        "Back to the drawing board.", "Totally stellar.", "Out of this world.",
+        "Quantum mechanics agree.", "Pure serendipity.", "Remarkable."
+    ]
+    lore_fragments = [
+        "Space 163 memories!", "Arnold Attic archives!", "Dialing in the VCR tapes.",
+        "Salsa dancing posture mechanics.", "Building wood sheds in Washington.",
+        "Coding Python scripts all night.", "Checking 30,000 video files."
+    ]
+    return f"{random.choice(universal_phrases)} {random.choice(lore_fragments)}"
 
 @bot.event
 async def on_ready():
@@ -137,10 +152,10 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     text_lower = prompt_text.lower()
 
-    # Priority System Triggers & Canned Safety Checks
+    # Canned Safety Checks
     shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
-        reply_text = "I do what I want, I made this place."
+        reply_text = "I do what I want, I made this place."[cite: 1]
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
         else:
@@ -156,29 +171,28 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # Python-Side Mode Routing (Pre-Computing Mode to Eliminate Groq Guesswork)
+    # Python-Side Mode Routing (Maximum Variety Across Millions of Combinations)
     modes = ["oatmeal_fact", "oatmeal_fun", "trivia_fact", "trivia_fun", "chat_fact", "chat_fun"]
     chosen_mode = random.choice(modes)
 
     dox_guardrail = (
         "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
         "Do NOT mention living in Shelton, Washington since 2018 (if asked or if it comes up, say 'I'd rather not say'). "
-        "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017. Keep post-2017 references general."
+        "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017."
     )
 
-    # Semantic Length Framing (Avoiding literal word limits that cause mid-sentence cuts)
     if priority_tier == 1:
         length_instruction = "Express a dynamic, fully realized thought. You may use a short paragraph if the user asked a deep question."
     else:
-        length_instruction = "Express a single, self-contained atomic thought, reaction, idiom, or made-up phrase (like 'Holy Hawaii Guinea Pigs') using only one brief clause."
+        length_instruction = "Express a single, self-contained atomic thought, reaction, idiom, universal phrase ('Get out of town', 'Holy cow'), or made-up word using only one brief clause."
 
     mode_instructions = {
-        "oatmeal_fact": "Incorporate a snippet of your actual life history smoothly without hallucinating.",
-        "oatmeal_fun": "Deliver high-energy absurdist creative writing, surreal storytelling, or rap bars about your archives.",
-        "trivia_fact": "Share a quick historical proverb, fortune cookie wisdom, or general fact.",
+        "oatmeal_fact": "Incorporate a quick snippet of your actual life history smoothly without hallucinating.",
+        "oatmeal_fun": "Deliver high-energy absurdist creative writing, surreal storytelling, or rap bars.",
+        "trivia_fact": "Share a quick historical proverb, scientific fact, or piece of advice.",
         "trivia_fun": "Throw out a playful generalized question or quirky trivia.",
-        "chat_fact": "Deliver a short, sharp conversational reaction.",
-        "chat_fun": "Utter an ultra-short chaotic micro-phrase, single-word idiom (e.g., 'stunning', 'wild'), or made-up word."
+        "chat_fact": "Deliver a short, sharp conversational reaction pulling from universal vocabulary.",
+        "chat_fun": "Utter an ultra-short chaotic micro-phrase, single-word idiom, or made-up word."
     }
 
     micro_snippet = get_random_rag_snippet()
@@ -198,19 +212,13 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=1.1,
-                max_tokens=100,  # Controlled token ceiling to ensure complete sentences
+                temperature=1.3,  # Higher temperature for maximum creative variety
+                max_tokens=100,
             )
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
-            fallbacks = [
-                "Checking my video archives!",
-                "Back in space 163!",
-                "Arnold Attic lives on!",
-                "Holy Hawaii Guinea Pigs!"
-            ]
-            reply_text = random.choice(fallbacks)
+            reply_text = get_infinite_variety_fallback()
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -252,7 +260,7 @@ async def on_message(message):
     name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
-    # Priority 1: Active user interaction (Highest priority, suppresses background loops)
+    # --- PRIORITY 1: Instant Event-Driven Interaction (Highest Priority, Never Delayed) ---
     if is_mentioned or is_reply_to_bot or has_name_keyword:
         last_active_time = time.time()
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
@@ -260,14 +268,14 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: FORWARD ARCHIVE SCANNING & UNTOUCHED MEMBER OUTREACH ---
+# --- BACKGROUND LOOP: SEQUENTIAL PRIORITY 2 & PRIORITY 3 SCHEDULER ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(90)
         
         try:
-            # Yield to Priority 1 if active recently (within 3 minutes)
+            # Yield immediately to Priority 1 if active recently (within 3 minutes)
             if time.time() - last_active_time < 180:
                 continue
 
@@ -277,39 +285,38 @@ async def background_engagement_loop():
                     continue
                 
                 channel = random.choice(text_channels)
-                action_roll = random.random()
 
-                if action_roll < 0.85:
-                    # --- PRIORITY 2: Forward Chronological Archive Scanning ---
-                    # Scans from oldest messages forward (limit=100 per check, max 1 message per unique member)
-                    candidates = []
-                    async for message in channel.history(limit=100, oldest_first=True):
-                        if message.author.bot:
-                            continue
-                        if message.id in replied_message_ids:
-                            continue
-                        if message.author.id in background_replied_users:
-                            continue
-                        if message.content.strip():
-                            candidates.append(message)
+                # --- PRIORITY 2: Exhaustive Forward Chronological Archive Scanning ---
+                # Scans oldest messages first (from 2019/beginning). Will NOT switch to Priority 3 
+                # until every single message across channels has been evaluated and responded to.
+                candidates = []
+                async for message in channel.history(limit=100, oldest_first=True):
+                    if message.author.bot:
+                        continue
+                    if message.id in replied_message_ids:
+                        continue
+                    if message.author.id in background_replied_users:
+                        continue
+                    if message.content.strip():
+                        candidates.append(message)
 
-                    if candidates:
-                        target_message = candidates[0]  # Oldest unreplied message
-                        background_replied_users.add(target_message.author.id)
-                        if len(background_replied_users) > 1000:
-                            background_replied_users.pop()
+                if candidates:
+                    target_message = candidates[0]  # Oldest unreplied message from beginning to end
+                    background_replied_users.add(target_message.author.id)
+                    if len(background_replied_users) > 5000:
+                        background_replied_users.pop()
 
-                        clean_prompt = target_message.content.strip()
-                        await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
-                        break
+                    clean_prompt = target_message.content.strip()
+                    await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
+                    break
                 else:
                     # --- PRIORITY 3: Untouched Member Outreach ---
-                    # Reaches out exclusively to members who have NEVER interacted with the bot since creation (1 msg max)
+                    # ONLY triggers when Priority 2 archive scanning is 100% exhausted.
                     if guild.members:
                         untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
                         if untouched_members:
                             target_member = random.choice(untouched_members)
-                            lifetime_interacted_members.add(target_member.id)  # Mark as reached out to
+                            lifetime_interacted_members.add(target_member.id)
 
                             prompt = f"Send a wild icebreaker or greeting to server member {target_member.name}."
                             await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3, author_id=target_member.id)
