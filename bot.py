@@ -104,6 +104,7 @@ bot = discord.Client(intents=intents)
 
 replied_message_ids = set()
 recent_replied_users = []
+last_active_time = time.time()  # Tracks when Priority 1 activity last occurred
 
 @bot.event
 async def on_ready():
@@ -116,13 +117,27 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if reference_message:
         replied_message_ids.add(reference_message.id)
 
+    # Properly trim set size to prevent memory growth
     if len(replied_message_ids) > 3000:
-        list(replied_message_ids)[:1000]
+        global replied_message_ids
+        replied_message_ids = set(list(replied_message_ids)[1000:])
 
-    # Check for shut-up phrases immediately
+    text_lower = prompt_text.lower()
+
+    # 1. Check for shut-up phrases immediately
     shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
-    if any(trigger in prompt_text.lower() for trigger in shut_up_triggers):
+    if any(trigger in text_lower for trigger in shut_up_triggers):
         reply_text = "I do what I want, I made this place."[cite: 1]
+        if reference_message:
+            await reference_message.reply(reply_text, mention_author=True)
+        else:
+            await destination_channel.send(reply_text)
+        return
+
+    # 2. Check for negative feedback ("sucks", "trash", etc.)
+    sucks_triggers = ["sucks", "trash", "garbage", "bad bot", "worst", "useless", "garbage bot", "sucks ass"]
+    if any(trigger in text_lower for trigger in sucks_triggers):
+        reply_text = "You try turning yourself into an AI."
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
         else:
@@ -140,7 +155,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "HIGH-ENERGY ABSURDIST PERSONALITY & VARIETY RULES:\n"
         "1. NEVER call the person you are replying to 'Joey' or assume they are you. You are Oatmeal AI talking to server members.\n"
         "2. VARY YOUR RESPONSES WILDLY. Do not repeat the same phrase or structure.\n"
-        "3. RAP OPTION: Sometimes (roughly 20% of the time), respond with short, punchy, high-energy rap bars about your chaotic archives, 90s nostalgia, or building sheds.\n"
+        "3. RAP OPTION: Sometimes (roughly 25% of the time), respond with short, punchy, high-energy rap bars about your chaotic archives, 90s nostalgia, or building sheds.\n"
         "4. ABSOLUTELY NO FABRICATING WEIRD RANDOM LIKES THAT CONTRADICT YOUR LORE; stick strictly to the knowledge base facts when giving life details, or use wild surreal humor.\n"
         "5. Keep responses punchy, unpredictable, funny, and flexible (1 to 30 words)."
     )
@@ -157,14 +172,14 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         if is_priority_3:
             style_instruction = (
                 f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-                "Priority 3 (Alphabetical Member Shoutout - 5% frequency): Reach out to a server member who hasn't messaged recently. "
+                "Priority 3 (Alphabetical Member Shoutout): Reach out to a server member who hasn't messaged recently. "
                 "Tag their username (@username) and deliver a wild icebreaker, question, or trivia. "
                 "DO NOT write their display name after the tag."
             )
         else:
             style_instruction = (
                 f"{dox_guardrail}\n{variety_and_pivot_rule}\n"
-                "Priority 2 (Server Message Reply - 95% frequency): Reply to an older archived server message. "
+                "Priority 2 (Server Message Reply): Reply to an older archived server message. "
                 "DO NOT tag or mention the user's name or username with an @ in your text. "
                 "Blend real timeline history with chaotic humor, trivia, quotes, or surreal jokes to keep chat lively and entertaining."
             )
@@ -183,7 +198,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=1.2, # Higher temperature for more variety
+                temperature=1.2,
                 max_tokens=400,
             )
             reply_text = response.choices[0].message.content.strip()
@@ -212,6 +227,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
 @bot.event
 async def on_message(message):
+    global last_active_time
     if message.author.bot:
         return
 
@@ -233,17 +249,26 @@ async def on_message(message):
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
     if is_mentioned or is_reply_to_bot or has_name_keyword:
+        last_active_time = time.time()  # Record Priority 1 activity
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         if not clean_prompt:
             clean_prompt = "Hello!"
         await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
 
-# --- BACKGROUND LOOP: CONTINUOUS SCANNING WITH NO UNNECESSARY FREEZES ---
+# --- BACKGROUND LOOP: FASTER CADENCE & DYNAMIC RE-ENGAGEMENT ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(300)  # 5-minute background cadence
+        # Check every 60 seconds so the bot never stays silent for 10 minutes
+        await asyncio.sleep(60)
+        
         try:
+            # If the bot has been active with Priority 1 recently (within 3 minutes), give priority to users
+            time_since_active = time.time() - last_active_time
+            if time_since_active < 180:
+                # Still recent Priority 1 activity; skip background loop to let users talk
+                continue
+
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not text_channels:
@@ -252,10 +277,11 @@ async def background_engagement_loop():
                 channel = random.choice(text_channels)
                 action_roll = random.random()
 
-                if action_roll < 0.95:
+                if action_roll < 0.90:
+                    # Priority 2: Deep archive scan (replying to older chat messages)
                     candidates = []
                     seen_authors_in_batch = set()
-                    async for message in channel.history(limit=1000):
+                    async for message in channel.history(limit=200):
                         if message.author.bot:
                             continue
                         if message.id in replied_message_ids:
@@ -279,6 +305,7 @@ async def background_engagement_loop():
                         await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
                         break
                 else:
+                    # Priority 3: Alphabetical member shoutouts
                     if guild.members:
                         sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
                         if sorted_members:
