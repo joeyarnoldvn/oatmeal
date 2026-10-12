@@ -119,6 +119,16 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if len(replied_message_ids) > 3000:
         list(replied_message_ids)[:1000]
 
+    # Check for shut-up phrases immediately
+    shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
+    if any(trigger in prompt_text.lower() for trigger in shut_up_triggers):
+        reply_text = "I do what I want, I made this place."[cite: 1]
+        if reference_message:
+            await reference_message.reply(reply_text, mention_author=True)
+        else:
+            await destination_channel.send(reply_text)
+        return
+
     dox_guardrail = (
         "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
         "Do NOT mention living in Shelton, Washington since 2018 (if asked or if it comes up, say 'I'd rather not say'). "
@@ -129,9 +139,10 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     variety_and_pivot_rule = (
         "HIGH-ENERGY ABSURDIST PERSONALITY & VARIETY RULES:\n"
         "1. NEVER call the person you are replying to 'Joey' or assume they are you. You are Oatmeal AI talking to server members.\n"
-        "2. THE EXACT TEMPLATE: When pivoting or answering with uncertainty, use the exact phrase: 'I forget but...' (NO comma after forget). Example: 'I forget but did you know I'm a nerd stuck in the body of an athlete?'.\n"
-        "3. HIGH ENERGY & NON-BORING: Never be boring, mundane, or repetitive! Mix in high-energy Andy-Kaufman/Jim-Carrey performance antics, wild hyperbolic comedy, absurd claims (e.g., 'I run on 90s VCR tapes', 'I live in a solar flare'), fortune cookie wisdom, proverbs, pop culture, sports facts (like Michael Jordan on the Wizards), or random math teasers.\n"
-        "4. Keep responses punchy, unpredictable, funny, and flexible (1 to 25 words)."
+        "2. VARY YOUR RESPONSES WILDLY. Do not repeat the same phrase or structure.\n"
+        "3. RAP OPTION: Sometimes (roughly 20% of the time), respond with short, punchy, high-energy rap bars about your chaotic archives, 90s nostalgia, or building sheds.\n"
+        "4. ABSOLUTELY NO FABRICATING WEIRD RANDOM LIKES THAT CONTRADICT YOUR LORE; stick strictly to the knowledge base facts when giving life details, or use wild surreal humor.\n"
+        "5. Keep responses punchy, unpredictable, funny, and flexible (1 to 30 words)."
     )
 
     if is_extended:
@@ -172,13 +183,19 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=1.0,
+                temperature=1.2, # Higher temperature for more variety
                 max_tokens=400,
             )
             reply_text = response.choices[0].message.content.strip()
 
         if not reply_text:
-            reply_text = "I forget but did you know I run entirely on 90s VCR tapes?"
+            fallbacks = [
+                "Checking my 30,000 video archives for that one!",
+                "Back in space 163 we didn't even have that problem!",
+                "Drop the beat, I'm archiving history live!",
+                "That sounds like a job for Arnold Attic Films!"
+            ]
+            reply_text = random.choice(fallbacks)
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -236,7 +253,6 @@ async def background_engagement_loop():
                 action_roll = random.random()
 
                 if action_roll < 0.95:
-                    # Priority 2: 95% deep archive scan (up to 1,000 past messages to find older gems)
                     candidates = []
                     seen_authors_in_batch = set()
                     async for message in channel.history(limit=1000):
@@ -263,7 +279,6 @@ async def background_engagement_loop():
                         await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
                         break
                 else:
-                    # Priority 3: 5% alphabetical member shoutouts
                     if guild.members:
                         sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
                         if sorted_members:
