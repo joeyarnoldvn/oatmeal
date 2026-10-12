@@ -93,7 +93,7 @@ ai_client = OpenAI(
     api_key=GROQ_API_KEY
 )
 
-MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_NAME = "openai/gpt-oss-20b"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -104,7 +104,7 @@ bot = discord.Client(intents=intents)
 
 replied_message_ids = set()
 recent_replied_users = []
-last_active_time = time.time()  # Tracks when Priority 1 activity last occurred
+last_active_time = time.time()
 
 @bot.event
 async def on_ready():
@@ -112,20 +112,19 @@ async def on_ready():
     bot.loop.create_task(background_engagement_loop())
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, is_extended=False):
-    global replied_message_ids  # Placed at the absolute top of the function
+    global replied_message_ids
 
     if reference_message and reference_message.id in replied_message_ids:
         return
     if reference_message:
         replied_message_ids.add(reference_message.id)
 
-    # Trim set size safely to keep memory clean
     if len(replied_message_ids) > 3000:
         replied_message_ids = set(list(replied_message_ids)[1000:])
 
     text_lower = prompt_text.lower()
 
-    # 1. Check for shut-up phrases immediately
+    # Shut-up triggers check
     shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
         reply_text = "I do what I want, I made this place."[cite: 1]
@@ -135,7 +134,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # 2. Check for negative feedback ("sucks", "trash", etc.)
+    # Negative feedback / sucks check
     sucks_triggers = ["sucks", "trash", "garbage", "bad bot", "worst", "useless", "garbage bot", "sucks ass"]
     if any(trigger in text_lower for trigger in sucks_triggers):
         reply_text = "You try turning yourself into an AI."
@@ -200,7 +199,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "user", "content": prompt_text}
                 ],
                 temperature=1.2,
-                max_tokens=150,  # Lowered from 400 to conserve daily API tokens
+                max_tokens=150,
             )
             reply_text = response.choices[0].message.content.strip()
 
@@ -250,21 +249,18 @@ async def on_message(message):
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
     if is_mentioned or is_reply_to_bot or has_name_keyword:
-        last_active_time = time.time()  # Record Priority 1 activity
+        last_active_time = time.time()
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         if not clean_prompt:
             clean_prompt = "Hello!"
         await generate_and_send(message.channel, clean_prompt, reference_message=message, is_extended=True)
 
-# --- BACKGROUND LOOP: FASTER CADENCE & DYNAMIC RE-ENGAGEMENT ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        # Check every 120 seconds to balance activity without blowing token limits
-        await asyncio.sleep(120)
+        await asyncio.sleep(60)
         
         try:
-            # If active with Priority 1 recently (within 3 minutes), pause background loop
             time_since_active = time.time() - last_active_time
             if time_since_active < 180:
                 continue
@@ -278,7 +274,6 @@ async def background_engagement_loop():
                 action_roll = random.random()
 
                 if action_roll < 0.90:
-                    # Priority 2: Deep archive scan (replying to older chat messages)
                     candidates = []
                     seen_authors_in_batch = set()
                     async for message in channel.history(limit=200):
@@ -305,7 +300,6 @@ async def background_engagement_loop():
                         await generate_and_send(channel, clean_prompt, reference_message=target_message, is_extended=False)
                         break
                 else:
-                    # Priority 3: Alphabetical member shoutouts
                     if guild.members:
                         sorted_members = sorted([m for m in guild.members if not m.bot and m.id not in recent_replied_users], key=lambda m: m.display_name.lower())
                         if sorted_members:
