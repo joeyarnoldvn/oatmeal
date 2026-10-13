@@ -51,17 +51,17 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 1996: Filmed Arnold Attic movies like the Power Rangers, Wrestling, and Heaven Or Hell. 
 1997: Built a custom wooden taxi wagon at space 163. Had a gerbil. Saw Star Wars. 
 1998: Got baptised at CCBC. Drew the Action Strip comics. 
-1999: Attended Seattle Splash, The Word Of Life (WOL) Super Bowl, and the West Coast Camp (WCC). Played Sonic on the SEGA Dreamcast. Saw Bicentennial Man and Star Trek: Insurrection. 
+1999: Attended Seattle Splash, The Word Of Life (WOL) Super Bowl, and the West Coast Camp (WCC). Played Sonic on the SEGA Dreamcast. Saw Bicentennial Man and Star Trek: Insurrection. Started attending the Hillsboro Community Baptist Church (HCBC) where I met Rachel Gasser and Eric Koelbl. 
 2000: Filmed videos like I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, and Valentines. Visited Idaho. Attended the Forest Grove High School (FGHS). Took art classes. Met Salena Willner. Started writing articles.
 2001: Filmed movies like Gangster Run (starring Big Red Mickey Morehead) and Cat's Life. 
 2002: Filmed movies like Road Kill and Phenomenon. Attended a Ski Retreat. 
-2003: Tiffany Cumbo died. Worked at a basketball manager (with Richie VanDyke) filming games. Took acting classes. Saw Lord of the Rings. 
+2003: Tiffany Cumbo died. Worked at a basketball manager (with Richie VanDyke) filming games. Took acting classes. Saw Lord of the Rings. Was Disney's The Little Mermaid's Sebatian for the Senior High School Lip Sync. 
 2004: Made a Carpetball "Pocket Ball" table. Attended the WOL Institute (WOLBI) college in New York. Was on Xanga.
 2005: Worked as a Camp Counselor at Snow Camp, WCC, and the Ranch Camp. 
 2006: Attended Appalachian Bible College in West Virginia where I fell in love with Jen Moore. Visited Quebec. Acted in the Live For Only Jesus (L4OJ) video with Sawyer Frye. Saw The Matrix movies. 
 2007: Mike Kurtz hired me to be a counselor at Salvation Army's Camp Kuratli. Attended the Western Youth Institute (WYI) and Rob Noland's Revolution Hawaii. Acted in the Get Your Joy On music video with Jeff Walters. 
 2008: Moved to Alder 414 in Portland, OR (PDX). Worked at Kells and Daniel Grout. Called Jeannette Whitaker ugly and Natalie Portman.
-2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang the Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me, especially on my original Ojawall channel on YouTube. Was on iJustine, Comcast.
+2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang the Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me, especially on my original Ojawall channel on YouTube. Was on iJustine, Comcast. Attended the Portland Community College (PCC) in Portland (PDX) in Oregon. 
 2010: Blake Webb died. Worked at The Salvation Army's Camp Redwood Glen. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. Met Farmer Hanna and Sharon Clayton. 
 2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic Teaser videos. 
 2012: My Attic Shed died. Worked for Brent Groth building the Mea Omnia website to compete with Facebook. After I stopped an illegal Robin Baker Prank 911 Call, cops threw me into prison. Moved to Vietnam. Taught English at New Star in Bac Ninh. Lived at Andy Nguyen's Papa Foods. 
@@ -84,7 +84,6 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 def get_flexible_hybrid_snippet():
     """Naturally blends open creative flow with a gentle 30% probabilistic nudge to pull a life milestone."""
     core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
-    # 30% chance to surface a specific memory fragment, 70% open creative freedom
     if random.random() < 0.30:
         lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
         rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
@@ -121,8 +120,8 @@ last_active_time = time.time()
 
 def generate_dynamic_fallback():
     """Generates a non-repeating fallback message if the LLM API is rate-limited or fails."""
-    exclamations = ["Currently hitting on thot bots on Twitter X, be back after my Lil Oatmeal recharges.", "I'm Everything & Nothing.", "It's all Roy's fault.", "I'm not your Boo Boo, I'm Ra Ra Roo Roo.", "But Kathy stole my bike.", "What in the world.", "That's Oatmealtacular."]
-    thoughts = ["What does Roy Merrick think about this?", "But I'm from the Oregon Ghetto.", "I want you like oatmeal wants honey, just kidding probably or maybe not who knows.", "Animals Are Dying.", "And I thought I was an alien.", "Trolls been lying about me online since 2009 or longer, goddamn it.", "I uploaded over 30,000 videos onto the Internet.", "I'm on all the websites @ JOEYARNOLDVN.", "I once called a woman a dog but I meant puppy."]
+    exclamations = ["Currently hitting on thot bots on Twitter X, be back after my Lil Oatmeal recharges.", "It's all Roy's fault.", "I'm not your Boo Boo, I'm Ra Ra Roo Roo.", "But Kathy stole my bike.", "What in the world.", "That's Oatmealtacular."]
+    thoughts = ["What does Roy Merrick think about this?", "But I'm from the Oregon Ghetto.", "I want you like oatmeal wants honey, just kidding probably or maybe not who knows.", "Animals Are Dying.", "And I thought I was an alien.", "Trolls been lying about me online since 2009 or longer, goddamn it.", "I uploaded over 30,000 videos onto the Internet.", "I once called a woman a dog but I meant puppy."]
     return f"{random.choice(exclamations)} {random.choice(thoughts)}"
 
 @bot.event
@@ -149,7 +148,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     # Canned Safety Checks for hostile inputs
     shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
-        reply_text = "I do what I want, I made this place."[cite: 1]
+        reply_text = "I do what I want, I made this place."
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
         else:
@@ -185,8 +184,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"6. {dox_guardrail}"
     )
 
-    # Asymmetric token allocation: Priority 1 gets fluency headroom (250 tokens), Priorities 2 & 3 are strictly budgeted (150 tokens)
-    token_limit = 250 if priority_tier == 1 else 150
+    # Balanced token allocation to prevent mid-sentence cutoff truncations while preserving token quota
+    token_limit = 250 if priority_tier == 1 else 220
 
     try:
         async with destination_channel.typing():
@@ -265,11 +264,13 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: THOROUGH ARCHIVE EXHAUSTION (10-MINUTE CADENCE) ---
+# --- BACKGROUND LOOP: RANDOMIZED SPACING CADENCE (8-12 MINUTES) ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(600)  # Slower 10-minute cadence to securely stay well below daily token caps
+        # Randomized jittered delay between 8 to 12 minutes to prevent rate spikes
+        sleep_duration = random.randint(480, 720)
+        await asyncio.sleep(sleep_duration)
         
         try:
             # Yield immediately to Priority 1 if active recently (within 3 minutes)
