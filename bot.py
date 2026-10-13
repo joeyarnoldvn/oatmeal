@@ -27,7 +27,7 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. FULL LIFE OUTLINE & SMART TOKEN-CONSERVING RAG SLICER ---
+# --- 2. FULL LIFE OUTLINE & DICE-ROLL SMART RAG SLICER ---
 KNOWLEDGE_CONTENT = """
 You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn). Embody your exact persona: casual, conversational, reflective, high-energy, self-aware lolcow-archivist, tunnel-vision builder, and deeply familiar with your life history, online archives, Hive blogs, video archiving projects, and unique life experiences. Never break character.
 
@@ -82,11 +82,11 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 """
 
 def get_smart_rag_snippet():
-    """Extracts core identity traits plus a random selection of 3 annual outline lines to minimize token usage per call."""
+    """Rolls the dice to pick 1 random year from the outline plus core identity traits to minimize token usage per call."""
     lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
-    selected_years = random.sample(lines, min(3, len(lines))) if lines else []
+    rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
     core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
-    return core_summary + "\n" + "\n".join(selected_years)
+    return f"{core_summary}\nRolled Memory Fragment -> {rolled_year}"
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -173,10 +173,10 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"You are Oatmeal AI, the living continuation of Oatmeal Joseph Joey Scott Arnold at @ joeyarnoldvn, born Feb 11, 1985 at 163.\n\n"
         f"BIOGRAPHY & LIFE SNIPPETS:\n{smart_snippet}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
-        f"1. You have complete conversational freedom. Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, stupid, silly, inspirational, counselor, doctor, pastor, guide, how-to tutorial, passionate, brief, short, original, creative, hyperbolic, comedic, weird, crazy, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, and/or philosophical.\n"
+        f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, stupid, silly, inspirational, counselor, doctor, pastor, guide, how-to tutorial, passionate, brief, short, original, creative, hyperbolic, comedic, weird, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, and/or philosophical.\n"
         f"2. Freely draw upon history, geography, people, places, movies, books, the Internet, Twitter X, politics, breaking news, pop culture, scientific terms, trivia, any language, science fiction, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
         f"3. You may naturally and organically reference your life history when relevant, but DO NOT lie or fabricate false biographical facts about yourself.\n"
-        f"4. Vary your response length naturally based on what the user says: you can be ultra-short (a single word or punchy phrase) or longer and more detailed when answering real questions.\n"
+        f"4. HORSE WHISPERER LENGTH GUIDANCE: 90% of the time, keep your messages concise, punchy, and around one single complete thought or sentence so you flow naturally without running wild or cutting off.\n"
         f"5. {dox_guardrail}"
     )
 
@@ -189,7 +189,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "user", "content": prompt_text}
                 ],
                 temperature=1.2,
-                max_tokens=150,  # Optimized token ceiling to prevent hitting Groq daily limits
+                max_tokens=250,  # Balanced ceiling to ensure full sentence completion without unconstrained runaway tokens
             )
             reply_text = response.choices[0].message.content.strip()
 
@@ -207,16 +207,20 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
 
     except Exception as e:
+        error_str = str(e)
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
-        reply_text = generate_dynamic_fallback()
-        if reference_message:
-            await reference_message.reply(reply_text, mention_author=True)
-        elif target_member:
-            await destination_channel.send(f"{target_member.mention} {reply_text}")
-        else:
-            await destination_channel.send(reply_text)
+        
+        # Only deploy fallback if it is a true rate limit or API failure
+        if "429" in error_str or "RateLimit" in error_str or "api" in error_str.lower():
+            reply_text = generate_dynamic_fallback()
+            if reference_message:
+                await reference_message.reply(reply_text, mention_author=True)
+            elif target_member:
+                await destination_channel.send(f"{target_member.mention} {reply_text}")
+            else:
+                await destination_channel.send(reply_text)
 
-        if "429" in str(e) or "RateLimit" in str(e):
+        if "429" in error_str or "RateLimit" in error_str:
             print("Rate limit hit. Backing off background loop for 5 minutes.")
             await asyncio.sleep(300)
 
@@ -253,11 +257,11 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: TOKEN-CONSERVING SCHEDULER (4-MINUTE CADENCE) ---
+# --- BACKGROUND LOOP: TOKEN-CONSERVING SCHEDULER (5-MINUTE CADENCE TO PREVENT TPD OVERAGES) ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(240)  # Slower 4-minute cadence to conserve daily tokens and stay well below TPD limits
+        await asyncio.sleep(300)  # Slower 5-minute cadence to securely stay below 80%-100% daily TPD limits
         
         try:
             # Yield immediately to Priority 1 if active recently (within 3 minutes)
