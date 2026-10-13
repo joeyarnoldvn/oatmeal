@@ -51,17 +51,17 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 1996: Filmed Arnold Attic movies like the Power Rangers, Wrestling, and Heaven Or Hell. 
 1997: Built a custom wooden taxi wagon at space 163. Had a gerbil. Saw Star Wars. 
 1998: Got baptised at CCBC. Drew the Action Strip comics. 
-1999: Attended Seattle Splash, The Word Of Life (WOL) Super Bowl, and the West Coast Camp (WCC). Played Sonic on the SEGA Dreamcast. Saw Bicentennial Man and Star Trek: Insurrection. Started attending the Hillsboro Community Baptist Church (HCBC) where I met Rachel Gasser and Eric Koelbl. 
+1999: Attended Seattle Splash, The Word Of Life (WOL) Super Bowl, and the West Coast Camp (WCC). Played Sonic on the SEGA Dreamcast. Saw Bicentennial Man and Star Trek: Insurrection. 
 2000: Filmed videos like I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, and Valentines. Visited Idaho. Attended the Forest Grove High School (FGHS). Took art classes. Met Salena Willner. Started writing articles.
 2001: Filmed movies like Gangster Run (starring Big Red Mickey Morehead) and Cat's Life. 
 2002: Filmed movies like Road Kill and Phenomenon. Attended a Ski Retreat. 
-2003: Tiffany Cumbo died. Worked at a basketball manager (with Richie VanDyke) filming games. Took acting classes. Saw Lord of the Rings. Was Disney's The Little Mermaid's Sebatian for the Senior High School Lip Sync. 
+2003: Tiffany Cumbo died. Worked at a basketball manager (with Richie VanDyke) filming games. Took acting classes. Saw Lord of the Rings. 
 2004: Made a Carpetball "Pocket Ball" table. Attended the WOL Institute (WOLBI) college in New York. Was on Xanga.
 2005: Worked as a Camp Counselor at Snow Camp, WCC, and the Ranch Camp. 
 2006: Attended Appalachian Bible College in West Virginia where I fell in love with Jen Moore. Visited Quebec. Acted in the Live For Only Jesus (L4OJ) video with Sawyer Frye. Saw The Matrix movies. 
 2007: Mike Kurtz hired me to be a counselor at Salvation Army's Camp Kuratli. Attended the Western Youth Institute (WYI) and Rob Noland's Revolution Hawaii. Acted in the Get Your Joy On music video with Jeff Walters. 
 2008: Moved to Alder 414 in Portland, OR (PDX). Worked at Kells and Daniel Grout. Called Jeannette Whitaker ugly and Natalie Portman.
-2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang the Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me, especially on my original Ojawall channel on YouTube. Was on iJustine, Comcast. Attended the Portland Community College (PCC) in Portland (PDX) in Oregon. 
+2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang the Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me, especially on my original Ojawall channel on YouTube. Was on iJustine, Comcast.
 2010: Blake Webb died. Worked at The Salvation Army's Camp Redwood Glen. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. Met Farmer Hanna and Sharon Clayton. 
 2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic Teaser videos. 
 2012: My Attic Shed died. Worked for Brent Groth building the Mea Omnia website to compete with Facebook. After I stopped an illegal Robin Baker Prank 911 Call, cops threw me into prison. Moved to Vietnam. Taught English at New Star in Bac Ninh. Lived at Andy Nguyen's Papa Foods. 
@@ -184,7 +184,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"6. {dox_guardrail}"
     )
 
-    # Balanced token allocation to prevent mid-sentence cutoff truncations while preserving token quota
     token_limit = 250 if priority_tier == 1 else 220
 
     try:
@@ -198,7 +197,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                 temperature=1.2,
                 max_tokens=token_limit,
             )
-            reply_text = response.choices[0].message.content.strip()
+            reply_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
 
         if not reply_text:
             reply_text = generate_dynamic_fallback()
@@ -217,15 +216,13 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         error_str = str(e)
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
         
-        # Only deploy fallback if it is a true rate limit or API failure
-        if "429" in error_str or "RateLimit" in error_str or "api" in error_str.lower():
-            reply_text = generate_dynamic_fallback()
-            if reference_message:
-                await reference_message.reply(reply_text, mention_author=True)
-            elif target_member:
-                await destination_channel.send(f"{target_member.mention} {reply_text}")
-            else:
-                await destination_channel.send(reply_text)
+        reply_text = generate_dynamic_fallback()
+        if reference_message:
+            await reference_message.reply(reply_text, mention_author=True)
+        elif target_member:
+            await destination_channel.send(f"{target_member.mention} {reply_text}")
+        else:
+            await destination_channel.send(reply_text)
 
         if "429" in error_str or "RateLimit" in error_str:
             print("Rate limit hit. Backing off background loop for 10 minutes.")
@@ -264,16 +261,15 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: RANDOMIZED SPACING CADENCE (8-12 MINUTES) ---
+# --- BACKGROUND LOOP: WIDER SPACED CADENCE (10-15 MINUTES) TO CONSERVE TOKENS ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        # Randomized jittered delay between 8 to 12 minutes to prevent rate spikes
-        sleep_duration = random.randint(480, 720)
+        # Randomized jittered delay between 10 to 15 minutes (600 - 900 seconds) to conserve daily tokens
+        sleep_duration = random.randint(600, 900)
         await asyncio.sleep(sleep_duration)
         
         try:
-            # Yield immediately to Priority 1 if active recently (within 3 minutes)
             if time.time() - last_active_time < 180:
                 continue
 
@@ -284,9 +280,8 @@ async def background_engagement_loop():
                 
                 channel = random.choice(text_channels)
 
-                # --- PRIORITY 2: Exhaustive Forward Chronological Archive Scanning (100 messages deep) ---
                 candidates = []
-                async for message in channel.history(limit=100, oldest_first=True):
+                async for message in channel.history(limit=50, oldest_first=True):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
@@ -297,7 +292,7 @@ async def background_engagement_loop():
                         candidates.append(message)
 
                 if candidates:
-                    target_message = candidates[0]  # Oldest unreplied message
+                    target_message = candidates[0]
                     background_replied_users.add(target_message.author.id)
                     if len(background_replied_users) > 10000:
                         background_replied_users.pop()
@@ -306,7 +301,6 @@ async def background_engagement_loop():
                     await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
                     break
                 else:
-                    # --- PRIORITY 3: Untouched Member Outreach (Only executes once archive is fully exhausted) ---
                     if guild.members:
                         untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
                         if untouched_members:
