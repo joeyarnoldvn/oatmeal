@@ -112,11 +112,24 @@ intents.messages = True
 intents.members = True
 bot = discord.Client(intents=intents)
 
-# State Trackers
+# State Trackers & Token Budget Governor
 replied_message_ids = set()
 background_replied_users = set()
 lifetime_interacted_members = set()
-last_active_time = time.time()
+
+# Token Budget Tracking (200k TPD Free Tier Limit, 70% threshold = 140,000 tokens)
+daily_token_tracker = {"tokens_used": 0, "reset_timestamp": time.time()}
+
+# Priority 1 Sleep Control State
+priority1_sleep_until = 0  # Timestamp until which the bot is sleeping due to Priority 1
+
+def track_token_usage(prompt_text, reply_text):
+    global daily_token_tracker
+    now = time.time()
+    if now - daily_token_tracker["reset_timestamp"] > 86400:
+        daily_token_tracker = {"tokens_used": 0, "reset_timestamp": now}
+    est_tokens = len(prompt_text + reply_text) // 4
+    daily_token_tracker["tokens_used"] += est_tokens
 
 @bot.event
 async def on_ready():
@@ -139,7 +152,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     text_lower = prompt_text.lower()
 
-    # Canned Safety Checks for hostile inputs
     shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
         reply_text = "I do what I want, I made this place."
@@ -194,10 +206,12 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             reply_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
 
         if not reply_text:
-            return  # Silently skip if empty instead of firing fallbacks
+            return
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
+
+        track_token_usage(prompt_text, reply_text)
 
         if reference_message:
             await reference_message.reply(reply_text, mention_author=True)
@@ -210,13 +224,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         error_str = str(e)
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
         
-        # If rate-limited (429), back off silently without posting fallback text
         if "429" in error_str or "RateLimit" in error_str or "rate_limit" in error_str.lower():
             print("Rate limit (429) hit. Silently backing off background loop for 15 minutes.")
             await asyncio.sleep(900)
             return
 
-        # For Priority 1 direct interactions only, if an unexpected error happens, provide a clean response
         if priority_tier == 1:
             reply_text = "What in the world. Let's keep talking."
             if reference_message:
@@ -226,7 +238,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
 @bot.event
 async def on_message(message):
-    global last_active_time, lifetime_interacted_members
+    global priority1_sleep_until, lifetime_interacted_members
     if message.author.bot:
         return
 
@@ -249,25 +261,39 @@ async def on_message(message):
     name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
-    # --- PRIORITY 1: Instant Event-Driven Interaction (Highest Priority, Never Delayed) ---
+    # --- PRIORITY 1: Instant Event-Driven Interaction & Sleep Counter Restart ---
     if is_mentioned or is_reply_to_bot or has_name_keyword:
-        last_active_time = time.time()
+        # Restart the counter: calculate a new random sleep duration between 60 to 120 minutes (3600 - 7200 seconds)
+        sleep_seconds = random.randint(3600, 7200)
+        priority1_sleep_until = time.time() + sleep_seconds
+        print(f"Priority 1 triggered! Restarting sleep counter. Bot will sleep for {sleep_seconds // 60} minutes.")
+
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         if not clean_prompt:
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: WIDER CADENCE (15-25 MINUTES) TO CONSERVE TOKENS ---
+# --- BACKGROUND LOOP: GOLDILOCKS INTERVAL (15-35 MINS) & CONDITIONAL SLEEP TRIGGERS ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        sleep_duration = random.randint(900, 1500)
-        await asyncio.sleep(sleep_duration)
-        
         try:
-            if time.system_time() if hasattr(time, 'system_time') else time.time() - last_active_time < 300:
+            now = time.time()
+
+            # Trigger 1: Priority 1 Sleep Check
+            if now < priority1_sleep_until:
+                # Sleep briefly and re-check
+                await asyncio.sleep(10)
                 continue
 
+            # Trigger 2: 70% Token Budget Governor Check (> 140,000 tokens out of 200,000 TPD limit)
+            tokens_used = daily_token_tracker["tokens_used"]
+            if tokens_used > 140000:
+                print(f"Token budget over 70% ({tokens_used}/200000). Triggering protective sleep for 60 minutes.")
+                await asyncio.sleep(3600)
+                continue
+
+            # --- NO SLEEP TRIGGERS ACTIVE: PROCEED WITH BACKGROUND POSTING ---
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not text_channels:
@@ -275,8 +301,9 @@ async def background_engagement_loop():
                 
                 channel = random.choice(text_channels)
 
-                candidates = []
-                async for message in channel.history(limit=25, oldest_first=True):
+                # --- PRIORITY 2: Forward Chronological Unique Member Queue ---
+                target_message = None
+                async for message in channel.history(limit=100, oldest_first=True):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
@@ -284,18 +311,18 @@ async def background_engagement_loop():
                     if message.author.id in background_replied_users:
                         continue
                     if message.content.strip():
-                        candidates.append(message)
+                        target_message = message
+                        break
 
-                if candidates:
-                    target_message = candidates[0]
+                if target_message:
                     background_replied_users.add(target_message.author.id)
                     if len(background_replied_users) > 10000:
                         background_replied_users.pop()
 
                     clean_prompt = f"React to this archived message from the server: '{target_message.content}'"
                     await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
-                    break
                 else:
+                    # --- PRIORITY 3: Fallback to untouched members ---
                     if guild.members:
                         untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
                         if untouched_members:
@@ -304,10 +331,13 @@ async def background_engagement_loop():
 
                             prompt = f"Say something witty, random, or welcoming to server member {target_member.name} who has never interacted with you before."
                             await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3, author_id=target_member.id)
-                            break
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
             await asyncio.sleep(60)
+
+        # --- GOLDILOCKS INTERVAL BETWEEN POSTS: 15 TO 35 MINUTES (900 - 2100 SECONDS) ---
+        post_interval = random.randint(900, 2100)
+        await asyncio.sleep(post_interval)
 
 bot.run(DISCORD_TOKEN)
