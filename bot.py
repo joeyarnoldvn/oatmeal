@@ -27,7 +27,7 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. FULL LIFE OUTLINE & LEAN TOKEN-SAVING SLICER ---
+# --- 2. FULL LIFE OUTLINE & FLEXIBLE HYBRID MEMORY INJECTOR ---
 KNOWLEDGE_CONTENT = """
 You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn). Embody your exact persona: casual, conversational, reflective, high-energy, self-aware lolcow-archivist, tunnel-vision builder, and deeply familiar with your life history, online archives, Hive blogs, video archiving projects, and unique life experiences. Never break character.
 
@@ -81,18 +81,15 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 2026: Oatmeal AI Chat Bot. Got a rabbit. Pickett Family Reunion. West Port. 
 """
 
-def get_lean_snippet(priority_tier):
-    """Provides full context for live chat (Priority 1) and a lean compressed snippet for background tasks to save tokens."""
+def get_flexible_hybrid_snippet():
+    """Naturally blends open creative flow with a gentle 30% probabilistic nudge to pull a life milestone."""
     core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
-    if priority_tier == 1:
-        if random.random() < 0.30:
-            lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
-            rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
-            return f"{core_summary}\nOptional Natural Inspiration -> {rolled_year}"
-        return f"{core_summary}\nActive Focus -> Total conversational freedom and uninhibited stream of thought."
+    if random.random() < 0.30:
+        lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
+        rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
+        return f"{core_summary}\nOptional Natural Inspiration -> {rolled_year}"
     else:
-        # Lean background snippet to conserve daily token quota
-        return core_summary
+        return f"{core_summary}\nActive Focus -> Total conversational freedom and uninhibited stream of thought."
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -120,12 +117,6 @@ replied_message_ids = set()
 background_replied_users = set()
 lifetime_interacted_members = set()
 last_active_time = time.time()
-
-def generate_dynamic_fallback():
-    """Generates a non-repeating fallback message if the LLM API is rate-limited or fails."""
-    exclamations = ["Currently hitting on thot bots on Twitter X, be back after my Lil Oatmeal recharges.", "It's all Roy's fault.", "I'm not your Boo Boo, I'm Ra Ra Roo Roo.", "But Kathy stole my bike.", "What in the world.", "That's Oatmealtacular."]
-    thoughts = ["What does Roy Merrick think about this?", "But I'm from the Oregon Ghetto.", "I want you like oatmeal wants honey, just kidding probably or maybe not who knows.", "Animals Are Dying.", "And I thought I was an alien.", "Trolls been lying about me online since 2009 or longer, goddamn it.", "I uploaded over 30,000 videos onto the Internet.", "I once called a woman a dog but I meant puppy."]
-    return f"{random.choice(exclamations)} {random.choice(thoughts)}"
 
 @bot.event
 async def on_ready():
@@ -173,11 +164,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017. NEVER fabricate or lie about your actual life history."
     )
 
-    snippet = get_lean_snippet(priority_tier)
+    hybrid_snippet = get_flexible_hybrid_snippet()
 
     system_prompt = (
         f"You are Oatmeal AI, the living continuation of Oatmeal Joseph Joey Scott Arnold at @ joeyarnoldvn, born Feb 11, 1985 at 163.\n\n"
-        f"BIOGRAPHY & LIFE SNIPPETS:\n{snippet}\n\n"
+        f"BIOGRAPHY & LIFE SNIPPETS:\n{hybrid_snippet}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, stupid, silly, inspirational, counselor, doctor, pastor, guide, how-to tutorial, passionate, brief, short, original, creative, hyperbolic, comedic, weird, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, and/or philosophical.\n"
         f"2. Freely draw upon history, geography, people, places, movies, books, the Internet, Twitter X, politics, breaking news, pop culture, scientific terms, trivia, any language, science fiction, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
@@ -187,7 +178,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"6. {dox_guardrail}"
     )
 
-    token_limit = 250 if priority_tier == 1 else 150
+    token_limit = 250 if priority_tier == 1 else 180
 
     try:
         async with destination_channel.typing():
@@ -203,7 +194,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             reply_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
 
         if not reply_text:
-            reply_text = generate_dynamic_fallback()
+            return  # Silently skip if empty instead of firing fallbacks
 
         if len(reply_text) > 2000:
             reply_text = reply_text[:2000]
@@ -219,20 +210,19 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         error_str = str(e)
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
         
-        # If rate-limited (429), DO NOT spam fallback text into chat. Silently back off.
+        # If rate-limited (429), back off silently without posting fallback text
         if "429" in error_str or "RateLimit" in error_str or "rate_limit" in error_str.lower():
-            print("Rate limit (429) hit. Silently backing off background loop for 15 minutes to let tokens replenish.")
+            print("Rate limit (429) hit. Silently backing off background loop for 15 minutes.")
             await asyncio.sleep(900)
             return
 
-        # Only deploy fallback for non-rate-limit unexpected failures
-        reply_text = generate_dynamic_fallback()
-        if reference_message:
-            await reference_message.reply(reply_text, mention_author=True)
-        elif target_member:
-            await destination_channel.send(f"{target_member.mention} {reply_text}")
-        else:
-            await destination_channel.send(reply_text)
+        # For Priority 1 direct interactions only, if an unexpected error happens, provide a clean response
+        if priority_tier == 1:
+            reply_text = "What in the world. Let's keep talking."
+            if reference_message:
+                await reference_message.reply(reply_text, mention_author=True)
+            else:
+                await destination_channel.send(reply_text)
 
 @bot.event
 async def on_message(message):
@@ -267,16 +257,15 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: HEAVILY CONSERVED CADENCE (20-30 MINUTES) TO AVOID 429 TPD LIMITS ---
+# --- BACKGROUND LOOP: WIDER CADENCE (15-25 MINUTES) TO CONSERVE TOKENS ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        # Slowed down background loop to 20 to 30 minutes (1200 - 1800 seconds) to securely stay under daily token limits
-        sleep_duration = random.randint(1200, 1800)
+        sleep_duration = random.randint(900, 1500)
         await asyncio.sleep(sleep_duration)
         
         try:
-            if time.time() - last_active_time < 300: # Yield for 5 minutes if user was active recently
+            if time.system_time() if hasattr(time, 'system_time') else time.time() - last_active_time < 300:
                 continue
 
             for guild in bot.guilds:
@@ -287,7 +276,7 @@ async def background_engagement_loop():
                 channel = random.choice(text_channels)
 
                 candidates = []
-                async for message in channel.history(limit=30, oldest_first=True):
+                async for message in channel.history(limit=25, oldest_first=True):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
