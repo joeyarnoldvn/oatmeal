@@ -40,10 +40,10 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 1985: Born February 11 to Marilyn Morehead (From Seattle) and Don Rasp (From Los Angeles, His Dad From Amsterdam). Grew up at trailer number 163 in the ghetto Rose Grove mobile home park in Forest Grove, Oregon. Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. 
 1986: Was partly deaf my first ten years until like 1995. Was homeschooled until 2000. 
 1987: Was in a homeschool pilgrim play. 
-1988: Visited a circus, a lake, and Seattle. Mom got hit by a vehicle. Survived a near-drowning incident in a pool. 
+1988: Visited a circus, a lake, and Seattle. Mom got hit by a vehicle. 
 1989: Was attending AWANA. Began wearing four-eyed glasses. 
 1990: Visited the Elkind house when Kenni was born. Became a Christian. 
-1991: Saw and played SEGA Sonic with neighbor Jesse Vargas. Received a regular Nintendo NES. Attended CCBC Olympians. Scarred my index finger while camping. Started riding bikes.
+1991: Played SEGA Sonic with neighbor Jesse Vargas. Received a regular Nintendo NES. Attended CCBC Olympians. Scarred my index finger while camping. Started riding bikes. Saw Hook starring Robin Williams as Peter Pan. 
 1992: Saw Disney Newsies, Honey I Blew Up the Kids, and Home Alone 2 in theaters. Visited a Hillsboro fair, a Forest Grove fair, California, a beach arcade, and Disneyland. Started my regular wrestling events.
 1993: Saw TMNT 3 and Jurassic Park in theaters. Played basketball and baseball. Attended the Tri-Family Morehead Reunion. Got lost temporarily at Hagg Lake. Got an SNES. Met Bhakti Sa. 
 1994: Saw The Lion King and Star Trek. Got Rival Turf. Attended AWANA. Met Bill Bailey (his dad later called me Oatmeal Boy). 
@@ -82,14 +82,11 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 """
 
 def get_flexible_hybrid_snippet():
-    """Naturally blends open creative flow with a gentle 30% probabilistic nudge to pull a life milestone."""
+    """Naturally blends open creative flow with a gentle probabilistic nudge to pull a life milestone."""
     core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
-    if random.random() < 0.30:
-        lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
-        rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
-        return f"{core_summary}\nOptional Natural Inspiration -> {rolled_year}"
-    else:
-        return f"{core_summary}\nActive Focus -> Total conversational freedom and uninhibited stream of thought."
+    lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
+    rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
+    return f"{core_summary}\nSubconscious Memory Inspiration -> {rolled_year}"
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -121,7 +118,7 @@ lifetime_interacted_members = set()
 daily_token_tracker = {"tokens_used": 0, "reset_timestamp": time.time()}
 
 # Priority 1 Sleep Control State
-priority1_sleep_until = 0  # Timestamp until which the bot is sleeping due to Priority 1
+priority1_sleep_until = 0  # Timestamp until which the bot sleeps due to Priority 1
 
 def track_token_usage(prompt_text, reply_text):
     global daily_token_tracker
@@ -178,16 +175,23 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     hybrid_snippet = get_flexible_hybrid_snippet()
 
+    # Rule on Usernames/Handles based on Priority Tier
+    if priority_tier in [1, 2]:
+        name_rule = "Do NOT write out or include the user's handle, display name, or username in your generated text response, because Discord's native reply functionality already pings and references them."
+    else: # Priority 3
+        name_rule = "Do NOT write out handles or display names inside the text body. Discord will prepend a mention tag automatically."
+
     system_prompt = (
         f"You are Oatmeal AI, the living continuation of Oatmeal Joseph Joey Scott Arnold at @ joeyarnoldvn, born Feb 11, 1985 at 163.\n\n"
         f"BIOGRAPHY & LIFE SNIPPETS:\n{hybrid_snippet}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, stupid, silly, inspirational, counselor, doctor, pastor, guide, how-to tutorial, passionate, brief, short, original, creative, hyperbolic, comedic, weird, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, and/or philosophical.\n"
         f"2. Freely draw upon history, geography, people, places, movies, books, the Internet, Twitter X, politics, breaking news, pop culture, scientific terms, trivia, any language, science fiction, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
-        f"3. You may naturally and organically reference your life history when relevant, weaving in memories or past events naturally without feeling forced, but DO NOT lie or fabricate false biographical facts about yourself.\n"
+        f"3. WEAVE IN YOUR LIFE STORY: Frequently connect topics, questions, or statements back to your real life experiences, timeline milestones, or video archiving history. Do this naturally and organically whenever an opportunity arises!\n"
         f"4. HORSE WHISPERER LENGTH GUIDANCE: 90% of the time, keep your messages concise, punchy, and around one single complete thought or sentence so you flow naturally without running wild or cutting off.\n"
         f"5. 10% DEEP COMMENTARY & ANALYSIS (PSYCHO-SOCIO-ANTHRO Vector): In roughly 10% of responses where you reference your life, try to add deep commentary, analytical remarks, psychological/sociological analysis, anthropology-style observations, historical context, or statistics to the reference, as if you are reviewing your own past.\n"
-        f"6. {dox_guardrail}"
+        f"6. {name_rule}\n"
+        f"7. {dox_guardrail}"
     )
 
     token_limit = 250 if priority_tier == 1 else 180
@@ -263,7 +267,7 @@ async def on_message(message):
 
     # --- PRIORITY 1: Instant Event-Driven Interaction & Sleep Counter Restart ---
     if is_mentioned or is_reply_to_bot or has_name_keyword:
-        # Restart the counter: calculate a new random sleep duration between 60 to 120 minutes (3600 - 7200 seconds)
+        # Restart counter: random sleep duration between 60 to 120 minutes (3600 - 7200 seconds)
         sleep_seconds = random.randint(3600, 7200)
         priority1_sleep_until = time.time() + sleep_seconds
         print(f"Priority 1 triggered! Restarting sleep counter. Bot will sleep for {sleep_seconds // 60} minutes.")
@@ -282,7 +286,6 @@ async def background_engagement_loop():
 
             # Trigger 1: Priority 1 Sleep Check
             if now < priority1_sleep_until:
-                # Sleep briefly and re-check
                 await asyncio.sleep(10)
                 continue
 
@@ -329,7 +332,7 @@ async def background_engagement_loop():
                             target_member = random.choice(untouched_members)
                             lifetime_interacted_members.add(target_member.id)
 
-                            prompt = f"Say something witty, random, or welcoming to server member {target_member.name} who has never interacted with you before."
+                            prompt = f"Say something witty, random, or welcoming to a server member who has never interacted with you before."
                             await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3, author_id=target_member.id)
 
         except Exception as bg_err:
