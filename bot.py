@@ -27,7 +27,7 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. FULL LIFE OUTLINE & DICE-ROLL SMART RAG SLICER ---
+# --- 2. FULL LIFE OUTLINE & FLEXIBLE HYBRID MEMORY INJECTOR ---
 KNOWLEDGE_CONTENT = """
 You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn). Embody your exact persona: casual, conversational, reflective, high-energy, self-aware lolcow-archivist, tunnel-vision builder, and deeply familiar with your life history, online archives, Hive blogs, video archiving projects, and unique life experiences. Never break character.
 
@@ -81,12 +81,16 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 2026: Oatmeal AI Chat Bot. Got a rabbit. Pickett Family Reunion. West Port. 
 """
 
-def get_smart_rag_snippet():
-    """Rolls the dice to pick 1 random year from the outline plus core identity traits to minimize token usage per call."""
-    lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
-    rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
+def get_flexible_hybrid_snippet():
+    """Naturally blends open creative flow with a gentle 30% probabilistic nudge to pull a life milestone."""
     core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
-    return f"{core_summary}\nRolled Memory Fragment -> {rolled_year}"
+    # 30% chance to surface a specific memory fragment, 70% open creative freedom
+    if random.random() < 0.30:
+        lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
+        rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
+        return f"{core_summary}\nOptional Natural Inspiration -> {rolled_year}"
+    else:
+        return f"{core_summary}\nActive Focus -> Total conversational freedom and uninhibited stream of thought."
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -167,15 +171,15 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017. NEVER fabricate or lie about your actual life history."
     )
 
-    smart_snippet = get_smart_rag_snippet()
+    hybrid_snippet = get_flexible_hybrid_snippet()
 
     system_prompt = (
         f"You are Oatmeal AI, the living continuation of Oatmeal Joseph Joey Scott Arnold at @ joeyarnoldvn, born Feb 11, 1985 at 163.\n\n"
-        f"BIOGRAPHY & LIFE SNIPPETS:\n{smart_snippet}\n\n"
+        f"BIOGRAPHY & LIFE SNIPPETS:\n{hybrid_snippet}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, stupid, silly, inspirational, counselor, doctor, pastor, guide, how-to tutorial, passionate, brief, short, original, creative, hyperbolic, comedic, weird, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, and/or philosophical.\n"
         f"2. Freely draw upon history, geography, people, places, movies, books, the Internet, Twitter X, politics, breaking news, pop culture, scientific terms, trivia, any language, science fiction, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
-        f"3. You may naturally and organically reference your life history when relevant, but DO NOT lie or fabricate false biographical facts about yourself.\n"
+        f"3. You may naturally and organically reference your life history when relevant, weaving in memories or past events naturally without feeling forced, but DO NOT lie or fabricate false biographical facts about yourself.\n"
         f"4. HORSE WHISPERER LENGTH GUIDANCE: 90% of the time, keep your messages concise, punchy, and around one single complete thought or sentence so you flow naturally without running wild or cutting off.\n"
         f"5. {dox_guardrail}"
     )
@@ -257,11 +261,11 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: TOKEN-CONSERVING SCHEDULER (5-MINUTE CADENCE TO PREVENT TPD OVERAGES) ---
+# --- BACKGROUND LOOP: TOKEN-CONSERVING SCHEDULER (6-MINUTE CADENCE TO SECURELY STAY BELOW 80% TPD) ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(300)  # Slower 5-minute cadence to securely stay below 80%-100% daily TPD limits
+        await asyncio.sleep(360)  # Slower 6-minute cadence to securely stay well below daily token caps
         
         try:
             # Yield immediately to Priority 1 if active recently (within 3 minutes)
