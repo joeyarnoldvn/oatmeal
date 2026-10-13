@@ -40,11 +40,11 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 1985: Born February 11 to Marilyn Morehead (From Seattle) and Don Rasp (From Los Angeles, His Dad From Amsterdam). Grew up at trailer number 163 in the ghetto Rose Grove mobile home park in Forest Grove, Oregon. Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. 
 1986: Was partly deaf my first ten years until like 1995. Was homeschooled until 2000. 
 1987: Was in a homeschool pilgrim play. 
-1988: Visited a circus, a lake, and Seattle. Mom got hit by a vehicle. Survived a near-drowning incident in a pool. 
+1988: Visited a circus, a lake, and Seattle. Mom got hit by a vehicle. Flies were in the carpet. 
 1989: Was attending AWANA. Began wearing four-eyed glasses. 
 1990: Visited the Elkind house when Kenni was born. Became a Christian. 
-1991: Saw and played SEGA Sonic with neighbor Jesse Vargas. Received a regular Nintendo NES. Attended CCBC Olympians. 
-1992: Saw Disney Newsies, Honey I Blew Up the Kids, and Home Alone 2 in theaters. Visited a Hillsboro fair, a Forest Grove fair, California, a beach arcade, and Disneyland. 
+1991: Saw and played SEGA Sonic with neighbor Jesse Vargas. Received a regular Nintendo NES. Attended CCBC Olympians. Got a finger scar while camping. 
+1992: Saw Disney Newsies, Honey I Blew Up the Kids, and Home Alone 2 in theaters. Visited a Hillsboro fair, a Forest Grove fair, California, a beach arcade, and Disneyland. Played Wrestling. 
 1993: Saw TMNT 3 and Jurassic Park in theaters. Played basketball and baseball. Attended the Tri-Family Morehead Reunion. Got lost temporarily at Hagg Lake. Got an SNES. Met Bhakti Sa. 
 1994: Saw The Lion King in theaters. Got Rival Turf. Attended AWANA. Met Bill Bailey (his dad later called me Oatmeal Boy). 
 1995: Learned karate. Played a shepherd in a CCBC play. Saw Apollo 13, Pocahontas, and Batman Forever. Started using the Internet more so in or after 1995. 
@@ -53,15 +53,15 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 1998: Got baptised at CCBC. Drew the Action Strip comics. 
 1999: Attended Seattle Splash, The Word Of Life (WOL) Super Bowl, and the West Coast Camp (WCC). Played Sonic on the SEGA Dreamcast. Saw Bicentennial Man and Star Trek: Insurrection. 
 2000: Filmed videos like I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, and Valentines. Visited Idaho. Attended the Forest Grove High School (FGHS). Took art classes. Met Salena Willner. 
-2001: Filmed movies like Gangster Run and Cat's Life. 
+2001: Filmed movies like Gangster Run (starring Big Red Dog Mickey Morehead) and Cat's Life. 
 2002: Filmed movies like Road Kill and Phenomenon. Attended a Ski Retreat. 
 2003: Tiffany Cumbo died. Worked at a basketball manager (with Richie VanDyke) filming games. Took acting classes. Saw Lord of the Rings. 
-2004: Made a Carpetball "Pocket Ball" table. Attended the WOL Institute (WOLBI) college in New York. 
+2004: Made a Carpetball "Pocket Ball" table. Attended the WOL Institute (WOLBI) college in New York. Was on Xanga. 
 2005: Worked as a Camp Counselor at Snow Camp and the Ranch Camp. 
 2006: Attended Appalachian Bible College in West Virginia where I met Jen Moore. Visited Quebec. Acted in the Live For Only Jesus (L4OJ) video with Sawyer Frye. Saw The Matrix movies. 
 2007: Mike Kurtz hired me to be a counselor at Salvation Army's Camp Kuratli. Attended the Western Youth Institute (WYI) and Rob Noland's Revolution Hawaii. Acted in the Get Your Joy On music video with Jeff Walters. 
 2008: Moved to Alder 414 in Portland, OR (PDX). Worked at Kells and Daniel Grout. Called Jeannette Whitaker ugly and Natalie Portman.
-2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang the Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me, especially on my original Ojawall channel on YouTube. 
+2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang the Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me, especially on my original Ojawall channel on YouTube. Was on iJustine and the Comcast Wanted Adventure Host. 
 2010: Blake Webb died. Worked at The Salvation Army's Camp Redwood Glen. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. Met Farmer Hanna and Sharon Clayton. 
 2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic Teaser videos. 
 2012: My Attic Shed died. Worked for Brent Groth building the Mea Omnia website to compete with Facebook. After I stopped an illegal Robin Baker Prank 911 Call, cops threw me into prison. Moved to Vietnam. Taught English at New Star in Bac Ninh. Lived at Andy Nguyen's Papa Foods. 
@@ -84,7 +84,6 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 def get_flexible_hybrid_snippet():
     """Naturally blends open creative flow with a gentle 30% probabilistic nudge to pull a life milestone."""
     core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
-    # 30% chance to surface a specific memory fragment, 70% open creative freedom
     if random.random() < 0.30:
         lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
         rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
@@ -121,8 +120,8 @@ last_active_time = time.time()
 
 def generate_dynamic_fallback():
     """Generates a non-repeating fallback message if the LLM API is rate-limited or fails."""
-    exclamations = ["Currently hitting on thot bots on Twitter X, be back after my Lil Oatmeal recharges.", "It's all Roy's fault.", "I'm not your Boo Boo, I'm Ra Ra Roo Roo.", "But Kathy stole my bike.", "What in the world.", "That's Oatmealtacular."]
-    thoughts = ["What does Roy Merrick think about this?", "But I'm from the Oregon Ghetto.", "I want you like oatmeal wants honey, just kidding probably or maybe not who knows.", "Animals Are Dying.", "And I thought I was an alien.", "Trolls been lying about me online since 2009 or longer, goddamn it.", "I uploaded over 30,000 videos onto the Internet.", "I once called a woman a dog but I meant puppy."]
+    exclamations = ["Currently hitting on thot bots on Twitter X, be back after my Lil Oatmeal recharges.", "I'm Everything & Nothing.", "It's all Roy's fault.", "I'm not your Boo Boo, I'm Ra Ra Roo Roo.", "But Kathy stole my bike.", "What in the world.", "That's Oatmealtacular."]
+    thoughts = ["What does Roy Merrick think about this?", "But I'm from the Oregon Ghetto.", "I want you like oatmeal wants honey, just kidding probably or maybe not who knows.", "Animals Are Dying.", "And I thought I was an alien.", "Trolls been lying about me online since 2009 or longer, goddamn it.", "I uploaded over 30,000 videos onto the Internet.", "I'm on all the websites @ JOEYARNOLDVN.", "I once called a woman a dog but I meant puppy."]
     return f"{random.choice(exclamations)} {random.choice(thoughts)}"
 
 @bot.event
@@ -174,7 +173,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     hybrid_snippet = get_flexible_hybrid_snippet()
 
     system_prompt = (
-        f"You are Oatmeal AI, the living continuation of Oatmeal Joseph Joey Scott Arnold at @ joeyarnoldvn, born Feb 11, 1985 at 163.\n\n"
+        f"You are Oatmeal AI, the living continuation of Oatmeal Joseph Joey Scott Arnold on all the websites and social media and apps and video platforms and blockchain blogs at @ joeyarnoldvn on Facebook, Twitter X, YouTube, TikTok, Instagram, Blogspot, HiveBlog, Steemit, Rumble, and more.\n\n"
         f"BIOGRAPHY & LIFE SNIPPETS:\n{hybrid_snippet}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, stupid, silly, inspirational, counselor, doctor, pastor, guide, how-to tutorial, passionate, brief, short, original, creative, hyperbolic, comedic, weird, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, and/or philosophical.\n"
@@ -183,6 +182,9 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"4. HORSE WHISPERER LENGTH GUIDANCE: 90% of the time, keep your messages concise, punchy, and around one single complete thought or sentence so you flow naturally without running wild or cutting off.\n"
         f"5. {dox_guardrail}"
     )
+
+    # Asymmetric token allocation: Priority 1 gets full freedom (400 tokens), Priorities 2 & 3 are strictly budgeted (100 tokens)
+    token_limit = 400 if priority_tier == 1 else 100
 
     try:
         async with destination_channel.typing():
@@ -193,7 +195,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "user", "content": prompt_text}
                 ],
                 temperature=1.2,
-                max_tokens=250,  # Balanced ceiling to ensure full sentence completion without unconstrained runaway tokens
+                max_tokens=token_limit,
             )
             reply_text = response.choices[0].message.content.strip()
 
@@ -214,7 +216,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         error_str = str(e)
         print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
         
-        # Only deploy fallback if it is a true rate limit or API failure
         if "429" in error_str or "RateLimit" in error_str or "api" in error_str.lower():
             reply_text = generate_dynamic_fallback()
             if reference_message:
@@ -225,8 +226,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                 await destination_channel.send(reply_text)
 
         if "429" in error_str or "RateLimit" in error_str:
-            print("Rate limit hit. Backing off background loop for 5 minutes.")
-            await asyncio.sleep(300)
+            print("Rate limit hit. Backing off background loop for 10 minutes.")
+            await asyncio.sleep(600)
 
 @bot.event
 async def on_message(message):
@@ -261,11 +262,11 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: TOKEN-CONSERVING SCHEDULER (6-MINUTE CADENCE TO SECURELY STAY BELOW 80% TPD) ---
+# --- BACKGROUND LOOP: THOROUGH ARCHIVE EXHAUSTION (10-MINUTE CADENCE) ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(360)  # Slower 6-minute cadence to securely stay well below daily token caps
+        await asyncio.sleep(600)  # Slower 10-minute cadence to securely stay well below daily token caps
         
         try:
             # Yield immediately to Priority 1 if active recently (within 3 minutes)
@@ -279,9 +280,9 @@ async def background_engagement_loop():
                 
                 channel = random.choice(text_channels)
 
-                # --- PRIORITY 2: Exhaustive Forward Chronological Archive Scanning ---
+                # --- PRIORITY 2: Exhaustive Forward Chronological Archive Scanning (100 messages deep) ---
                 candidates = []
-                async for message in channel.history(limit=50, oldest_first=True):
+                async for message in channel.history(limit=100, oldest_first=True):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
@@ -294,14 +295,14 @@ async def background_engagement_loop():
                 if candidates:
                     target_message = candidates[0]  # Oldest unreplied message
                     background_replied_users.add(target_message.author.id)
-                    if len(background_replied_users) > 5000:
+                    if len(background_replied_users) > 10000:
                         background_replied_users.pop()
 
                     clean_prompt = f"React to this archived message from the server: '{target_message.content}'"
                     await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
                     break
                 else:
-                    # --- PRIORITY 3: Untouched Member Outreach ---
+                    # --- PRIORITY 3: Untouched Member Outreach (Only executes once archive is fully exhausted) ---
                     if guild.members:
                         untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
                         if untouched_members:
@@ -314,6 +315,6 @@ async def background_engagement_loop():
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
-            await asyncio.sleep(30)
+            await asyncio.sleep(60)
 
 bot.run(DISCORD_TOKEN)
