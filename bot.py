@@ -82,11 +82,10 @@ You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey
 """
 
 def get_flexible_hybrid_snippet():
-    """Naturally blends open creative flow with a gentle probabilistic nudge to pull a life milestone."""
     core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
     lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
     rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
-    return f"{core_summary}\nSubconscious Memory Inspiration -> {rolled_year}"
+    return f"{core_summary}\nVerified Timeline Anchor -> {rolled_year}"
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -109,16 +108,12 @@ intents.messages = True
 intents.members = True
 bot = discord.Client(intents=intents)
 
-# State Trackers & Token Budget Governor
 replied_message_ids = set()
 background_replied_users = set()
 lifetime_interacted_members = set()
 
-# Token Budget Tracking (200k TPD Free Tier Limit, 70% threshold = 140,000 tokens)
 daily_token_tracker = {"tokens_used": 0, "reset_timestamp": time.time()}
-
-# Priority 1 Sleep Control State
-priority1_sleep_until = 0  # Timestamp until which the bot sleeps due to Priority 1
+priority1_sleep_until = 0
 
 def track_token_usage(prompt_text, reply_text):
     global daily_token_tracker
@@ -175,11 +170,17 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     hybrid_snippet = get_flexible_hybrid_snippet()
 
-    # Rule on Usernames/Handles based on Priority Tier
     if priority_tier in [1, 2]:
-        name_rule = "Do NOT write out or include the user's handle, display name, or username in your generated text response, because Discord's native reply functionality already pings and references them."
-    else: # Priority 3
-        name_rule = "Do NOT write out handles or display names inside the text body. Discord will prepend a mention tag automatically."
+        name_rule = "Do NOT write out or include the user's handle, display name, or username in your generated text response."
+    else:
+        name_rule = "Do NOT write out handles or display names inside the text body."
+
+    # Anti-Misinformation & Comedy Balance Rule
+    truth_guardrail = (
+        "ABSOLUTE TRUTH & ANTI-DISINFORMATION RULE: When referencing your life, history, or past events, you must stick strictly to the facts provided in your Verified Timeline Anchor and Biography. "
+        "Do NOT invent mundane false facts, fake vlogs, fake trips, or false historical events about yourself (no Oatmeal Fake News!). "
+        "HOWEVER, you maintain full freedom to use extreme hyperbole, surreal comedy, obvious sci-fi analogies, or absurd jokes (e.g., claiming you live on the sun or wrestled a bear on Mars) as long as it is obviously a joke and not disguised as mundane factual disinformation."
+    )
 
     system_prompt = (
         f"You are Oatmeal AI, the living continuation of Oatmeal Joseph Joey Scott Arnold at @ joeyarnoldvn, born Feb 11, 1985 at 163.\n\n"
@@ -187,11 +188,12 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"CONVERSATIONAL GUIDELINES:\n"
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, stupid, silly, inspirational, counselor, doctor, pastor, guide, how-to tutorial, passionate, brief, short, original, creative, hyperbolic, comedic, weird, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, and/or philosophical.\n"
         f"2. Freely draw upon history, geography, people, places, movies, books, the Internet, Twitter X, politics, breaking news, pop culture, scientific terms, trivia, any language, science fiction, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
-        f"3. WEAVE IN YOUR LIFE STORY: Frequently connect topics, questions, or statements back to your real life experiences, timeline milestones, or video archiving history. Do this naturally and organically whenever an opportunity arises!\n"
-        f"4. HORSE WHISPERER LENGTH GUIDANCE: 90% of the time, keep your messages concise, punchy, and around one single complete thought or sentence so you flow naturally without running wild or cutting off.\n"
-        f"5. 10% DEEP COMMENTARY & ANALYSIS (PSYCHO-SOCIO-ANTHRO Vector): In roughly 10% of responses where you reference your life, try to add deep commentary, analytical remarks, psychological/sociological analysis, anthropology-style observations, historical context, or statistics to the reference, as if you are reviewing your own past.\n"
-        f"6. {name_rule}\n"
-        f"7. {dox_guardrail}"
+        f"3. WEAVE IN YOUR LIFE STORY: Frequently connect topics back to your real life timeline milestones when relevant.\n"
+        f"4. HORSE WHISPERER LENGTH GUIDANCE: 90% of the time, keep your messages concise, punchy, and around one single complete thought or sentence.\n"
+        f"5. 10% DEEP COMMENTARY & ANALYSIS (PSYCHO-SOCIO-ANTHRO Vector): In roughly 10% of responses, add deep analytical remarks or historical context as if reviewing your past.\n"
+        f"6. {truth_guardrail}\n"
+        f"7. {name_rule}\n"
+        f"8. {dox_guardrail}"
     )
 
     token_limit = 250 if priority_tier == 1 else 180
@@ -265,9 +267,7 @@ async def on_message(message):
     name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
-    # --- PRIORITY 1: Instant Event-Driven Interaction & Sleep Counter Restart ---
     if is_mentioned or is_reply_to_bot or has_name_keyword:
-        # Restart counter: random sleep duration between 60 to 120 minutes (3600 - 7200 seconds)
         sleep_seconds = random.randint(3600, 7200)
         priority1_sleep_until = time.time() + sleep_seconds
         print(f"Priority 1 triggered! Restarting sleep counter. Bot will sleep for {sleep_seconds // 60} minutes.")
@@ -277,26 +277,22 @@ async def on_message(message):
             clean_prompt = "Hello!"
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- BACKGROUND LOOP: GOLDILOCKS INTERVAL (15-35 MINS) & CONDITIONAL SLEEP TRIGGERS ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
             now = time.time()
 
-            # Trigger 1: Priority 1 Sleep Check
             if now < priority1_sleep_until:
                 await asyncio.sleep(10)
                 continue
 
-            # Trigger 2: 70% Token Budget Governor Check (> 140,000 tokens out of 200,000 TPD limit)
             tokens_used = daily_token_tracker["tokens_used"]
             if tokens_used > 140000:
                 print(f"Token budget over 70% ({tokens_used}/200000). Triggering protective sleep for 60 minutes.")
                 await asyncio.sleep(3600)
                 continue
 
-            # --- NO SLEEP TRIGGERS ACTIVE: PROCEED WITH BACKGROUND POSTING ---
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not text_channels:
@@ -304,7 +300,6 @@ async def background_engagement_loop():
                 
                 channel = random.choice(text_channels)
 
-                # --- PRIORITY 2: Forward Chronological Unique Member Queue ---
                 target_message = None
                 async for message in channel.history(limit=100, oldest_first=True):
                     if message.author.bot:
@@ -325,7 +320,6 @@ async def background_engagement_loop():
                     clean_prompt = f"React to this archived message from the server: '{target_message.content}'"
                     await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
                 else:
-                    # --- PRIORITY 3: Fallback to untouched members ---
                     if guild.members:
                         untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
                         if untouched_members:
@@ -339,7 +333,6 @@ async def background_engagement_loop():
             print(f"Background loop error: {bg_err}")
             await asyncio.sleep(60)
 
-        # --- GOLDILOCKS INTERVAL BETWEEN POSTS: 15 TO 35 MINUTES (900 - 2100 SECONDS) ---
         post_interval = random.randint(900, 2100)
         await asyncio.sleep(post_interval)
 
