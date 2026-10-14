@@ -136,8 +136,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if reference_message:
         replied_message_ids.add(reference_message.id)
 
-    if len(replied_message_ids) > 3000:
-        replied_message_ids = set(list(replied_message_ids)[1000:])
+    if len(replied_message_ids) > 10000:
+        replied_message_ids = set(list(replied_message_ids)[5000:])
 
     if author_id:
         lifetime_interacted_members.add(author_id)
@@ -175,7 +175,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     else:
         name_rule = "Do NOT write out handles or display names inside the text body."
 
-    # Pronoun Bridge & Persona Identity Rule (Solves small-LLM pronoun collision)
     pronoun_bridge_rule = (
         "PRONOUN & IDENTITY BRIDGE: You are the AI neural embodiment of Joseph Scott Arnold / Oatmeal Joey Arnold. "
         "Whenever you speak or write, you must ALWAYS speak entirely in the first person ('I', 'me', 'my') as Joseph/Oatmeal. "
@@ -304,8 +303,10 @@ async def background_engagement_loop():
                 
                 channel = random.choice(text_channels)
 
+                # --- PRIORITY 2: Unlimited Forward-Chronological Scan (limit=None) ---
+                # Scans all historical server messages from oldest to newest since 2019 without limits.
                 target_message = None
-                async for message in channel.history(limit=100, oldest_first=True):
+                async for message in channel.history(limit=None, oldest_first=True):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
@@ -314,16 +315,18 @@ async def background_engagement_loop():
                         continue
                     if message.content.strip():
                         target_message = message
-                        break
+                        break # Found the absolute earliest unreplied unique member message in server history
 
                 if target_message:
                     background_replied_users.add(target_message.author.id)
-                    if len(background_replied_users) > 10000:
+                    if len(background_replied_users) > 30000:
                         background_replied_users.pop()
 
                     clean_prompt = f"React to this archived message from the server: '{target_message.content}'"
                     await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
                 else:
+                    # --- PRIORITY 3: Strict Fallback ---
+                    # ONLY triggers after every single unique user in the entire historical archive has been processed.
                     if guild.members:
                         untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
                         if untouched_members:
