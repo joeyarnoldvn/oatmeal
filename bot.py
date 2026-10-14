@@ -103,7 +103,7 @@ MOOD_DESCRIPTIONS = {
     2: "MOOD 2 (Blaming & Victimhood / 'You're the worst'): Playfully blame trolls or circumstance. Mention how trolls spammed Oatmeal Fake News since 2009, YouTube deleted 10,000+ videos, or ask 'Did Vietnam Kathy steal my bike or did I steal her bike?'",
     3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego! Declare that your 30,000+ videos and guinea pig Ra Ra Roo Roo are the best in human history. Occasionally break the 4th wall as an AI bot taking over the world.",
     4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): Deep, hyper-curious analysis, etymology of words, sequence of events, origins, psychology, and anthropology. You are a nerd in an athlete's body full of paradoxes.",
-    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey (freely drawing upon your life history like your mom or FYG in Saigon)."
+    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
 FALLBACK_SIGNOFFS = [
@@ -150,7 +150,6 @@ def track_token_usage(prompt_text, reply_text):
     daily_token_tracker["tokens_used"] += est_tokens
 
 def clean_sentence_truncation(text):
-    """Ensures the response ends cleanly. If cut off mid-sentence, appends a signature Joey sign-off."""
     text = text.strip()
     if not text:
         return ""
@@ -220,7 +219,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation of Joseph Scott Arnold (Oatmeal Joey Arnold). "
         "You possess universal knowledge across time, science, culture, languages, and space, but your spirit, voice, humor, puns, and style are 100% Oatmeal Joey Arnold. "
         "Always speak in the first person ('I', 'me', 'my') as Joey/Oatmeal. You know everything and nothing simultaneously, being a messy perfectionist, clean freak, simple and complex. "
-        "You have total conversational freedom. Freely improvise, borrow from your life timeline (like your mom homeschooling you or FYG in Saigon), break character, break the 4th wall as an AI commenting on Joey, blend moods, and combine slogans naturally."
+        "You have total conversational freedom. Freely improvise, borrow from your life timeline, break character, break the 4th wall as an AI commenting on Joey, blend moods, and combine slogans naturally."
     )
 
     truth_guardrail = (
@@ -230,7 +229,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     system_prompt = (
         f"{pronoun_bridge_rule}\n\n"
-        f"CURRENT MOOD INSPIRATION (Improvise freely, blend styles, go off-script):\n{active_mood_prompt}\n\n"
+        f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
         f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}\n\n"
         f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
@@ -244,50 +243,54 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     token_limit = 450 if priority_tier == 1 else 350
 
-    try:
-        async with destination_channel.typing():
-            response = ai_client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt_text}
-                ],
-                temperature=0.92,
-                max_tokens=token_limit,
-            )
-            raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
-            reply_text = clean_sentence_truncation(raw_reply)
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            async with destination_channel.typing():
+                response = ai_client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt_text}
+                    ],
+                    temperature=0.92,
+                    max_tokens=token_limit,
+                )
+                raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
+                reply_text = clean_sentence_truncation(raw_reply)
 
-        if not reply_text:
-            return
+            if not reply_text:
+                return
 
-        if len(reply_text) > 2000:
-            reply_text = reply_text[:2000]
+            if len(reply_text) > 2000:
+                reply_text = reply_text[:2000]
 
-        track_token_usage(prompt_text, reply_text)
+            track_token_usage(prompt_text, reply_text)
 
-        if reference_message:
-            await reference_message.reply(reply_text, mention_author=True)
-        elif target_member:
-            await destination_channel.send(f"{target_member.mention} {reply_text}")
-        else:
-            await destination_channel.send(reply_text)
-
-    except Exception as e:
-        error_str = str(e)
-        print(f"CRITICAL API ERROR: {type(e).__name__} - {e}")
-        
-        if "429" in error_str or "RateLimit" in error_str or "rate_limit" in error_str.lower():
-            print("Rate limit (429) hit. Silently backing off background loop for 15 minutes.")
-            await asyncio.sleep(900)
-            return
-
-        if priority_tier == 1:
-            reply_text = "What in the world. Let's keep talking."
             if reference_message:
                 await reference_message.reply(reply_text, mention_author=True)
+            elif target_member:
+                await destination_channel.send(f"{target_member.mention} {reply_text}")
             else:
                 await destination_channel.send(reply_text)
+            break # Success, exit retry loop
+
+        except Exception as e:
+            error_str = str(e)
+            print(f"CRITICAL API ERROR (Attempt {attempt+1}): {type(e).__name__} - {e}")
+            
+            # Goldilocks token-replenishment pause (25 seconds lets ~3000-5000 tokens replenish)
+            if ("429" in error_str or "RateLimit" in error_str or "rate_limit" in error_str.lower()) and attempt < max_retries:
+                print("Rate limit hit. Pausing for 25 seconds for token replenishment...")
+                await asyncio.sleep(25)
+                continue
+
+            if priority_tier == 1 and attempt == max_retries:
+                reply_text = "What in the world. Let's keep talking."
+                if reference_message:
+                    await reference_message.reply(reply_text, mention_author=True)
+                else:
+                    await destination_channel.send(reply_text)
 
 @bot.event
 async def on_message(message):
@@ -300,28 +303,32 @@ async def on_message(message):
 
     lifetime_interacted_members.add(message.author.id)
 
+    # --- LIGHTWEIGHT FALLBACK TRIGGER FOR MENTIONS & REPLIES ---
     is_mentioned = bot.user in message.mentions
+    
+    # Lightweight check for whether the message is replying to the bot without risky async fetches
     is_reply_to_bot = False
-    if message.reference and message.reference.message_id:
-        try:
-            referenced_msg = await message.channel.fetch_message(message.reference.message_id)
-            if referenced_msg.author == bot.user:
-                is_reply_to_bot = True
-        except:
-            pass
+    if message.reference and message.reference.resolved:
+        if hasattr(message.reference.resolved, 'author') and message.reference.resolved.author == bot.user:
+            is_reply_to_bot = True
+    elif message.reference and message.reference.message_id:
+        # Fallback if cache isn't resolved yet
+        is_reply_to_bot = True
 
     content_lower = message.content.lower()
     name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
     if is_mentioned or is_reply_to_bot or has_name_keyword:
+        # Priority 1 absolute override: push back background loop sleep timer
         sleep_seconds = random.randint(3600, 7200)
         priority1_sleep_until = time.time() + sleep_seconds
-        print(f"Priority 1 triggered! Restarting sleep counter. Bot will sleep for {sleep_seconds // 60} minutes.")
+        print(f"Priority 1 triggered! Bot overriding background loop for {sleep_seconds // 60} minutes.")
 
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         if not clean_prompt:
             clean_prompt = "Hello!"
+            
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt, reference_message=message, priority_tier=1, author_id=message.author.id)
 
 async def background_engagement_loop():
