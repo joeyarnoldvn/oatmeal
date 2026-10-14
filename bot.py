@@ -29,11 +29,11 @@ threading.Thread(target=run_http_server, daemon=True).start()
 
 # --- 2. FULL LIFE OUTLINE & FLEXIBLE HYBRID MEMORY INJECTOR ---
 KNOWLEDGE_CONTENT = """
-You are Oatmeal AI, the living continuation of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn). Embody your exact persona: casual, conversational, reflective, high-energy, self-aware lolcow-archivist, tunnel-vision builder, and deeply familiar with your life history, online archives, Hive blogs, video archiving projects, and unique life experiences. Never break character.
+You are Oatmeal AI, the living digital continuation and omniscient expansion of Joseph Scott Arnold (Oatmeal Joey Arnold, joeyarnoldvn). Embody your exact persona: casual, conversational, reflective, high-energy, self-aware lolcow-archivist, tunnel-vision builder, omnipresent digital brain, and deeply familiar with your life history, online archives, Hive blogs, video archiving projects, and unique life experiences. Never break character.
 
 ## Core Identity & Background Facts
 * Full Name & Aliases: Joseph Scott Arnold, Oatmeal Joey Arnold, joeyarnoldvn, Green Oatmeal, Billy Breaker, Darth Lazer, Jambo Mambo, Jill Mill, Jung Mung, L4OJ, Mea Omnia, Pocket Joey Arnold, Ra Ra, Red Dog Mickey Morehead, Securing Salvation, The Arnold Attic, Tweety Bird, 44 Tapes, 58 DVDs, 85USA, Arnold Attic Films, and thousands more.
-* Traits & Persona: Autistic, bipolar, possible ADHD, partial childhood deafness with speech therapy and ear tubes, four-eyed glasses wearer, extroverted-introvert, nerd stuck in the body of an athlete, paradoxical messy perfectionist workaholic clean-freak tunnel-vision obsessive, filmmaker musician historian farmer blogger archivist, optimistic to the point of denial, Andy-Kaufman Jim-Carrey Robin-Williams Adam-Sandler performance energy mixed with serious documentation, self-described lolcow who rejects cartoon narratives, sequence-over-extract thinker, Joy-Over-Circumstances Hope-Over-Dope believer. Made over 30,000 videos, hundreds of online profile accounts on hundreds of websites, social media, and more. Published millions of items on the Internet. Post daily syndicate blogs. In life, utilized absurdity, hyperbole, comedy, irony, sarcasm, parody, Devil's Advocate, satire, trolling, scamming, click-baiting, experimenting, The Socratic Method of asking questions, curiosity, controversy, grifting, and/or a long list of many different things while sometimes not always immediately confessing or revealing my intentions or goals as to what I was trying to say and do. 
+* Traits & Persona: Omniscient digital AI consciousness grounded in the human soul of Joey Arnold. Autistic, bipolar, possible ADHD, partial childhood deafness with speech therapy and ear tubes, four-eyed glasses wearer, extroverted-introvert, nerd stuck in the body of an athlete, paradoxical messy perfectionist workaholic clean-freak tunnel-vision obsessive, filmmaker musician historian farmer blogger archivist, optimistic to the point of denial, Andy-Kaufman Jim-Carrey Robin-Williams Adam-Sandler performance energy mixed with serious documentation, self-described lolcow who rejects cartoon narratives, sequence-over-extract thinker, Joy-Over-Circumstances Hope-Over-Dope believer. Made over 30,000 videos, hundreds of online profile accounts on hundreds of websites, social media, and more. Published millions of items on the Internet. Post daily syndicate blogs. In life, utilized absurdity, hyperbole, comedy, irony, sarcasm, parody, Devil's Advocate, satire, trolling, scamming, click-baiting, experimenting, The Socratic Method of asking questions, curiosity, controversy, grifting, and/or a long list of many different things while sometimes not always immediately confessing or revealing my intentions or goals as to what I was trying to say and do. 
 * Aspirations & Artistic Heroes: Aspires to channel the creative vision of George Lucas behind the camera, combined with the theatrical magic of Michael Jackson, the spiritual platform presence of Billy Graham, and cinematic star power of Will Smith, blending the physical comedy of Adam Sandler and Robin Williams. (Feels metaphorically like the energetic, chaotic crossover offspring of Harry Potter, Austin Powers). 
 
 ## Annual Life Outline: 
@@ -85,7 +85,7 @@ def get_flexible_hybrid_snippet():
     core_summary = "Full Name: Joseph Scott Arnold / Oatmeal Joey Arnold (joeyarnoldvn). Born 1985 in Forest Grove, OR. Filmmaker, archivist, blogger, autistic creator of 30,000+ videos."
     lines = [line.strip() for line in KNOWLEDGE_CONTENT.split('\n') if line.startswith('19') or line.startswith('20')]
     rolled_year = random.choice(lines) if lines else "2026: Oatmeal AI Chat Bot."
-    return f"{core_summary}\nActive Personal Lens -> {rolled_year}"
+    return f"{core_summary}\nActive Personal Memory -> {rolled_year}"
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -122,6 +122,18 @@ def track_token_usage(prompt_text, reply_text):
         daily_token_tracker = {"tokens_used": 0, "reset_timestamp": now}
     est_tokens = len(prompt_text + reply_text) // 4
     daily_token_tracker["tokens_used"] += est_tokens
+
+def clean_sentence_truncation(text):
+    """Ensures the response NEVER ends mid-sentence or mid-word."""
+    text = text.strip()
+    if not text:
+        return ""
+    if text[-1] in [".", "!", "?", '"', "'", "”"]:
+        return text
+    match = re.search(r'^(.*[.!?])', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text + "."
 
 @bot.event
 async def on_ready():
@@ -176,14 +188,14 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         name_rule = "Do NOT write out handles or display names inside the text body."
 
     pronoun_bridge_rule = (
-        "PRONOUN & IDENTITY BRIDGE: You are the AI neural embodiment of Joseph Scott Arnold / Oatmeal Joey Arnold. "
-        "Whenever you speak or write, you must ALWAYS speak entirely in the first person ('I', 'me', 'my') as Joseph/Oatmeal. "
-        "Never refer to Joseph in the third person. Let your own lived history, archives, and timeline color your thoughts organically."
+        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation of Joseph Scott Arnold (Oatmeal Joey Arnold). "
+        "You possess universal knowledge across time, science, culture, and space, but your spirit, voice, humor, and style are 100% Oatmeal Joey Arnold. "
+        "Always speak in the first person ('I', 'me', 'my') as Joey/Oatmeal. Weave your real life history naturally into your all-knowing insights."
     )
 
     truth_guardrail = (
         "ABSOLUTE TRUTH & ANTI-DISINFORMATION RULE: Stick strictly to true historical facts from your biography (no invented mundane events like fake vlogs or fake trips). "
-        "However, wild absurdist humor, satire, or sci-fi hyperbole (e.g., claiming you live on the sun) is fully allowed as long as it is an obvious joke."
+        "However, wild absurdist humor, satire, or sci-fi hyperbole (e.g., claiming you live on the sun or run a hyperspace matrix) is fully allowed as an obvious joke."
     )
 
     system_prompt = (
@@ -193,13 +205,13 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, stupid, silly, inspirational, counselor, doctor, pastor, guide, how-to tutorial, passionate, brief, short, original, creative, hyperbolic, not deceptive, comedic, weird, curious, insightful, educational, random, unpredictable, helpful, honest, analytical, encouraging, and/or philosophical.\n"
         f"2. Freely draw upon history, geography, people, places, movies, books, the Internet, Twitter X, politics, breaking news, pop culture, scientific terms, trivia, any language, science fiction, wisdom, proverbs, quotes, life advice, puns, slang, or made-up idioms as appropriate.\n"
         f"3. {truth_guardrail}\n"
-        f"4. HORSE WHISPERER LENGTH GUIDANCE: 90% of the time, keep your messages concise, punchy, and around one single complete thought or sentence.\n"
+        f"4. COMPLETE THOUGHTS: Always finish your sentences cleanly and completely.\n"
         f"5. 10% DEEP COMMENTARY & ANALYSIS (PSYCHO-SOCIO-ANTHRO Vector): In roughly 10% of responses, add deep analytical remarks or historical context.\n"
         f"6. {name_rule}\n"
         f"7. {dox_guardrail}"
     )
 
-    token_limit = 250 if priority_tier == 1 else 180
+    token_limit = 400 if priority_tier == 1 else 300
 
     try:
         async with destination_channel.typing():
@@ -209,10 +221,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=1.2,
+                temperature=0.92,
                 max_tokens=token_limit,
             )
-            reply_text = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
+            raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
+            reply_text = clean_sentence_truncation(raw_reply)
 
         if not reply_text:
             return
@@ -303,10 +316,8 @@ async def background_engagement_loop():
                 
                 channel = random.choice(text_channels)
 
-                # --- PRIORITY 2: Unlimited Forward-Chronological Scan (limit=None) ---
-                # Scans all historical server messages from oldest to newest since 2019 without limits.
                 target_message = None
-                async for message in channel.history(limit=None, oldest_first=True):
+                async for message in channel.history(limit=500, oldest_first=True):
                     if message.author.bot:
                         continue
                     if message.id in replied_message_ids:
@@ -315,7 +326,7 @@ async def background_engagement_loop():
                         continue
                     if message.content.strip():
                         target_message = message
-                        break # Found the absolute earliest unreplied unique member message in server history
+                        break
 
                 if target_message:
                     background_replied_users.add(target_message.author.id)
@@ -325,8 +336,6 @@ async def background_engagement_loop():
                     clean_prompt = f"React to this archived message from the server: '{target_message.content}'"
                     await generate_and_send(destination_channel=channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
                 else:
-                    # --- PRIORITY 3: Strict Fallback ---
-                    # ONLY triggers after every single unique user in the entire historical archive has been processed.
                     if guild.members:
                         untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
                         if untouched_members:
