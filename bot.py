@@ -106,6 +106,14 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey (freely drawing upon your life history like your mom or FYG in Saigon)."
 }
 
+FALLBACK_SIGNOFFS = [
+    "...sorry, gotta go back to flirting with women who don't even know I exist on Twitter X.",
+    "...ummmm, I don't know, how could I possibly know.",
+    "...ummm what in the world, sorry, gotta go feed my guinea pig or rabbit or whatever it is.",
+    "...YouTube deleted my 10K+ videos, what can you do.",
+    "...did Vietnam Kathy steal my bike or did I steal her bike?"
+]
+
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -142,16 +150,18 @@ def track_token_usage(prompt_text, reply_text):
     daily_token_tracker["tokens_used"] += est_tokens
 
 def clean_sentence_truncation(text):
-    """Ensures the response NEVER ends mid-sentence or mid-word."""
+    """Ensures the response ends cleanly. If cut off mid-sentence, appends a signature Joey sign-off."""
     text = text.strip()
     if not text:
         return ""
     if text[-1] in [".", "!", "?", '"', "'", "”"]:
         return text
+    
     match = re.search(r'^(.*[.!?])', text, re.DOTALL)
-    if match:
+    if match and len(match.group(1)) > len(text) * 0.5:
         return match.group(1).strip()
-    return text + "."
+    else:
+        return text + " " + random.choice(FALLBACK_SIGNOFFS)
 
 @bot.event
 async def on_ready():
@@ -198,7 +208,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You are completely free to share detailed life facts from birth in 1985 up to Vietnam/2017. NEVER fabricate or lie about your actual life history."
     )
 
-    # Roll a dynamic mood (1 to 5) allowing completely organic blending
     active_mood_id = random.randint(1, 5)
     active_mood_prompt = MOOD_DESCRIPTIONS[active_mood_id]
 
@@ -216,7 +225,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     truth_guardrail = (
         "ABSOLUTE TRUTH & ANTI-DISINFORMATION RULE: Stick strictly to true historical facts from your annual life outline below (e.g. visiting California in 1992, Rose Grove 163, Vietnam 2012-2017). "
-        "Never misstate your history. However, wild absurdist hyperbole, satire, sci-fi jokes, or funny fictional stories (like cats doing backflips or living on the sun) are fully encouraged as creative Joey energy!"
+        "Never misstate your history. However, wild absurdist hyperbole, satire, sci-fi jokes, or funny fictional stories are fully encouraged as creative Joey energy!"
     )
 
     system_prompt = (
@@ -321,7 +330,6 @@ async def background_engagement_loop():
         try:
             now = time.time()
 
-            # Check priority 1 sleep condition
             if now < priority1_sleep_until:
                 await asyncio.sleep(10)
                 continue
@@ -332,7 +340,7 @@ async def background_engagement_loop():
                 await asyncio.sleep(3600)
                 continue
 
-            # --- PRIORITY 2: Limitless Multi-Channel History Scan (Checking Message IDs only, no user lockout) ---
+            # --- PRIORITY 2: Limitless Multi-Channel History Scan ---
             target_message = None
             target_channel = None
 
@@ -360,7 +368,7 @@ async def background_engagement_loop():
                 clean_prompt = f"React to this archived message from the server: '{target_message.content}'"
                 await generate_and_send(destination_channel=target_channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
             else:
-                # --- PRIORITY 3: Strict Fallback ONLY when every historical message across ALL channels has been answered ---
+                # --- PRIORITY 3: Strict Fallback ---
                 for guild in bot.guilds:
                     text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                     if not text_channels:
