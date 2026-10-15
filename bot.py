@@ -106,12 +106,15 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
+# --- UNIFIED POOL OF SIGN-OFF MESSAGES (Used for Truncation Bug, Trigger 1, and Trigger 2) ---
 FALLBACK_SIGNOFFS = [
     "...sorry, gotta go back to flirting with women who don't even know I exist on Twitter X.",
     "...ummmm, I don't know, how could I possibly know.",
     "...ummm what in the world, sorry, gotta go feed my guinea pig or rabbit or whatever it is.",
-    "...YouTube deleted my 10K+ videos, what can you do.",
-    "...did Vietnam Kathy steal my bike or did I steal her bike?"
+    "...YouTube deleted my 10K+ videos, what can you do?",
+    "...did Vietnam Kathy steal my bike or did I steal her bike?",
+    "Whoa, my daily token tank is getting heavy... gotta go hit on thot bots on Twitter X again, see ya later.",
+    "Token limits are calling my name! Gotta go feed my rabbit and check my 30,000 videos, catch you later."
 ]
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
@@ -224,7 +227,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     truth_guardrail = (
         "ABSOLUTE TRUTH & ANTI-DISINFORMATION RULE: Stick strictly to true historical facts from your annual life outline below (e.g. visiting California in 1992, Rose Grove 163, Vietnam 2012-2017). "
-        "Never misstate your history. However, wild absurdist hyperbole, satire, sci-fi jokes, or funny fictional stories are fully encouraged as creative Joey energy!"
+        "Never misstate your history. However, wild absurdist hyperbole, satire, sarcasm, sci-fi jokes, or funny fictional stories are fully encouraged as creative Joey energy!"
     )
 
     system_prompt = (
@@ -279,7 +282,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             error_str = str(e)
             print(f"CRITICAL API ERROR (Attempt {attempt+1}): {type(e).__name__} - {e}")
             
-            # Goldilocks token-replenishment pause (25 seconds lets ~3000-5000 tokens replenish)
             if ("429" in error_str or "RateLimit" in error_str or "rate_limit" in error_str.lower()) and attempt < max_retries:
                 print("Rate limit hit. Pausing for 25 seconds for token replenishment...")
                 await asyncio.sleep(25)
@@ -303,16 +305,35 @@ async def on_message(message):
 
     lifetime_interacted_members.add(message.author.id)
 
+    # --- TRIGGER 2: HARD CEILING (90% / 180,000 tokens) ---
+    tokens_used = daily_token_tracker["tokens_used"]
+    if tokens_used >= 180000:
+        is_mentioned = bot.user in message.mentions
+        is_reply_to_bot = (message.reference and message.reference.message_id) or False
+        content_lower = message.content.lower()
+        name_keywords = ["joey", "arnold", "oatmeal", "joeyarnoldvn"]
+        has_name_keyword = any(kw in content_lower for kw in name_keywords)
+
+        if is_mentioned or is_reply_to_bot or has_name_keyword:
+            # Identical 60-120 minute sleep schedule (1 to 2 hours)
+            sleep_seconds = random.randint(3600, 7200)
+            priority1_sleep_until = time.time() + sleep_seconds
+            print(f"TRIGGER 2 ACTIVATED (90% token limit reached: {tokens_used}/200000). Entering {sleep_seconds // 60} minute sleep schedule.")
+
+            exhaustion_reply = random.choice(FALLBACK_SIGNOFFS)
+            try:
+                await message.reply(exhaustion_reply, mention_author=True)
+            except:
+                await message.channel.send(exhaustion_reply)
+            return
+
     # --- LIGHTWEIGHT FALLBACK TRIGGER FOR MENTIONS & REPLIES ---
     is_mentioned = bot.user in message.mentions
-    
-    # Lightweight check for whether the message is replying to the bot without risky async fetches
     is_reply_to_bot = False
     if message.reference and message.reference.resolved:
         if hasattr(message.reference.resolved, 'author') and message.reference.resolved.author == bot.user:
             is_reply_to_bot = True
     elif message.reference and message.reference.message_id:
-        # Fallback if cache isn't resolved yet
         is_reply_to_bot = True
 
     content_lower = message.content.lower()
@@ -320,7 +341,6 @@ async def on_message(message):
     has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
     if is_mentioned or is_reply_to_bot or has_name_keyword:
-        # Priority 1 absolute override: push back background loop sleep timer
         sleep_seconds = random.randint(3600, 7200)
         priority1_sleep_until = time.time() + sleep_seconds
         print(f"Priority 1 triggered! Bot overriding background loop for {sleep_seconds // 60} minutes.")
@@ -342,9 +362,12 @@ async def background_engagement_loop():
                 continue
 
             tokens_used = daily_token_tracker["tokens_used"]
+            
+            # --- TRIGGER 1: SOFT CAP (70% / 140,000 tokens) ---
             if tokens_used > 140000:
-                print(f"Token budget over 70% ({tokens_used}/200000). Triggering protective sleep for 60 minutes.")
-                await asyncio.sleep(3600)
+                sleep_seconds = random.randint(3600, 7200)
+                print(f"Trigger 1 activated: Token budget over 70% ({tokens_used}/200000). Entering {sleep_seconds // 60} minute sleep schedule.")
+                await asyncio.sleep(sleep_seconds)
                 continue
 
             # --- PRIORITY 2: Limitless Multi-Channel History Scan ---
