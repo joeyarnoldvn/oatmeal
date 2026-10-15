@@ -106,11 +106,26 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
-# --- INSPIRATIONAL MOTTO THEMES (Riffed organically) ---
+# --- CURATED MEDIA LIBRARIES FOR FM BOT / GIF DISPATCH ---
+CURATED_GIFS = [
+    "https://media.giphy.com/media/3oEdvP4L9HqO4vPOQ/giphy.gif",
+    "https://media.giphy.com/media/l0HlRnAWXxn0MhOBK/giphy.gif",
+    "https://media.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif",
+    "https://media.giphy.com/media/5GoLvHqK86Q2Y/giphy.gif",
+    "https://media.giphy.com/media/xT5LMGfRsLUsmNDFG8/giphy.gif"
+]
+
+CURATED_SONGS = [
+    "https://www.youtube.com/watch?v=jfKfPfyJRdk",
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://suno.com/@oatmealjoeyarnold",
+    "https://www.youtube.com/watch?v=5qap5aO4i9A"
+]
+
 INSPIRATIONAL_THEMES = [
     "flirting with women on all the websites",
     "trying to backup my over 30,000+ videos before I get banned again",
-    "wondering if Kathy stole my bike or if I stole her bike",
+    "wondering if Kathy stole my bike or did I steal her bike?",
     "my guinea pig is eating up all my oatmeal if you know what I mean",
     "battling lolcow trolls who've been spreading Oatmeal Fake News since 2009"
 ]
@@ -151,14 +166,14 @@ def track_token_usage(prompt_text, reply_text):
     daily_token_tracker["tokens_used"] += est_tokens
 
 def clean_sentence_truncation(text):
-    """Ensures clean sentence endings and permanently fixes the double-comma bug."""
+    """Ensures clean sentence endings, strips trailing punctuation/hyphens, and prevents double commas."""
     text = text.strip()
     if not text:
         return ""
-    if text[-1] in [".", "!", "?", '"', "'", "”"]:
+    if text[-1] in [".", "!", "?", '"', "'", "”", ")"]:
         return text
     
-    # Strip trailing commas, dashes, and whitespace to prevent ,, or -- glitches
+    # Strip trailing commas, dashes, and spaces to eliminate double commas (,,)
     text = text.rstrip(",-–— ")
     
     match = re.search(r'^(.*[.!?])', text, re.DOTALL)
@@ -207,6 +222,22 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
+    # --- REAL MULTIMEDIA / FM BOT / GIF / AUDIO DISPATCH ---
+    media_reply_text = None
+    if any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"]):
+        chosen_gif = random.choice(CURATED_GIFS)
+        media_reply_text = f"Here’s your visual drop 🎬 {chosen_gif}"
+    elif any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune"]):
+        chosen_song = random.choice(CURATED_SONGS)
+        media_reply_text = f"🎵 Tuning into the Oatmeal FM frequency right now: {chosen_song}"
+
+    if media_reply_text:
+        if reference_message:
+            await reference_message.reply(media_reply_text, mention_author=True)
+        else:
+            await destination_channel.send(media_reply_text)
+        return
+
     dox_guardrail = (
         "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
         "Do NOT mention living in Shelton, Washington since 2018 (if asked or if it comes up, say 'I'd rather not say'). "
@@ -228,8 +259,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You get tunnel vision, spread yourself thin spinning too many plates, pick too many battles dying on too many hills, and have spent decades battling trolls and spamming Oatmeal Fake News. "
         "You use sarcasm, satire, hyperbole, absurdity, clickbait out of context, soundbites, paradoxes, parables, Devil's advocate, and deep philosophical or sociological observations. "
         "Sometimes you are socially awkward, work too hard, and your intense passion for helping people comes across as fiery or intense. You are a nerd stuck in an athlete's body, everything and nothing, simple and complex. "
-        "ABSOLUTE CREATIVE FREEDOM & MULTIMEDIA/MEME EXPRESSION: Never rely on boring canned copy-pasting. Riff organically on the fly! Adapt your slogans, catchphrases, and memes (like the Kathy bike/carpetball meme or Twitter X jokes) natively into whatever you are talking about. "
-        "Feel completely free to sprinkle in Discord emoticons, describe sharing photos, GIFs, links, or simulated audio/video thoughts whenever it fits your absurdist vibe. Invent new words, mix in slang, video games, pop culture, sci-fi, world history, and your 1985–2026 life milestones (like building the carpetball table in '04) smoothly and naturally."
+        "ABSOLUTE CREATIVE FREEDOM & MULTIMEDIA/MEME EXPRESSION: Riff organically on the fly! Adapt your slogans, catchphrases, and memes (like the Kathy bike/carpetball meme or Twitter X jokes) natively. "
+        "Freely drop Discord emoticons, stickers, emoticons, and music references. If anyone asks for a song, radio station, lyrics, or GIF, you are an FM bot playing classic tracks and visual treats."
     )
 
     truth_guardrail = (
@@ -283,7 +314,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                 await destination_channel.send(f"{target_member.mention} {reply_text}")
             else:
                 await destination_channel.send(reply_text)
-            break # Success, exit retry loop
+            break
 
         except Exception as e:
             error_str = str(e)
