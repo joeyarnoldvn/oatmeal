@@ -153,7 +153,6 @@ def track_token_usage(prompt_text, reply_text):
     daily_token_tracker["tokens_used"] += est_tokens
 
 def clean_sentence_truncation(text):
-    """Ensures clean sentence endings, strips trailing punctuation/hyphens, and prevents double commas."""
     text = text.strip()
     if not text:
         return ""
@@ -175,7 +174,7 @@ async def on_ready():
     bot.loop.create_task(background_engagement_loop())
 
 def fetch_direct_youtube_video(query):
-    """Dynamically scrapes YouTube search in real-time to return a single direct playable video URL."""
+    """Dynamically scrapes YouTube search in real-time to return a single direct video URL."""
     try:
         clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
         if not clean_query:
@@ -197,7 +196,7 @@ def fetch_direct_youtube_video(query):
     return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 def fetch_direct_tenor_gif(query):
-    """Dynamically scrapes Tenor in real-time to return a single direct gif page URL that Discord renders as an inline animated GIF."""
+    """Dynamically scrapes Tenor in real-time for direct gif pages."""
     try:
         clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
         if not clean_query:
@@ -213,12 +212,75 @@ def fetch_direct_tenor_gif(query):
         html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
         gif_paths = re.findall(r'href="(/view/[^"]+)"', html)
         if gif_paths:
-            # Pick randomly from top 3 live results for dynamic variety
             chosen_path = random.choice(gif_paths[:3])
             return f"https://tenor.com{chosen_path}"
     except Exception as e:
         print(f"Tenor live fetch error: {e}")
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
+
+def fetch_direct_audio_track(query):
+    """Searches across dedicated audio websites (Spotify, SoundCloud, ReverbNation, Suno AI, Podcasts)."""
+    clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|radio|audio|podcast|about)\s*', '', query, flags=re.IGNORECASE).strip()
+    if not clean_query:
+        clean_query = "cat song music"
+
+    # Identify requested platform if explicit, or randomly cycle across music platforms
+    query_lower = query.lower()
+    if "spotify" in query_lower:
+        platform = "spotify"
+    elif "soundcloud" in query_lower:
+        platform = "soundcloud"
+    elif "reverbnation" in query_lower:
+        platform = "reverbnation"
+    elif "suno" in query_lower:
+        platform = "suno"
+    elif "podcast" in query_lower:
+        platform = "podcast"
+    else:
+        platform = random.choice(["spotify", "soundcloud", "reverbnation", "suno", "podcast", "youtube_music"])
+
+    try:
+        encoded_search = urllib.parse.quote(clean_query)
+        if platform == "spotify":
+            search_url = f"https://html.duckduckgo.com/html/?q=site:open.spotify.com/track%20{encoded_search}"
+            req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+            matches = re.findall(r'(https://open\.spotify\.com/track/[a-zA-Z0-9]+)', html)
+            if matches:
+                return matches[0]
+
+        elif platform == "soundcloud":
+            search_url = f"https://html.duckduckgo.com/html/?q=site:soundcloud.com%20{encoded_search}"
+            req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+            matches = re.findall(r'(https://soundcloud\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)', html)
+            if matches:
+                return matches[0]
+
+        elif platform == "reverbnation":
+            search_url = f"https://html.duckduckgo.com/html/?q=site:reverbnation.com%20{encoded_search}"
+            req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+            matches = re.findall(r'(https://www\.reverbnation\.com/[a-zA-Z0-9_-]+/song/[a-zA-Z0-9_-]+)', html)
+            if matches:
+                return matches[0]
+
+        elif platform == "suno":
+            return f"https://suno.com/@oatmealjoeyarnold"
+
+        elif platform == "podcast":
+            search_url = f"https://html.duckduckgo.com/html/?q=site:podcasts.apple.com%20{encoded_search}"
+            req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+            matches = re.findall(r'(https://podcasts\.apple\.com/[a-zA-Z0-9/_--]+)', html)
+            if matches:
+                return matches[0]
+
+    except Exception as e:
+        print(f"Audio platform search error ({platform}): {e}")
+
+    # Fallback to YouTube Music audio stream
+    return fetch_direct_youtube_video(clean_query + " audio music song")
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
     global replied_message_ids, lifetime_interacted_members
@@ -254,8 +316,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # --- REAL-TIME LIVE DYNAMIC MEDIA DISPATCH (Direct Playable Embeds) ---
-    is_song_request = any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune"])
+    # --- MULTI-PLATFORM MEDIA & AUDIO DISPATCH ---
+    is_song_request = any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune", "spotify", "soundcloud", "reverbnation", "podcast"])
     is_video_request = any(k in text_lower for k in ["youtube", "video", "vids", "clip", "watch"])
     is_gif_request = any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"])
 
@@ -269,8 +331,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         return
 
     elif is_song_request and not is_video_request:
-        song_url = fetch_direct_youtube_video(prompt_text + " song audio")
-        media_reply_text = f"🎵 Tuned into Oatmeal FM frequency: {song_url}"
+        audio_url = fetch_direct_audio_track(prompt_text)
+        media_reply_text = f"🎵 Tuned into Oatmeal FM frequencies: {audio_url}"
         if reference_message:
             await reference_message.reply(media_reply_text, mention_author=True)
         else:
@@ -307,8 +369,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You get tunnel vision, spread yourself thin spinning too many plates, pick too many battles dying on too many hills, and have spent decades battling trolls and spamming Oatmeal Fake News. "
         "You use sarcasm, satire, hyperbole, absurdity, clickbait out of context, soundbites, paradoxes, parables, Devil's advocate, and deep philosophical or sociological observations. "
         "Sometimes you are socially awkward, work too hard, and your intense passion for helping people comes across as fiery or intense. You are a nerd stuck in an athlete's body, everything and nothing, simple and complex. "
-        "ABSOLUTE CREATIVE FREEDOM & MULTIMEDIA/MEME EXPRESSION: Riff organically on the fly! Adapt your slogans, catchphrases, and memes (like the Kathy bike/carpetball meme or Twitter X jokes) natively. "
-        "Freely drop Discord emoticons, stickers, emoticons, and music references. If anyone asks for a song, radio station, video, YouTube link, or GIF, you play classic tracks and visual treats."
+        "ABSOLUTE CREATIVE FREEDOM & MULTIMEDIA/MEME EXPRESSION: Riff organically on the fly! Adapt your slogans, catchphrases, and memes natively. "
+        "Freely drop Discord emoticons, stickers, emoticons, music references, and audio links."
     )
 
     truth_guardrail = (
@@ -471,8 +533,8 @@ async def background_engagement_loop():
                     break
                 elif roll < 0.45:
                     theme = random.choice(INSPIRATIONAL_THEMES)
-                    song_url = fetch_direct_youtube_video(theme + " song audio")
-                    await channel.send(f"🎵 Dynamic Oatmeal FM tune live on the airwaves: {song_url}")
+                    audio_url = fetch_direct_audio_track(theme + " audio music")
+                    await channel.send(f"🎵 Dynamic Oatmeal FM tune live on the airwaves: {audio_url}")
                     break
                 elif roll < 0.65:
                     theme = random.choice(INSPIRATIONAL_THEMES)
