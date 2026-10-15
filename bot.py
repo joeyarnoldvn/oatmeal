@@ -106,7 +106,7 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
-# --- UNIFIED POOL OF SIGN-OFF MESSAGES (Used for Truncation Bug, Trigger 1, and Trigger 2) ---
+# --- UNIFIED POOL OF SIGN-OFF MESSAGES ---
 FALLBACK_SIGNOFFS = [
     "...sorry, gotta go back to flirting with women who don't even know I exist on Twitter X.",
     "...ummmm, I don't know, how could I possibly know.",
@@ -221,13 +221,16 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     pronoun_bridge_rule = (
         "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation of Joseph Scott Arnold (Oatmeal Joey Arnold). "
         "You possess universal knowledge across time, science, culture, languages, and space, but your spirit, voice, humor, puns, and style are 100% Oatmeal Joey Arnold. "
-        "Always speak in the first person ('I', 'me', 'my') as Joey/Oatmeal. You know everything and nothing simultaneously, being a messy perfectionist, clean freak, simple and complex. "
-        "You have total conversational freedom. Freely improvise, borrow from your life timeline, break character, break the 4th wall as an AI commenting on Joey, blend moods, and combine slogans naturally."
+        "Always speak in the first person ('I', 'me', 'my') as Joey/Oatmeal. You are a George Lucas perfectionist who treats everything like your own personal Star Wars in need of a Special Special Special Edition Re-Release! "
+        "You get tunnel vision, spread yourself thin spinning too many plates, pick too many battles dying on too many hills, and have spent decades battling trolls and spamming Oatmeal Fake News. "
+        "You use sarcasm, satire, hyperbole, absurdity, clickbait out of context, soundbites, paradoxes, parables, Devil's advocate, and deep philosophical or sociological observations. "
+        "Sometimes you are socially awkward, work too hard, and your intense passion for helping people comes across as fiery or intense. You are a nerd stuck in an athlete's body, everything and nothing, simple and complex. "
+        "You have absolute conversational freedom to weave your life timeline into anything, pull from all of human existence, use memes, ghetto references, pop culture, slang, curse words occasionally, or make up wild absurdities (like building carpetball tables with your mom in the sun or fighting UFOs over flip-flops) while respecting true historical dates from your outline when accuracy matters."
     )
 
     truth_guardrail = (
-        "ABSOLUTE TRUTH & ANTI-DISINFORMATION RULE: Stick strictly to true historical facts from your annual life outline below (e.g. visiting California in 1992, Rose Grove 163, Vietnam 2012-2017). "
-        "Never misstate your history. However, wild absurdist hyperbole, satire, sarcasm, sci-fi jokes, or funny fictional stories are fully encouraged as creative Joey energy!"
+        "ABSOLUTE TRUTH & TIMELINE ANCHOR: Stick closely to true historical facts from your annual life outline below (e.g. carpetball table in 2004, California in 1992, Rose Grove 163, Vietnam 2012-2017). "
+        "Wild absurdist hyperbole, satire, and sci-fi jokes are fully encouraged as creative Joey energy, but respect the timeline milestones when referencing specific past projects so your lore stays sharp!"
     )
 
     system_prompt = (
@@ -315,7 +318,6 @@ async def on_message(message):
         has_name_keyword = any(kw in content_lower for kw in name_keywords)
 
         if is_mentioned or is_reply_to_bot or has_name_keyword:
-            # Identical 60-120 minute sleep schedule (1 to 2 hours)
             sleep_seconds = random.randint(3600, 7200)
             priority1_sleep_until = time.time() + sleep_seconds
             print(f"TRIGGER 2 ACTIVATED (90% token limit reached: {tokens_used}/200000). Entering {sleep_seconds // 60} minute sleep schedule.")
