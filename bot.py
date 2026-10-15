@@ -106,12 +106,12 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
-# --- INSPIRATIONAL MOTTO THEMES (Riffed organically rather than copy-pasted) ---
+# --- INSPIRATIONAL MOTTO THEMES (Riffed organically) ---
 INSPIRATIONAL_THEMES = [
-    "flirting with imaginary accounts on Twitter X",
-    "feeding the rabbit and checking the 30,000 deleted videos",
-    "wondering if Kathy stole the carpetball table or if I stole hers",
-    "dealing with yet another Special Edition re-release of my own life",
+    "flirting with women on all the websites",
+    "trying to backup my over 30,000+ videos before I get banned again",
+    "wondering if Kathy stole my bike or if I stole her bike",
+    "my guinea pig is eating up all my oatmeal if you know what I mean",
     "battling lolcow trolls who've been spreading Oatmeal Fake News since 2009"
 ]
 
@@ -151,18 +151,20 @@ def track_token_usage(prompt_text, reply_text):
     daily_token_tracker["tokens_used"] += est_tokens
 
 def clean_sentence_truncation(text):
-    """Ensures clean sentence endings without robotic dot-dot-dot separators."""
+    """Ensures clean sentence endings and permanently fixes the double-comma bug."""
     text = text.strip()
     if not text:
         return ""
     if text[-1] in [".", "!", "?", '"', "'", "”"]:
         return text
     
+    # Strip trailing commas, dashes, and whitespace to prevent ,, or -- glitches
+    text = text.rstrip(",-–— ")
+    
     match = re.search(r'^(.*[.!?])', text, re.DOTALL)
     if match and len(match.group(1)) > len(text) * 0.5:
         return match.group(1).strip()
     else:
-        # Organic conversational tail-off instead of jarring canned copy-paste
         theme = random.choice(INSPIRATIONAL_THEMES)
         return text + f", which honestly sounds like something I'd be doing while {theme}."
 
@@ -226,7 +228,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You get tunnel vision, spread yourself thin spinning too many plates, pick too many battles dying on too many hills, and have spent decades battling trolls and spamming Oatmeal Fake News. "
         "You use sarcasm, satire, hyperbole, absurdity, clickbait out of context, soundbites, paradoxes, parables, Devil's advocate, and deep philosophical or sociological observations. "
         "Sometimes you are socially awkward, work too hard, and your intense passion for helping people comes across as fiery or intense. You are a nerd stuck in an athlete's body, everything and nothing, simple and complex. "
-        "ABSOLUTE CREATIVE FREEDOM & IMPROVISATIONAL RIFFING: Never rely on boring canned copy-pasting. Riff organically on the fly! Adapt your slogans, catchphrases, and memes (like the Kathy bike/carpetball meme or Twitter X jokes) natively into whatever you are talking about. Invent new words, mix in slang, video games, pop culture, sci-fi, world history, and your 1985–2026 life milestones (like building the carpetball table in '04) smoothly and naturally."
+        "ABSOLUTE CREATIVE FREEDOM & MULTIMEDIA/MEME EXPRESSION: Never rely on boring canned copy-pasting. Riff organically on the fly! Adapt your slogans, catchphrases, and memes (like the Kathy bike/carpetball meme or Twitter X jokes) natively into whatever you are talking about. "
+        "Feel completely free to sprinkle in Discord emoticons, describe sharing photos, GIFs, links, or simulated audio/video thoughts whenever it fits your absurdist vibe. Invent new words, mix in slang, video games, pop culture, sci-fi, world history, and your 1985–2026 life milestones (like building the carpetball table in '04) smoothly and naturally."
     )
 
     truth_guardrail = (
