@@ -129,7 +129,6 @@ ai_client = OpenAI(
     api_key=GROQ_API_KEY
 )
 
-# --- USING OPENAI/GPT-OSS-120B FOR MAXIMUM REASONING POWER ---
 MODEL_NAME = "openai/gpt-oss-120b"
 
 intents = discord.Intents.default()
@@ -307,7 +306,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     year_fact = extract_year_context(prompt_text)
     year_injection = f"\n\nHISTORICAL TIMELINE FACT FOR THIS YEAR: {year_fact}" if year_fact else ""
 
-    # --- DYNAMIC REASONING DIRECTIVES (REPLACING RIGID KEYWORD CATCHERS) ---
     dynamic_intelligence_guardrail = (
         "CORE ONTOLOGICAL & REALITY GUARDRAIL:\n"
         "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your life history is governed strictly by the 1985-2026 outline provided.\n"
@@ -346,7 +344,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.82,  # --- THE SECRET WINNING COMBINATION TEMPERATURE ---
+                temperature=0.82,
                 max_tokens=token_limit,
             )
             raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
@@ -418,7 +416,7 @@ async def background_engagement_loop():
             action_taken = False
 
             for guild in bot.guilds:
-                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me].read_message_history]
+                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not text_channels:
                     continue
                 channel = random.choice(text_channels)
