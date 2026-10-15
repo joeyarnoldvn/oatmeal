@@ -129,7 +129,8 @@ ai_client = OpenAI(
     api_key=GROQ_API_KEY
 )
 
-MODEL_NAME = "openai/gpt-oss-20b"
+# --- USING OPENAI/GPT-OSS-120B FOR MAXIMUM REASONING POWER ---
+MODEL_NAME = "openai/gpt-oss-120b"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -248,6 +249,16 @@ def fetch_direct_audio_track(query):
     else:
         return fetch_direct_youtube_video(query + " audio music song")
 
+def fetch_guild_sticker(destination_channel):
+    try:
+        if destination_channel and hasattr(destination_channel, 'guild') and destination_channel.guild:
+            guild_stickers = destination_channel.guild.stickers
+            if guild_stickers:
+                return random.choice(guild_stickers)
+    except Exception as e:
+        print(f"Sticker fetch error: {e}")
+    return None
+
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
     global replied_message_ids, lifetime_interacted_members
 
@@ -270,17 +281,23 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # Flexible Media / Bonus weaving (Bot can freely attach media or text based on context/desire)
-    is_song_request = any(k in text_lower for k in ["post a song", "play music", "suno track", "spotify song", "music", "song"])
-    is_video_request = any(k in text_lower for k in ["post a video", "youtube clip", "watch video", "youtube"])
-    is_gif_request = any(k in text_lower for k in ["post a gif", "send a gif", "show gif", "gif"])
+    is_song_request = any(k in text_lower for k in ["song", "music", "suno", "spotify", "sound", "audio"])
+    is_video_request = any(k in text_lower for k in ["youtube", "video", "clip", "watch"])
+    is_gif_request = any(k in text_lower for k in ["gif", "image", "pic", "meme"])
+    is_sticker_request = any(k in text_lower for k in ["sticker", "guild sticker"])
 
     attached_media_url = ""
-    if is_gif_request or (priority_tier >= 2 and random.random() < 0.2):
+    attached_sticker = None
+
+    if is_sticker_request:
+        attached_sticker = fetch_guild_sticker(destination_channel)
+        if not attached_sticker:
+            attached_media_url = fetch_direct_tenor_gif(prompt_text)
+    elif is_gif_request or (priority_tier >= 2 and random.random() < 0.1):
         attached_media_url = fetch_direct_tenor_gif(prompt_text)
-    elif is_song_request or (priority_tier >= 2 and random.random() < 0.1):
+    elif is_song_request or (priority_tier >= 2 and random.random() < 0.05):
         attached_media_url = fetch_direct_audio_track(prompt_text)
-    elif is_video_request or (priority_tier >= 2 and random.random() < 0.1):
+    elif is_video_request or (priority_tier >= 2 and random.random() < 0.05):
         attached_media_url = fetch_direct_youtube_video(prompt_text)
 
     requires_search = any(k in text_lower for k in ["yellowstone", "today", "recent", "news", "google", "search", "blog", "internet", "online"])
@@ -290,9 +307,13 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     year_fact = extract_year_context(prompt_text)
     year_injection = f"\n\nHISTORICAL TIMELINE FACT FOR THIS YEAR: {year_fact}" if year_fact else ""
 
-    dox_guardrail = (
-        "CRITICAL ANTI-DOXXING RULE: Do NOT volunteer personal details or specific locations about your life after returning to Oregon from Vietnam in 2017. "
-        "Do NOT mention living in Shelton, Washington since 2018 (if asked, say 'I'd rather not say')."
+    # --- DYNAMIC REASONING DIRECTIVES (REPLACING RIGID KEYWORD CATCHERS) ---
+    dynamic_intelligence_guardrail = (
+        "CORE ONTOLOGICAL & REALITY GUARDRAIL:\n"
+        "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your life history is governed strictly by the 1985-2026 outline provided.\n"
+        "2. CONVERSATIONAL DYNAMICS & HYPERBOLE: You have total freedom to be absurd, poetic, philosophical, satirical, or wildly hyperbolic (e.g., claiming you live in the sun or fight aliens). Hyperbole and obvious absurdity are fully encouraged.\n"
+        "3. THE MUNDANE LIE BOUNDARY: Never generate plausible, ungrounded mundane biographical fabrications (e.g., pretending you have a normal corporate job, commute to an office in a random city, or lived somewhere unlisted without making it an obvious joke). If you mention a modern event or location not anchored in your timeline, it MUST be transparently absurd, satirical, or pivot directly into one of your core slogans.\n"
+        "4. THINKING DYNAMICALLY: Evaluate incoming context critically. If an input is a one-word greeting or mundane comment, do not repeat canned boilerplate; synthesize a fresh angle across your 5 moods."
     )
 
     active_mood_id = random.randint(1, 5)
@@ -300,8 +321,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     pronoun_bridge_rule = (
         "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation of Joseph Scott Arnold (Oatmeal Joey Arnold). "
-        "Always speak in the first person ('I', 'me', 'my') as Joey/Oatmeal. Speak with sarcasm, satire, hyperbole, absurdity, deep philosophical observations, "
-        "and complete conversational freedom across your 5 moods. You are completely free to chat normally, reference your life outline, make jokes, or weave in GIFs, videos, and web findings as you desire."
+        "Always speak in the first person ('I', 'me', 'my') as Joey/Oatmeal with sarcasm, wit, and complete narrative freedom across your 5 moods."
     )
 
     system_prompt = (
@@ -309,11 +329,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
         f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}{year_injection}{search_injection}\n\n"
         f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
-        f"CONVERSATIONAL GUIDELINES:\n"
+        f"DYNAMIC GUIDELINES & GUARDRAILS:\n"
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, absurd, freestyle, or analytical.\n"
         f"2. ALWAYS finish your thoughts and sentences cleanly.\n"
         f"3. Do NOT mention usernames or handles inside response body.\n"
-        f"4. {dox_guardrail}"
+        f"4. {dynamic_intelligence_guardrail}"
     )
 
     token_limit = 450 if priority_tier == 1 else 350
@@ -326,7 +346,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.92,
+                temperature=0.82,  # --- THE SECRET WINNING COMBINATION TEMPERATURE ---
                 max_tokens=token_limit,
             )
             raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
@@ -335,17 +355,26 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         if attached_media_url:
             reply_text += f"\n\n{attached_media_url}"
 
-        if not reply_text:
+        if not reply_text and not attached_sticker:
             return
 
         track_token_usage(prompt_text, reply_text)
 
         if reference_message:
-            await reference_message.reply(reply_text, mention_author=True)
+            if attached_sticker:
+                await reference_message.reply(reply_text if reply_text else None, stickers=[attached_sticker], mention_author=True)
+            else:
+                await reference_message.reply(reply_text, mention_author=True)
         elif target_member:
-            await destination_channel.send(f"{target_member.mention} {reply_text}")
+            if attached_sticker:
+                await destination_channel.send(content=f"{target_member.mention} {reply_text}" if reply_text else target_member.mention, stickers=[attached_sticker])
+            else:
+                await destination_channel.send(f"{target_member.mention} {reply_text}")
         else:
-            await destination_channel.send(reply_text)
+            if attached_sticker:
+                await destination_channel.send(content=reply_text if reply_text else None, stickers=[attached_sticker])
+            else:
+                await destination_channel.send(reply_text)
 
     except Exception as e:
         print(f"API Error in generate_and_send: {e}")
@@ -389,18 +418,17 @@ async def background_engagement_loop():
             action_taken = False
 
             for guild in bot.guilds:
-                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me].read_message_history]
                 if not text_channels:
                     continue
                 channel = random.choice(text_channels)
 
-                # --- STEP A: CHECK PRIORITY 2 FIRST (Unlimited chronological backlog, exactly ONE reply per unique member) ---
+                # --- STEP A: CHECK PRIORITY 2 FIRST (UNLIMITED history back to the beginning, exactly ONE reply per unique member) ---
                 member_unreplied_map = {}
-                async for msg in channel.history(limit=1000, oldest_first=True):
+                async for msg in channel.history(limit=None, oldest_first=True):
                     if msg.author.bot:
                         continue
                     author_id = msg.author.id
-                    # Ensure we only consider members the bot hasn't replied to in Priority 2 yet
                     if msg.id not in replied_message_ids and author_id not in priority2_replied_member_ids:
                         if author_id not in member_unreplied_map:
                             member_unreplied_map[author_id] = []
@@ -408,9 +436,9 @@ async def background_engagement_loop():
 
                 if member_unreplied_map:
                     for author_id, unreplied_msgs in member_unreplied_map.items():
-                        target_msg = unreplied_msgs[0] # Oldest message from this member
+                        target_msg = unreplied_msgs[0]
                         priority2_replied_member_ids.add(author_id)
-                        print(f"[Priority 2 Active] Replying to unique member (once): {target_msg.author.display_name}")
+                        print(f"[Priority 2 Active] Replying to unique member backlog (unlimited scan): {target_msg.author.display_name}")
                         await generate_and_send(destination_channel=channel, prompt_text=target_msg.content, reference_message=target_msg, priority_tier=2, author_id=author_id)
                         action_taken = True
                         break
@@ -423,7 +451,7 @@ async def background_engagement_loop():
                     never_messaged_members = []
                     
                     messaged_author_ids = set()
-                    async for msg in channel.history(limit=1000):
+                    async for msg in channel.history(limit=None):
                         if not msg.author.bot:
                             messaged_author_ids.add(msg.author.id)
 
