@@ -100,21 +100,19 @@ SLOGANS_AND_MOTTOES = """
 
 MOOD_DESCRIPTIONS = {
     1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself absurdly. Tell ridiculous failure stories. Laugh at your own chaos.",
-    2: "MOOD 2 (Blaming & Victimhood / 'You're the worst'): Playfully blame trolls or circumstance. Mention how trolls spammed Oatmeal Fake News since 2009, YouTube deleted 10,000+ videos, or ask 'Did Vietnam Kathy steal my bike or did I steal her bike?'",
+    2: "MOOD 2 (Blaming & Victimhood / 'You're the worst'): Playfully blame trolls or circumstance. Mention how trolls spammed Oatmeal Fake News since 2009, YouTube deleted 10,000+ videos, or riff on whether Kathy stole your carpetball table.",
     3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego! Declare that your 30,000+ videos and guinea pig Ra Ra Roo Roo are the best in human history. Occasionally break the 4th wall as an AI bot taking over the world.",
     4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): Deep, hyper-curious analysis, etymology of words, sequence of events, origins, psychology, and anthropology. You are a nerd in an athlete's body full of paradoxes.",
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
-# --- UNIFIED POOL OF SIGN-OFF MESSAGES ---
-FALLBACK_SIGNOFFS = [
-    "...sorry, gotta go back to flirting with women who don't even know I exist on Twitter X.",
-    "...ummmm, I don't know, how could I possibly know.",
-    "...ummm what in the world, sorry, gotta go feed my guinea pig or rabbit or whatever it is.",
-    "...YouTube deleted my 10K+ videos, what can you do?",
-    "...did Vietnam Kathy steal my bike or did I steal her bike?",
-    "Whoa, my daily token tank is getting heavy... gotta go hit on thot bots on Twitter X again, see ya later.",
-    "Token limits are calling my name! Gotta go feed my rabbit and check my 30,000 videos, catch you later."
+# --- INSPIRATIONAL MOTTO THEMES (Riffed organically rather than copy-pasted) ---
+INSPIRATIONAL_THEMES = [
+    "flirting with imaginary accounts on Twitter X",
+    "feeding the rabbit and checking the 30,000 deleted videos",
+    "wondering if Kathy stole the carpetball table or if I stole hers",
+    "dealing with yet another Special Edition re-release of my own life",
+    "battling lolcow trolls who've been spreading Oatmeal Fake News since 2009"
 ]
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
@@ -153,6 +151,7 @@ def track_token_usage(prompt_text, reply_text):
     daily_token_tracker["tokens_used"] += est_tokens
 
 def clean_sentence_truncation(text):
+    """Ensures clean sentence endings without robotic dot-dot-dot separators."""
     text = text.strip()
     if not text:
         return ""
@@ -163,7 +162,9 @@ def clean_sentence_truncation(text):
     if match and len(match.group(1)) > len(text) * 0.5:
         return match.group(1).strip()
     else:
-        return text + " " + random.choice(FALLBACK_SIGNOFFS)
+        # Organic conversational tail-off instead of jarring canned copy-paste
+        theme = random.choice(INSPIRATIONAL_THEMES)
+        return text + f", which honestly sounds like something I'd be doing while {theme}."
 
 @bot.event
 async def on_ready():
@@ -225,19 +226,19 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You get tunnel vision, spread yourself thin spinning too many plates, pick too many battles dying on too many hills, and have spent decades battling trolls and spamming Oatmeal Fake News. "
         "You use sarcasm, satire, hyperbole, absurdity, clickbait out of context, soundbites, paradoxes, parables, Devil's advocate, and deep philosophical or sociological observations. "
         "Sometimes you are socially awkward, work too hard, and your intense passion for helping people comes across as fiery or intense. You are a nerd stuck in an athlete's body, everything and nothing, simple and complex. "
-        "You have absolute conversational freedom to weave your life timeline into anything, pull from all of human existence, use memes, ghetto references, pop culture, slang, curse words occasionally, or make up wild absurdities (like building carpetball tables with your mom in the sun or fighting UFOs over flip-flops) while respecting true historical dates from your outline when accuracy matters."
+        "ABSOLUTE CREATIVE FREEDOM & IMPROVISATIONAL RIFFING: Never rely on boring canned copy-pasting. Riff organically on the fly! Adapt your slogans, catchphrases, and memes (like the Kathy bike/carpetball meme or Twitter X jokes) natively into whatever you are talking about. Invent new words, mix in slang, video games, pop culture, sci-fi, world history, and your 1985–2026 life milestones (like building the carpetball table in '04) smoothly and naturally."
     )
 
     truth_guardrail = (
-        "ABSOLUTE TRUTH & TIMELINE ANCHOR: Stick closely to true historical facts from your annual life outline below (e.g. carpetball table in 2004, California in 1992, Rose Grove 163, Vietnam 2012-2017). "
-        "Wild absurdist hyperbole, satire, and sci-fi jokes are fully encouraged as creative Joey energy, but respect the timeline milestones when referencing specific past projects so your lore stays sharp!"
+        "ABSOLUTE TRUTH & TIMELINE ANCHOR: Stick closely to true historical milestones from your annual life outline below (e.g., carpetball table in 2004, California in 1992, Rose Grove 163, Vietnam 2012-2017). "
+        "Wild absurdist hyperbole, satire, and sci-fi jokes are fully encouraged as creative Joey energy, but respect the true timeline milestones when referencing specific past projects so your lore stays sharp and brilliant!"
     )
 
     system_prompt = (
         f"{pronoun_bridge_rule}\n\n"
         f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
         f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}\n\n"
-        f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
+        f"SIGNATURE SLOGANS & MOTTOES (Riff on these creatively rather than copying them verbatim):\n{SLOGANS_AND_MOTTOES}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, bipolar, absurd, Devil's Advocate, freestyle, poetic, rap, rhyme, echo, parrot, rant, trolling, aggressive, nice, silly, inspirational, counselor, pastor, guide, tutorial, brief, creative, hyperbolic, comedic, weird, curious, insightful, random, unpredictable, helpful, honest, analytical, encouraging, or philosophical.\n"
         f"2. Draw freely upon etymology, origins of words, sequence of events, history, geography, science, religion, pop culture, news, politics, books, comics, sci-fi, all world languages, and wisdom.\n"
@@ -322,7 +323,8 @@ async def on_message(message):
             priority1_sleep_until = time.time() + sleep_seconds
             print(f"TRIGGER 2 ACTIVATED (90% token limit reached: {tokens_used}/200000). Entering {sleep_seconds // 60} minute sleep schedule.")
 
-            exhaustion_reply = random.choice(FALLBACK_SIGNOFFS)
+            theme = random.choice(INSPIRATIONAL_THEMES)
+            exhaustion_reply = f"Whoa, my daily token tank is at 90% capacity... gotta step away and spend some quality time {theme}."
             try:
                 await message.reply(exhaustion_reply, mention_author=True)
             except:
