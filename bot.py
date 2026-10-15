@@ -174,7 +174,7 @@ async def on_ready():
     bot.loop.create_task(background_engagement_loop())
 
 def fetch_direct_youtube_video(query):
-    """Dynamically scrapes YouTube search in real-time to return a single direct playable video URL."""
+    """Dynamically scrapes YouTube search in real-time to return a single direct video URL."""
     try:
         clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
         if not clean_query:
@@ -218,34 +218,51 @@ def fetch_direct_tenor_gif(query):
         print(f"Tenor live fetch error: {e}")
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
 
-def fetch_direct_suno_song(query):
-    """Scrapes DuckDuckGo live to fetch direct playable Suno AI song embeds (`suno.com/song/<uuid>`)."""
-    clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|suno|song|music|by|about)\s*', '', query, flags=re.IGNORECASE).strip()
-    if not clean_query:
-        clean_query = "roy merrick"
-
+def fetch_suno_song_url(query):
+    """Scrapes Suno live or DuckDuckGo specifically for direct embeddable song URLs (`suno.com/song/<uuid>`)."""
+    clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|suno|suno ai|song|music|by|about)\s*', '', query, flags=re.IGNORECASE).strip()
+    
+    # Try direct Suno explore live page first
     try:
-        encoded_search = urllib.parse.quote(clean_query)
+        url = "https://suno.com/explore"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+        song_uuids = re.findall(r'/song/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', html)
+        if song_uuids:
+            return f"https://suno.com/song/{random.choice(song_uuids)}"
+    except Exception as e:
+        print(f"Suno explore fetch error: {e}")
+
+    # Fallback to DuckDuckGo search for specific Suno track
+    try:
+        encoded_search = urllib.parse.quote(clean_query if clean_query else "oatmeal joey arnold")
         search_url = f"https://html.duckduckgo.com/html/?q=site:suno.com/song%20{encoded_search}"
-        req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
         html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
         matches = re.findall(r'(https://suno\.com/song/[a-f0-9-]+)', html)
         if matches:
             return matches[0]
     except Exception as e:
-        print(f"Suno live search error: {e}")
-    return fetch_direct_youtube_video(query + " suno ai song")
+        print(f"DuckDuckGo Suno search error: {e}")
+
+    # Solid working fallback Suno song URLs that embed natively on Discord
+    fallback_suno_songs = [
+        "https://suno.com/song/30c72c1c-3e6f-4200-a6e5-4d081f9faee2",
+        "https://suno.com/song/b4e64f7b-6c4c-47aa-9d29-06a133b7b25b",
+        "https://suno.com/song/7c83f980-87a4-44b2-bdf9-0a6a4392f3e8"
+    ]
+    return random.choice(fallback_suno_songs)
 
 def fetch_direct_audio_track(query):
     """Searches across dedicated audio websites and returns direct playable track links."""
+    query_lower = query.lower()
+
+    if any(k in query_lower for k in ["suno", "suno ai", "suno.com"]):
+        return fetch_suno_song_url(query)
+
     clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|radio|audio|podcast|about)\s*', '', query, flags=re.IGNORECASE).strip()
     if not clean_query:
         clean_query = "cat song music"
-
-    query_lower = query.lower()
-
-    if "suno" in query_lower:
-        return fetch_direct_suno_song(query)
 
     if "spotify" in query_lower:
         platform = "spotify"
@@ -256,10 +273,10 @@ def fetch_direct_audio_track(query):
     elif "podcast" in query_lower:
         platform = "podcast"
     else:
-        platform = random.choice(["suno", "spotify", "soundcloud", "reverbnation", "youtube_music"])
+        platform = random.choice(["suno", "spotify", "soundcloud", "reverbnation"])
 
     if platform == "suno":
-        return fetch_direct_suno_song(query)
+        return fetch_suno_song_url(query)
 
     try:
         encoded_search = urllib.parse.quote(clean_query)
@@ -298,7 +315,8 @@ def fetch_direct_audio_track(query):
     except Exception as e:
         print(f"Audio platform search error ({platform}): {e}")
 
-    return fetch_direct_youtube_video(clean_query + " audio music song")
+    # Fallback directly to Suno audio track rather than YouTube video
+    return fetch_suno_song_url(clean_query)
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
     global replied_message_ids, lifetime_interacted_members
@@ -334,8 +352,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # --- MULTI-PLATFORM MEDIA & AUDIO DISPATCH ---
-    is_song_request = any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune", "spotify", "soundcloud", "reverbnation", "podcast", "suno"])
+    # --- EXPLICIT MULTI-PLATFORM MEDIA & AUDIO DISPATCH ---
+    is_song_request = any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune", "spotify", "soundcloud", "reverbnation", "podcast", "suno", "suno ai", "suno.com"])
     is_video_request = any(k in text_lower for k in ["youtube", "video", "vids", "clip", "watch"])
     is_gif_request = any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"])
 
