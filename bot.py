@@ -106,7 +106,7 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
-# --- CURATED TENOR GIFS (Guaranteed rich auto-embed in Discord) ---
+# --- CURATED TENOR GIFS & MEDIA (Guaranteed rich auto-embed in Discord via newline) ---
 CURATED_GIFS = [
     "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671",
     "https://tenor.com/view/funny-cat-dancing-cat-dance-move-groove-gif-15982859",
@@ -227,17 +227,17 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # --- REAL MULTIMEDIA / YOUTUBE / FM BOT / TENOR GIF DISPATCH ---
+    # --- REAL MULTIMEDIA / YOUTUBE / FM BOT / TENOR GIF DISPATCH (Newline enforced for embeds) ---
     media_reply_text = None
     if any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"]):
         chosen_gif = random.choice(CURATED_GIFS)
-        media_reply_text = f"Here’s your visual drop 🎬 {chosen_gif}"
+        media_reply_text = f"Here’s your visual drop 🎬\n{chosen_gif}"
     elif any(k in text_lower for k in ["youtube", "video", "vids", "clip", "watch"]):
         chosen_vid = random.choice(CURATED_VIDEOS)
-        media_reply_text = f"Here’s a video fresh off the digital presses 📹 {chosen_vid}"
+        media_reply_text = f"Here’s a video fresh off the digital presses 📹\n{chosen_vid}"
     elif any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune"]):
         chosen_song = random.choice(CURATED_SONGS)
-        media_reply_text = f"🎵 Tuning into the Oatmeal FM frequency right now: {chosen_song}"
+        media_reply_text = f"🎵 Tuning into the Oatmeal FM frequency right now:\n{chosen_song}"
 
     if media_reply_text:
         if reference_message:
