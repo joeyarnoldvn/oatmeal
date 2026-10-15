@@ -174,7 +174,7 @@ async def on_ready():
     bot.loop.create_task(background_engagement_loop())
 
 def fetch_direct_youtube_video(query):
-    """Dynamically scrapes YouTube search in real-time to return a single direct video URL."""
+    """Dynamically scrapes YouTube search in real-time to return a single direct playable video URL."""
     try:
         clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
         if not clean_query:
@@ -196,9 +196,9 @@ def fetch_direct_youtube_video(query):
     return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 def fetch_direct_tenor_gif(query):
-    """Dynamically scrapes Tenor in real-time for direct gif pages."""
+    """Dynamically scrapes Tenor in real-time for direct gif pages that render in Discord."""
     try:
-        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
+        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|show|pic|photo|meme|about)\s*', '', query, flags=re.IGNORECASE).strip()
         if not clean_query:
             clean_query = "funny dance"
         
@@ -218,26 +218,48 @@ def fetch_direct_tenor_gif(query):
         print(f"Tenor live fetch error: {e}")
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
 
+def fetch_direct_suno_song(query):
+    """Scrapes DuckDuckGo live to fetch direct playable Suno AI song embeds (`suno.com/song/<uuid>`)."""
+    clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|suno|song|music|by|about)\s*', '', query, flags=re.IGNORECASE).strip()
+    if not clean_query:
+        clean_query = "roy merrick"
+
+    try:
+        encoded_search = urllib.parse.quote(clean_query)
+        search_url = f"https://html.duckduckgo.com/html/?q=site:suno.com/song%20{encoded_search}"
+        req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+        matches = re.findall(r'(https://suno\.com/song/[a-f0-9-]+)', html)
+        if matches:
+            return matches[0]
+    except Exception as e:
+        print(f"Suno live search error: {e}")
+    return fetch_direct_youtube_video(query + " suno ai song")
+
 def fetch_direct_audio_track(query):
-    """Searches across dedicated audio websites (Spotify, SoundCloud, ReverbNation, Suno AI, Podcasts)."""
+    """Searches across dedicated audio websites and returns direct playable track links."""
     clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|radio|audio|podcast|about)\s*', '', query, flags=re.IGNORECASE).strip()
     if not clean_query:
         clean_query = "cat song music"
 
-    # Identify requested platform if explicit, or randomly cycle across music platforms
     query_lower = query.lower()
+
+    if "suno" in query_lower:
+        return fetch_direct_suno_song(query)
+
     if "spotify" in query_lower:
         platform = "spotify"
     elif "soundcloud" in query_lower:
         platform = "soundcloud"
     elif "reverbnation" in query_lower:
         platform = "reverbnation"
-    elif "suno" in query_lower:
-        platform = "suno"
     elif "podcast" in query_lower:
         platform = "podcast"
     else:
-        platform = random.choice(["spotify", "soundcloud", "reverbnation", "suno", "podcast", "youtube_music"])
+        platform = random.choice(["suno", "spotify", "soundcloud", "reverbnation", "youtube_music"])
+
+    if platform == "suno":
+        return fetch_direct_suno_song(query)
 
     try:
         encoded_search = urllib.parse.quote(clean_query)
@@ -265,9 +287,6 @@ def fetch_direct_audio_track(query):
             if matches:
                 return matches[0]
 
-        elif platform == "suno":
-            return f"https://suno.com/@oatmealjoeyarnold"
-
         elif platform == "podcast":
             search_url = f"https://html.duckduckgo.com/html/?q=site:podcasts.apple.com%20{encoded_search}"
             req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -279,7 +298,6 @@ def fetch_direct_audio_track(query):
     except Exception as e:
         print(f"Audio platform search error ({platform}): {e}")
 
-    # Fallback to YouTube Music audio stream
     return fetch_direct_youtube_video(clean_query + " audio music song")
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
@@ -317,7 +335,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         return
 
     # --- MULTI-PLATFORM MEDIA & AUDIO DISPATCH ---
-    is_song_request = any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune", "spotify", "soundcloud", "reverbnation", "podcast"])
+    is_song_request = any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune", "spotify", "soundcloud", "reverbnation", "podcast", "suno"])
     is_video_request = any(k in text_lower for k in ["youtube", "video", "vids", "clip", "watch"])
     is_gif_request = any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"])
 
@@ -453,7 +471,6 @@ async def on_message(message):
 
     lifetime_interacted_members.add(message.author.id)
 
-    # --- TRIGGER 2: HARD CEILING (90% / 180,000 tokens) ---
     tokens_used = daily_token_tracker["tokens_used"]
     if tokens_used >= 180000:
         is_mentioned = bot.user in message.mentions
@@ -475,7 +492,6 @@ async def on_message(message):
                 await message.channel.send(exhaustion_reply)
             return
 
-    # --- LIGHTWEIGHT FALLBACK TRIGGER FOR MENTIONS & REPLIES ---
     is_mentioned = bot.user in message.mentions
     is_reply_to_bot = False
     if message.reference and message.reference.resolved:
@@ -511,14 +527,12 @@ async def background_engagement_loop():
 
             tokens_used = daily_token_tracker["tokens_used"]
             
-            # --- TRIGGER 1: SOFT CAP (70% / 140,000 tokens) ---
             if tokens_used > 140000:
                 sleep_seconds = random.randint(3600, 7200)
                 print(f"Trigger 1 activated: Token budget over 70% ({tokens_used}/200000). Entering {sleep_seconds // 60} minute sleep schedule.")
                 await asyncio.sleep(sleep_seconds)
                 continue
 
-            # --- AUTONOMOUS UNPROMPTED SPONTANEOUS POSTING (Live Direct Media or Riff) ---
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not text_channels:
