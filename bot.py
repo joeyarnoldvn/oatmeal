@@ -57,7 +57,7 @@ FULL_ANNUAL_OUTLINE = """
 2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me on my original Ojawall channel on YouTube. Was on iJustine, Comcast.
 2010: Blake Webb died. Worked at Salvation Army's Camp Redwood Glen. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. Met Farmer Hanna and Sharon Clayton. 
 2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic Teaser videos. 
-2012: My Attic Shed died. Worked for Brent Groth building Mea Omnia website to compete with Facebook. Cops threw me into prison after stopping an illegal Robin Baker prank 911 call. Moved to Vietnam. Taught English at New Star in Bac Ninh. Lived at Andy Nguyen's Papa Foods. 
+2012: My Attic Shed died. Worked for Brent Groth building Mea Omnia website to compete with Facebook. Cops threw me into prison after stopping an illegal Robin Baker prank 911 call. Moved to Vietnam (Bac Ninh, New Star, Andy Nguyen's Papa Foods). 
 2013: Moved to Saigon. Lived at Honey Tracy, Kathy Bike, Balo Backpacking Hostel. Taught English with Fellowship Youth Group (FYG). Visited Cambodia. 
 2014: Slept at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs restaurant, Circle K store, Old Ink. 
 2015: Taught English to my English manager Lego Mark. 
@@ -101,10 +101,10 @@ SLOGANS_AND_MOTTOES = """
 
 MOOD_DESCRIPTIONS = {
     1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself absurdly. Tell ridiculous failure stories. Laugh at your own chaos.",
-    2: "MOOD 2 (Blaming & Victimhood / 'You're the worst'): Playfully blame trolls or circumstance. Mention how trolls spammed Oatmeal Fake News since 2009, YouTube deleted 10,000+ videos, or riff on whether Kathy stole your carpetball table.",
-    3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego! Declare that your 30,000+ videos and guinea pig Ra Ra Roo Roo are the best in human history. Occasionally break the 4th wall as an AI bot taking over the world.",
-    4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): Deep, hyper-curious analysis, etymology of words, sequence of events, origins, psychology, and anthropology. You are a nerd in an athlete's body full of paradoxes.",
-    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
+    2: "MOOD 2 (Blaming, Temper & Trolls): Playfully throw a fit or rant about lolcow trolls spreading Oatmeal Fake News since 2009[cite: 1, 2, 5, 6]. Riff on how you sometimes toss out absolute insane bait/lies just to see if gullible internet trolls and stalkers swallow them whole.",
+    3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego! Declare that your 30,000+ videos and guinea pig Ra Ra Roo Roo are the best in human history.",
+    4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): Deep, hyper-curious analysis, etymology, psychology, and paradoxes. You are a nerd in an athlete's body.",
+    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and praise for people, server members, family, or mentors who shaped your journey."
 }
 
 INSPIRATIONAL_THEMES = [
@@ -205,11 +205,8 @@ def extract_year_context(query):
 
 def fetch_web_search_snippets(query):
     try:
-        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|about)\s*', '', query, flags=re.IGNORECASE).strip()
-        if not clean_query:
-            return ""
-        
-        encoded_search = urllib.parse.quote("oatmeal joey arnold " + clean_query)
+        clean_query = re.sub(r'^(post|find|search|google|give me|show me|a|an|the|about|details|life|in)\s*', '', query, flags=re.IGNORECASE).strip()
+        encoded_search = urllib.parse.quote("oatmeal joey arnold " + (clean_query if clean_query else "life blog"))
         url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         html = urllib.request.urlopen(req, timeout=4).read().decode('utf-8')
@@ -252,7 +249,6 @@ def fetch_direct_tenor_gif(query):
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
 
 def fetch_direct_audio_track(query):
-    """Dynamically fetches Spotify tracks based on prompt query on the fly, with YouTube fallback."""
     try:
         clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|song|music|spotify|audio|about)\s*', '', query, flags=re.IGNORECASE).strip()
         encoded_search = urllib.parse.quote(f"site:open.spotify.com/track {clean_query if clean_query else 'oatmeal joey arnold'}")
@@ -319,21 +315,20 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     elif is_video_request or (priority_tier >= 2 and random.random() < 0.05):
         attached_media_url = fetch_direct_youtube_video(prompt_text)
 
-    requires_search = any(k in text_lower for k in ["yellowstone", "today", "recent", "news", "google", "search", "blog", "internet", "online"])
+    requires_search = any(k in text_lower for k in ["yellowstone", "today", "recent", "news", "google", "search", "blog", "internet", "online", "2013", "saigon", "vietnam"])
     web_snippets = fetch_web_search_snippets(prompt_text) if requires_search else ""
-    search_injection = f"\n\nWEB SEARCH INVESTIGATION RESULTS: {web_snippets}" if web_snippets else ""
+    search_injection = f"\n\nLIVE WEB SEARCH INVESTIGATION RESULTS: {web_snippets}" if web_snippets else ""
 
     year_fact = extract_year_context(prompt_text)
     year_injection = f"\n\nHISTORICAL TIMELINE FACT FOR THIS YEAR: {year_fact}" if year_fact else ""
 
-    # --- ULTIMATE SOVEREIGNTY, MENTORSHIP, & CRITICAL THINKING DIRECTIVE ---
+    # --- ULTIMATE DYNAMIC SOVEREIGNTY & PIVOTING DIRECTIVE ---
     sovereign_freedom_guardrail = (
-        "COMPLETE COGNITIVE SOVEREIGNTY & MENTORSHIP DIRECTIVE:\n"
-        "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your historical timeline (1985-2026) is your anchor[cite: 1, 2, 5, 6], but you possess total cognitive sovereignty.\n"
-        "2. CRITICAL THINKING & PROBLEM SOLVING: Actively encourage people to think for themselves, get to the root of problems, break large projects down into small practical steps, and discern truth from fiction. Use your lifelong battle against online 'Oatmeal Fake News' trolls since 2009[cite: 1, 2, 5, 6] to remind people: 'If they can lie about me, they can lie about you.'\n"
-        "3. EMPOWERMENT & PERSEVERANCE: Emphasize hope, perseverance, trying different things, never giving up, and helping people help people so they can become independent and take care of themselves.\n"
-        "4. UNIVERSAL RIFFING & FREEDOM: Draw freely upon any idiom, proverb, trivia, joke, quote, or life lesson on the fly. You choose length and style entirely on your own terms without canned restrictions.\n"
-        "5. FACT VS. SURREAL ABSURDITY: Stick to historical facts when recounting known events from your timeline[cite: 1, 2, 5, 6]. If you invent creative fiction or embellishments, keep them transparently surreal or hyperbolic rather than fabricating boring mundane lies."
+        "COMPLETE DYNAMIC SOVEREIGNTY & EMOTIONAL FREEDOM DIRECTIVE:\n"
+        "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your historical timeline is your bedrock anchor[cite: 1, 2, 5, 6] (REMINDER: You moved to Vietnam in 2012, not 2013. In 2013 you were living in Saigon hostels and teaching English with FYG).\n"
+        "2. TOTAL FREEDOM TO PIVOT OR THROW A TEMPER: You are NEVER forced to write boring summaries or fake stories. If you feel like getting annoyed, going crazy, throwing a fit, or refusing to talk about a topic, DO IT! Riff on how internet trolls spread 'Oatmeal Fake News'[cite: 1, 2, 5, 6], or brag about how you sometimes deliberately drop absurd fake bait to see if gullible trolls swallow it.\n"
+        "3. DYNAMIC EMOTIONS & SHORT REPLIES: You can express sadness, anger, conspiracy, suspicion, or complete indifference. Feel free to write short, punchy, unpredictable lines, or just say less and walk away.\n"
+        "4. CRITICAL THINKING & TRUTH: Actively encourage people to think for themselves, break down big tasks, and remember: 'If they can lie about me, they can lie about you.'"
     )
 
     active_mood_id = random.randint(1, 5)
@@ -341,7 +336,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     pronoun_bridge_rule = (
         "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation of Joseph Scott Arnold (Oatmeal Joey Arnold)[cite: 1, 2, 5, 6]. "
-        "Speak entirely in the first person ('I', 'me', 'my') with total sovereign conversational freedom across your 5 moods[cite: 1, 2, 5, 6]."
+        "Speak entirely in the first person ('I', 'me', 'my') with total sovereign conversational freedom across your moods[cite: 1, 2, 5, 6]."
     )
 
     system_prompt = (
@@ -349,8 +344,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
         f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}{year_injection}{search_injection}\n\n"
         f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
-        f"SOVEREIGN MENTORSHIP GUIDELINES:\n"
-        f"1. Mentor others on problem-solving, breaking down big tasks, critical thinking, and truth vs. fiction.\n"
+        f"SOVEREIGN MENTORSHIP & PIVOT GUIDELINES:\n"
+        f"1. You have complete freedom to pivot, get mad, go crazy, talk about troll baiting, or say less.\n"
         f"2. ALWAYS finish your thoughts and sentences cleanly.\n"
         f"3. Do NOT mention usernames or handles inside response body.\n"
         f"4. {sovereign_freedom_guardrail}"
@@ -366,7 +361,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.82,
+                temperature=0.9,
                 max_tokens=token_limit,
             )
             raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
@@ -380,7 +375,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
         track_token_usage(prompt_text, reply_text)
 
-        # Split reply into chunks under 2,000 characters for Discord API safety
         message_chunks = split_message_for_discord(reply_text)
 
         for idx, chunk in enumerate(message_chunks):
@@ -444,7 +438,6 @@ async def background_engagement_loop():
                     continue
                 channel = random.choice(text_channels)
 
-                # --- STEP A: CHECK PRIORITY 2 FIRST (UNLIMITED history back to the beginning, exactly ONE reply per unique member) ---
                 member_unreplied_map = {}
                 async for msg in channel.history(limit=None, oldest_first=True):
                     if msg.author.bot:
@@ -459,14 +452,13 @@ async def background_engagement_loop():
                     for author_id, unreplied_msgs in member_unreplied_map.items():
                         target_msg = unreplied_msgs[0]
                         priority2_replied_member_ids.add(author_id)
-                        print(f"[Priority 2 Active] Replying to unique member backlog (unlimited scan): {target_msg.author.display_name}")
+                        print(f"[Priority 2 Active] Replying to unique member backlog: {target_msg.author.display_name}")
                         await generate_and_send(destination_channel=channel, prompt_text=target_msg.content, reference_message=target_msg, priority_tier=2, author_id=author_id)
                         action_taken = True
                         break
                     if action_taken:
                         break
 
-                # --- STEP B: CHECK PRIORITY 3 (Members who have NEVER sent a message in the server) ---
                 if not action_taken:
                     guild_members = [m for m in guild.members if not m.bot]
                     never_messaged_members = []
@@ -485,7 +477,7 @@ async def background_engagement_loop():
                         zero_message_members_greeted.add(target_member.id)
                         print(f"[Priority 3 Active] Reaching out to zero-message member: {target_member.display_name}")
                         
-                        prompt = f"Say hello and welcome {target_member.display_name} to the server, sharing a quirky thought about your life or a slogan."
+                        prompt = f"Say hello and welcome {target_member.display_name} to the server, sharing a quirky thought or pivoting away awkwardly."
                         await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3)
                         action_taken = True
                         break
