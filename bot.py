@@ -106,26 +106,36 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
-# --- CURATED TENOR GIF LINKS ---
+# --- EXPANDED CURATED MULTIMEDIA POOLS (Zero Repetition) ---
 CURATED_GIFS = [
     "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671",
     "https://tenor.com/view/funny-cat-dancing-cat-dance-move-groove-gif-15982859",
     "https://tenor.com/view/homer-simpson-disappear-bush-gif-21360667",
     "https://tenor.com/view/popcorn-eating-popcorn-disaster-gif-13725791",
-    "https://tenor.com/view/mind-blown-tim-and-eric-mind-blown-gif-14545305"
+    "https://tenor.com/view/mind-blown-tim-and-eric-mind-blown-gif-14545305",
+    "https://tenor.com/view/elmo-fire-elmo-hell-rise-of-skynet-gif-5297315",
+    "https://tenor.com/view/Confused-Travolta-Pulp-Fiction-John-Travolta-Where-am-I-gif-4541706",
+    "https://tenor.com/view/pepe-frog-clapping-applause-well-done-gif-17684067",
+    "https://tenor.com/view/dancing-baby-groot-guardians-of-the-galaxy-cute-gif-15828453",
+    "https://tenor.com/view/michael-jackson-popcorn-eating-popcorn-disaster-gif-13725791"
 ]
 
 CURATED_SONGS = [
-    "https://www.youtube.com/watch?v=jfKfPfyJRdk",
-    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-    "https://suno.com/@oatmealjoeyarnold",
-    "https://www.youtube.com/watch?v=5qap5aO4i9A"
+    "https://www.youtube.com/watch?v=jfKfPfyJRdk",  # Lofi Girl Beats
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",  # Rickroll
+    "https://suno.com/@oatmealjoeyarnold",            # Suno AI
+    "https://www.youtube.com/watch?v=5qap5aO4i9A",  # Lofi study
+    "https://www.youtube.com/watch?v=4xDzrJKXOOY",  # Synthwave Radio
+    "https://www.youtube.com/watch?v=MV_3Dpw-BRY",  # Chillhop
+    "https://www.youtube.com/watch?v=7NOS8R0FPvA"   # Classical Piano Lofi
 ]
 
 CURATED_VIDEOS = [
     "https://www.youtube.com/watch?v=jfKfPfyJRdk",
     "https://www.youtube.com/watch?v=5qap5aO4i9A",
-    "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://www.youtube.com/watch?v=9bZkp7q19f0",  # Gangnam Style
+    "https://www.youtube.com/watch?v=kJQP7kiw5Fk"   # Despacito
 ]
 
 INSPIRATIONAL_THEMES = [
@@ -133,7 +143,9 @@ INSPIRATIONAL_THEMES = [
     "trying to backup my over 30,000+ videos before I get banned again",
     "wondering if Kathy stole my bike or did I steal her bike?",
     "my guinea pig is eating up all my oatmeal if you know what I mean",
-    "battling lolcow trolls who've been spreading Oatmeal Fake News since 2009"
+    "battling lolcow trolls who've been spreading Oatmeal Fake News since 2009",
+    "rebuilding the Arnold Attic shed in Forest Grove",
+    "testing my Ironic Mystic universal game console concept"
 ]
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
@@ -227,7 +239,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # --- DIRECT MESSAGE DISPATCH FOR GIFS AND MEDIA ---
+    # --- DYNAMIC RANDOMIZED MULTIMEDIA DISPATCH (Zero Repeats) ---
     if any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"]):
         chosen_gif = random.choice(CURATED_GIFS)
         media_reply_text = f"Here’s your visual drop 🎬 {chosen_gif}"
@@ -425,49 +437,35 @@ async def background_engagement_loop():
                 await asyncio.sleep(sleep_seconds)
                 continue
 
-            # --- PRIORITY 2: Limitless Multi-Channel History Scan ---
-            target_message = None
-            target_channel = None
-
+            # --- AUTONOMOUS UNPROMPTED SPONTANEOUS POSTING (GIF, MUSIC, OR TEXT RIFF) ---
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                for channel in text_channels:
-                    try:
-                        async for message in channel.history(limit=None, oldest_first=True):
-                            if message.author.bot:
-                                continue
-                            if message.id in replied_message_ids:
-                                continue
-                            if message.content.strip():
-                                target_message = message
-                                target_channel = channel
-                                break
-                    except Exception:
-                        continue
-                    if target_message:
-                        break
-                if target_message:
+                if not text_channels:
+                    continue
+                channel = random.choice(text_channels)
+                
+                # Roll a random chance for what kind of unprompted post to make (GIF, Music, Video, or Autonomous Riff)
+                roll = random.random()
+                if roll < 0.25:
+                    # Drop a random unprompted GIF
+                    chosen_gif = random.choice(CURATED_GIFS)
+                    await channel.send(f"Just felt like dropping a random visual treat 🎬 {chosen_gif}")
                     break
-
-            if target_message and target_channel:
-                clean_prompt = f"React to this archived message from the server: '{target_message.content}'"
-                await generate_and_send(destination_channel=target_channel, prompt_text=clean_prompt, reference_message=target_message, priority_tier=2, author_id=target_message.author.id)
-            else:
-                # --- PRIORITY 3: Strict Fallback ---
-                for guild in bot.guilds:
-                    text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                    if not text_channels:
-                        continue
-                    channel = random.choice(text_channels)
-                    if guild.members:
-                        untouched_members = [m for m in guild.members if not m.bot and m.id not in lifetime_interacted_members]
-                        if untouched_members:
-                            target_member = random.choice(untouched_members)
-                            lifetime_interacted_members.add(target_member.id)
-
-                            prompt = f"Say something witty, random, or welcoming to a server member who has never interacted with you before."
-                            await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3, author_id=target_member.id)
-                            break
+                elif roll < 0.45:
+                    # Drop a random unprompted music stream
+                    chosen_song = random.choice(CURATED_SONGS)
+                    await channel.send(f"🎵 Unprompted Oatmeal FM vibes coming your way right now: {chosen_song}")
+                    break
+                elif roll < 0.65:
+                    # Drop a random unprompted YouTube video
+                    chosen_vid = random.choice(CURATED_VIDEOS)
+                    await channel.send(f"Here is a completely random video find 📹 {chosen_vid}")
+                    break
+                else:
+                    # Standard autonomous text riff
+                    prompt = "Say something completely random, witty, or spontaneous about your day, your projects, or life."
+                    await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, priority_tier=2)
+                    break
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
