@@ -106,13 +106,12 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
-# --- CURATED TENOR GIFS & MEDIA (Guaranteed rich auto-embed in Discord via newline) ---
+# --- DIRECT GIF CDN LINKS (Guaranteed rendering via discord.Embed) ---
 CURATED_GIFS = [
-    "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671",
-    "https://tenor.com/view/funny-cat-dancing-cat-dance-move-groove-gif-15982859",
-    "https://tenor.com/view/homer-simpson-disappear-bush-gif-21360667",
-    "https://tenor.com/view/popcorn-eating-popcorn-disaster-gif-13725791",
-    "https://tenor.com/view/mind-blown-tim-and-eric-mind-blown-gif-14545305"
+    "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3BFZHVQNEw5SHFPNHZQT1EmZXA9djFfaW50ZXJuYWxfZ2lmX2J5X2lkJmN0PWc/3oEdvP4L9HqO4vPOQ/giphy.gif",
+    "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExMHBsUm5BV1h4bk1oT0JLJmN0PWc/l0HlRnAWXxn0MhOBK/giphy.gif",
+    "https://c.tenor.com/2roovA32R38AAAAC/tenor.gif",
+    "https://c.tenor.com/x8v1oNUOmg4AAAAd/rickroll-roll.gif"
 ]
 
 CURATED_SONGS = [
@@ -227,19 +226,29 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # --- REAL MULTIMEDIA / YOUTUBE / FM BOT / TENOR GIF DISPATCH (Newline enforced for embeds) ---
-    media_reply_text = None
+    # --- NATIVE DISCORD.EMBED DISPATCH FOR GIFS AND MEDIA ---
     if any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"]):
         chosen_gif = random.choice(CURATED_GIFS)
-        media_reply_text = f"Here’s your visual drop 🎬\n{chosen_gif}"
+        embed = discord.Embed(title="Here's your visual drop 🎬", color=0xFF69B4)
+        embed.set_image(url=chosen_gif)
+        if reference_message:
+            await reference_message.reply(embed=embed, mention_author=True)
+        else:
+            await destination_channel.send(embed=embed)
+        return
+
     elif any(k in text_lower for k in ["youtube", "video", "vids", "clip", "watch"]):
         chosen_vid = random.choice(CURATED_VIDEOS)
         media_reply_text = f"Here’s a video fresh off the digital presses 📹\n{chosen_vid}"
+        if reference_message:
+            await reference_message.reply(media_reply_text, mention_author=True)
+        else:
+            await destination_channel.send(media_reply_text)
+        return
+
     elif any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune"]):
         chosen_song = random.choice(CURATED_SONGS)
         media_reply_text = f"🎵 Tuning into the Oatmeal FM frequency right now:\n{chosen_song}"
-
-    if media_reply_text:
         if reference_message:
             await reference_message.reply(media_reply_text, mention_author=True)
         else:
