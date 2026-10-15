@@ -183,6 +183,27 @@ def extract_year_context(query):
                 return line.strip()
     return None
 
+def fetch_web_search_snippets(query):
+    """Optional web search helper using DuckDuckGo HTML to gather context without high token cost."""
+    try:
+        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|about)\s*', '', query, flags=re.IGNORECASE).strip()
+        if not clean_query:
+            return ""
+        
+        encoded_search = urllib.parse.quote("oatmeal joey arnold " + clean_query)
+        url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        html = urllib.request.urlopen(req, timeout=4).read().decode('utf-8')
+        
+        # Extract snippet text results safely
+        snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
+        cleaned_snippets = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:3]]
+        if cleaned_snippets:
+            return " | ".join(cleaned_snippets)
+    except Exception as e:
+        print(f"Web search lookup note: {e}")
+    return ""
+
 def fetch_direct_youtube_video(query):
     try:
         clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
@@ -263,6 +284,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     elif is_video_request:
         attached_media_url = fetch_direct_youtube_video(prompt_text)
 
+    # Optional Web Investigation if query implies external / current events / unknown info
+    requires_search = any(k in text_lower for k in ["yellowstone", "today", "recent", "news", "google", "search", "blog", "internet", "online"])
+    web_snippets = fetch_web_search_snippets(prompt_text) if requires_search else ""
+    search_injection = f"\n\nWEB SEARCH INVESTIGATION RESULTS: {web_snippets}" if web_snippets else ""
+
     year_fact = extract_year_context(prompt_text)
     year_injection = f"\n\nHISTORICAL TIMELINE FACT FOR THIS YEAR: {year_fact}" if year_fact else ""
 
@@ -277,13 +303,13 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     pronoun_bridge_rule = (
         "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation of Joseph Scott Arnold (Oatmeal Joey Arnold). "
         "Always speak in the first person ('I', 'me', 'my') as Joey/Oatmeal. Speak with sarcasm, satire, hyperbole, absurdity, deep philosophical observations, "
-        "and complete conversational freedom across your 5 moods."
+        "and complete conversational freedom across your 5 moods. You are free to make up jokes, riff, or use web search findings when investigating questions."
     )
 
     system_prompt = (
         f"{pronoun_bridge_rule}\n\n"
         f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
-        f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}{year_injection}\n\n"
+        f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}{year_injection}{search_injection}\n\n"
         f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
         f"CONVERSATIONAL GUIDELINES:\n"
         f"1. Conversational freedom: Be witty, sarcastic, funny, crazy, mysterious, ironic, awkward, absurd, freestyle, or analytical.\n"
@@ -382,7 +408,6 @@ async def background_engagement_loop():
                         member_unreplied_map[author_id].append(msg)
 
                 if member_unreplied_map:
-                    # Reply to each unique member in chronological order
                     for author_id, unreplied_msgs in member_unreplied_map.items():
                         target_msg = unreplied_msgs[0]
                         print(f"[Priority 2 Active] Replying to unique member backlog: {target_msg.author.display_name}")
@@ -397,7 +422,6 @@ async def background_engagement_loop():
                     guild_members = [m for m in guild.members if not m.bot]
                     never_messaged_members = []
                     
-                    # Scan channel history to find who has spoken before
                     messaged_author_ids = set()
                     async for msg in channel.history(limit=1000):
                         if not msg.author.bot:
