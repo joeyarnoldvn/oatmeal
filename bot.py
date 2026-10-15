@@ -5,6 +5,7 @@ import asyncio
 import threading
 import random
 import urllib.parse
+import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from openai import OpenAI
@@ -173,21 +174,51 @@ async def on_ready():
     print(f"Oatmeal AI logged in successfully as {bot.user}")
     bot.loop.create_task(background_engagement_loop())
 
-def generate_dynamic_search_url(query_type, user_prompt):
-    """Dynamically builds tailored search URLs on the fly using LLM query extraction."""
-    # Strip common command filler words to get the pure search query topic
-    clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', user_prompt, flags=re.IGNORECASE).strip()
-    if not clean_query:
-        clean_query = random.choice(INSPIRATIONAL_THEMES)
+def fetch_direct_youtube_video(query):
+    """Dynamically scrapes YouTube search in real-time to return a single direct playable video URL."""
+    try:
+        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
+        if not clean_query:
+            clean_query = "oatmeal joey arnold"
+        
+        encoded_search = urllib.parse.quote(clean_query)
+        url = f"https://www.youtube.com/results?search_query={encoded_search}"
+        
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        )
+        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+        video_ids = re.findall(r"watch\?v=(\w{11})", html)
+        if video_ids:
+            return f"https://www.youtube.com/watch?v={video_ids[0]}"
+    except Exception as e:
+        print(f"YouTube live fetch error: {e}")
+    return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
-    encoded_query = urllib.parse.quote(clean_query)
-
-    if query_type == "gif":
-        return f"https://tenor.com/search/{encoded_query}-gifs"
-    elif query_type == "song":
-        return f"https://www.youtube.com/results?search_query={encoded_query}+audio+song+fm"
-    else:  # video
-        return f"https://www.youtube.com/results?search_query={encoded_query}"
+def fetch_direct_tenor_gif(query):
+    """Dynamically scrapes Tenor in real-time to return a single direct gif page URL that Discord renders as an inline animated GIF."""
+    try:
+        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
+        if not clean_query:
+            clean_query = "funny dance"
+        
+        encoded_search = urllib.parse.quote(clean_query)
+        url = f"https://tenor.com/search/{encoded_search}-gifs"
+        
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        )
+        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+        gif_paths = re.findall(r'href="(/view/[^"]+)"', html)
+        if gif_paths:
+            # Pick randomly from top 3 live results for dynamic variety
+            chosen_path = random.choice(gif_paths[:3])
+            return f"https://tenor.com{chosen_path}"
+    except Exception as e:
+        print(f"Tenor live fetch error: {e}")
+    return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
     global replied_message_ids, lifetime_interacted_members
@@ -223,14 +254,14 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # --- FULLY DYNAMIC MEDIA DISPATCH (Zero Canned Files / True Freedom) ---
+    # --- REAL-TIME LIVE DYNAMIC MEDIA DISPATCH (Direct Playable Embeds) ---
     is_song_request = any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune"])
     is_video_request = any(k in text_lower for k in ["youtube", "video", "vids", "clip", "watch"])
     is_gif_request = any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"])
 
     if is_gif_request and not is_song_request and not is_video_request:
-        dynamic_url = generate_dynamic_search_url("gif", prompt_text)
-        media_reply_text = f"🎬 Generated your dynamic visual search drop: {dynamic_url}"
+        gif_url = fetch_direct_tenor_gif(prompt_text)
+        media_reply_text = f"🎬 Live GIF drop fresh off the net: {gif_url}"
         if reference_message:
             await reference_message.reply(media_reply_text, mention_author=True)
         else:
@@ -238,8 +269,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         return
 
     elif is_song_request and not is_video_request:
-        dynamic_url = generate_dynamic_search_url("song", prompt_text)
-        media_reply_text = f"🎵 Tuned into the Oatmeal FM dynamic frequency: {dynamic_url}"
+        song_url = fetch_direct_youtube_video(prompt_text + " song audio")
+        media_reply_text = f"🎵 Tuned into Oatmeal FM frequency: {song_url}"
         if reference_message:
             await reference_message.reply(media_reply_text, mention_author=True)
         else:
@@ -247,8 +278,8 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         return
 
     elif is_video_request:
-        dynamic_url = generate_dynamic_search_url("video", prompt_text)
-        media_reply_text = f"📹 Fresh dynamic video search off the digital presses: {dynamic_url}"
+        video_url = fetch_direct_youtube_video(prompt_text)
+        media_reply_text = f"📹 Playable video drop: {video_url}"
         if reference_message:
             await reference_message.reply(media_reply_text, mention_author=True)
         else:
@@ -425,7 +456,7 @@ async def background_engagement_loop():
                 await asyncio.sleep(sleep_seconds)
                 continue
 
-            # --- AUTONOMOUS UNPROMPTED SPONTANEOUS POSTING (Dynamic Media or Riff) ---
+            # --- AUTONOMOUS UNPROMPTED SPONTANEOUS POSTING (Live Direct Media or Riff) ---
             for guild in bot.guilds:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not text_channels:
@@ -435,18 +466,18 @@ async def background_engagement_loop():
                 roll = random.random()
                 if roll < 0.25:
                     theme = random.choice(INSPIRATIONAL_THEMES)
-                    dynamic_url = generate_dynamic_search_url("gif", theme)
-                    await channel.send(f"Just felt like dropping a spontaneous dynamic visual search for {theme} 🎬 {dynamic_url}")
+                    gif_url = fetch_direct_tenor_gif(theme)
+                    await channel.send(f"Spontaneous visual drop on {theme} 🎬 {gif_url}")
                     break
                 elif roll < 0.45:
                     theme = random.choice(INSPIRATIONAL_THEMES)
-                    dynamic_url = generate_dynamic_search_url("song", theme)
-                    await channel.send(f"🎵 Unprompted Oatmeal FM dynamic frequencies rolling on {theme}: {dynamic_url}")
+                    song_url = fetch_direct_youtube_video(theme + " song audio")
+                    await channel.send(f"🎵 Dynamic Oatmeal FM tune live on the airwaves: {song_url}")
                     break
                 elif roll < 0.65:
                     theme = random.choice(INSPIRATIONAL_THEMES)
-                    dynamic_url = generate_dynamic_search_url("video", theme)
-                    await channel.send(f"Here is a completely random dynamic video search find about {theme} 📹 {dynamic_url}")
+                    video_url = fetch_direct_youtube_video(theme)
+                    await channel.send(f"Spontaneous video discovery 📹 {video_url}")
                     break
                 else:
                     prompt = "Say something completely random, witty, or spontaneous about your day, your projects, or life."
