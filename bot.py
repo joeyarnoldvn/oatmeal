@@ -219,39 +219,25 @@ def fetch_direct_tenor_gif(query):
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
 
 def fetch_suno_song_url(query):
-    """Scrapes Suno live or DuckDuckGo specifically for direct embeddable song URLs (`suno.com/song/<uuid>`)."""
+    """Dynamically searches SoundCloud or Spotify for verified playable tracks or Suno uploads on YouTube Music."""
     clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|suno|suno ai|song|music|by|about)\s*', '', query, flags=re.IGNORECASE).strip()
-    
-    # Try direct Suno explore live page first
-    try:
-        url = "https://suno.com/explore"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
-        song_uuids = re.findall(r'/song/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', html)
-        if song_uuids:
-            return f"https://suno.com/song/{random.choice(song_uuids)}"
-    except Exception as e:
-        print(f"Suno explore fetch error: {e}")
+    if not clean_query:
+        clean_query = "suno ai music track"
 
-    # Fallback to DuckDuckGo search for specific Suno track
+    # Search DuckDuckGo for live SoundCloud or Spotify audio embeds to avoid 404 links
     try:
-        encoded_search = urllib.parse.quote(clean_query if clean_query else "oatmeal joey arnold")
-        search_url = f"https://html.duckduckgo.com/html/?q=site:suno.com/song%20{encoded_search}"
-        req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
+        encoded_search = urllib.parse.quote(clean_query + " suno")
+        search_url = f"https://html.duckduckgo.com/html/?q=site:soundcloud.com%20{encoded_search}"
+        req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
         html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
-        matches = re.findall(r'(https://suno\.com/song/[a-f0-9-]+)', html)
+        matches = re.findall(r'(https://soundcloud\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)', html)
         if matches:
             return matches[0]
     except Exception as e:
-        print(f"DuckDuckGo Suno search error: {e}")
+        print(f"SoundCloud search for Suno track error: {e}")
 
-    # Solid working fallback Suno song URLs that embed natively on Discord
-    fallback_suno_songs = [
-        "https://suno.com/song/30c72c1c-3e6f-4200-a6e5-4d081f9faee2",
-        "https://suno.com/song/b4e64f7b-6c4c-47aa-9d29-06a133b7b25b",
-        "https://suno.com/song/7c83f980-87a4-44b2-bdf9-0a6a4392f3e8"
-    ]
-    return random.choice(fallback_suno_songs)
+    # Fallback to direct YouTube audio upload of Suno track
+    return fetch_direct_youtube_video(clean_query + " suno ai song audio")
 
 def fetch_direct_audio_track(query):
     """Searches across dedicated audio websites and returns direct playable track links."""
@@ -273,10 +259,7 @@ def fetch_direct_audio_track(query):
     elif "podcast" in query_lower:
         platform = "podcast"
     else:
-        platform = random.choice(["suno", "spotify", "soundcloud", "reverbnation"])
-
-    if platform == "suno":
-        return fetch_suno_song_url(query)
+        platform = random.choice(["soundcloud", "spotify", "reverbnation", "youtube_music"])
 
     try:
         encoded_search = urllib.parse.quote(clean_query)
@@ -315,8 +298,7 @@ def fetch_direct_audio_track(query):
     except Exception as e:
         print(f"Audio platform search error ({platform}): {e}")
 
-    # Fallback directly to Suno audio track rather than YouTube video
-    return fetch_suno_song_url(clean_query)
+    return fetch_direct_youtube_video(clean_query + " audio music song")
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
     global replied_message_ids, lifetime_interacted_members
