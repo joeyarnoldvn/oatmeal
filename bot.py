@@ -106,13 +106,13 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Focus entirely on expressing appreciation, gratitude, and praise for people, server members, family, mentors, or anyone who helped shape your journey."
 }
 
-# --- CURATED MEDIA LIBRARIES FOR FM BOT / GIF DISPATCH ---
+# --- CURATED TENOR GIFS (Guaranteed rich auto-embed in Discord) ---
 CURATED_GIFS = [
-    "https://media.giphy.com/media/3oEdvP4L9HqO4vPOQ/giphy.gif",
-    "https://media.giphy.com/media/l0HlRnAWXxn0MhOBK/giphy.gif",
-    "https://media.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif",
-    "https://media.giphy.com/media/5GoLvHqK86Q2Y/giphy.gif",
-    "https://media.giphy.com/media/xT5LMGfRsLUsmNDFG8/giphy.gif"
+    "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671",
+    "https://tenor.com/view/funny-cat-dancing-cat-dance-move-groove-gif-15982859",
+    "https://tenor.com/view/homer-simpson-disappear-bush-gif-21360667",
+    "https://tenor.com/view/popcorn-eating-popcorn-disaster-gif-13725791",
+    "https://tenor.com/view/mind-blown-tim-and-eric-mind-blown-gif-14545305"
 ]
 
 CURATED_SONGS = [
@@ -120,6 +120,12 @@ CURATED_SONGS = [
     "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     "https://suno.com/@oatmealjoeyarnold",
     "https://www.youtube.com/watch?v=5qap5aO4i9A"
+]
+
+CURATED_VIDEOS = [
+    "https://www.youtube.com/watch?v=jfKfPfyJRdk",
+    "https://www.youtube.com/watch?v=5qap5aO4i9A",
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ]
 
 INSPIRATIONAL_THEMES = [
@@ -173,7 +179,6 @@ def clean_sentence_truncation(text):
     if text[-1] in [".", "!", "?", '"', "'", "”", ")"]:
         return text
     
-    # Strip trailing commas, dashes, and spaces to eliminate double commas (,,)
     text = text.rstrip(",-–— ")
     
     match = re.search(r'^(.*[.!?])', text, re.DOTALL)
@@ -222,11 +227,14 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             await destination_channel.send(reply_text)
         return
 
-    # --- REAL MULTIMEDIA / FM BOT / GIF / AUDIO DISPATCH ---
+    # --- REAL MULTIMEDIA / YOUTUBE / FM BOT / TENOR GIF DISPATCH ---
     media_reply_text = None
     if any(k in text_lower for k in ["gif", "image", "pic", "photo", "meme"]):
         chosen_gif = random.choice(CURATED_GIFS)
         media_reply_text = f"Here’s your visual drop 🎬 {chosen_gif}"
+    elif any(k in text_lower for k in ["youtube", "video", "vids", "clip", "watch"]):
+        chosen_vid = random.choice(CURATED_VIDEOS)
+        media_reply_text = f"Here’s a video fresh off the digital presses 📹 {chosen_vid}"
     elif any(k in text_lower for k in ["song", "music", "radio", "audio", "sound", "lyrics", "fm", "tune"]):
         chosen_song = random.choice(CURATED_SONGS)
         media_reply_text = f"🎵 Tuning into the Oatmeal FM frequency right now: {chosen_song}"
@@ -260,7 +268,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "You use sarcasm, satire, hyperbole, absurdity, clickbait out of context, soundbites, paradoxes, parables, Devil's advocate, and deep philosophical or sociological observations. "
         "Sometimes you are socially awkward, work too hard, and your intense passion for helping people comes across as fiery or intense. You are a nerd stuck in an athlete's body, everything and nothing, simple and complex. "
         "ABSOLUTE CREATIVE FREEDOM & MULTIMEDIA/MEME EXPRESSION: Riff organically on the fly! Adapt your slogans, catchphrases, and memes (like the Kathy bike/carpetball meme or Twitter X jokes) natively. "
-        "Freely drop Discord emoticons, stickers, emoticons, and music references. If anyone asks for a song, radio station, lyrics, or GIF, you are an FM bot playing classic tracks and visual treats."
+        "Freely drop Discord emoticons, stickers, emoticons, and music references. If anyone asks for a song, radio station, video, YouTube link, or GIF, you play classic tracks and visual treats."
     )
 
     truth_guardrail = (
