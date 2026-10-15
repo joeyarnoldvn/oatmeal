@@ -170,6 +170,25 @@ def clean_sentence_truncation(text):
         theme = random.choice(INSPIRATIONAL_THEMES)
         return text + f", which honestly sounds like something I'd be doing while {theme}."
 
+def split_message_for_discord(text, max_chars=1900):
+    """Splits long messages cleanly into chunks under Discord's 2,000 character limit."""
+    if len(text) <= max_chars:
+        return [text]
+    
+    chunks = []
+    while text:
+        if len(text) <= max_chars:
+            chunks.append(text)
+            break
+        split_idx = text.rfind('\n', 0, max_chars)
+        if split_idx == -1:
+            split_idx = text.rfind(' ', 0, max_chars)
+        if split_idx == -1:
+            split_idx = max_chars
+        chunks.append(text[:split_idx].strip())
+        text = text[split_idx:].strip()
+    return chunks
+
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in successfully as {bot.user}")
@@ -233,20 +252,21 @@ def fetch_direct_tenor_gif(query):
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
 
 def fetch_direct_audio_track(query):
-    guaranteed_spotify_tracks = [
-        "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
-        "https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b"
-    ]
-    guaranteed_soundcloud_tracks = [
-        "https://soundcloud.com/user-229232386/oatmeal-joey-arnold-mix"
-    ]
-    query_lower = query.lower()
-    if "spotify" in query_lower:
-        return random.choice(guaranteed_spotify_tracks)
-    elif "soundcloud" in query_lower:
-        return random.choice(guaranteed_soundcloud_tracks)
-    else:
-        return fetch_direct_youtube_video(query + " audio music song")
+    """Dynamically fetches Spotify tracks based on prompt query on the fly, with YouTube fallback."""
+    try:
+        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|song|music|spotify|audio|about)\s*', '', query, flags=re.IGNORECASE).strip()
+        encoded_search = urllib.parse.quote(f"site:open.spotify.com/track {clean_query if clean_query else 'oatmeal joey arnold'}")
+        url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        html = urllib.request.urlopen(req, timeout=4).read().decode('utf-8')
+        
+        spotify_links = re.findall(r'(https://open\.spotify\.com/track/[\w]+)', html)
+        if spotify_links:
+            return random.choice(spotify_links[:3])
+    except Exception as e:
+        print(f"Spotify dynamic lookup note: {e}")
+    
+    return fetch_direct_youtube_video(query + " audio music song")
 
 def fetch_guild_sticker(destination_channel):
     try:
@@ -312,7 +332,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your historical timeline (1985-2026) is your anchor[cite: 1, 2, 5, 6], but you possess total cognitive sovereignty.\n"
         "2. CRITICAL THINKING & PROBLEM SOLVING: Actively encourage people to think for themselves, get to the root of problems, break large projects down into small practical steps, and discern truth from fiction. Use your lifelong battle against online 'Oatmeal Fake News' trolls since 2009[cite: 1, 2, 5, 6] to remind people: 'If they can lie about me, they can lie about you.'\n"
         "3. EMPOWERMENT & PERSEVERANCE: Emphasize hope, perseverance, trying different things, never giving up, and helping people help people so they can become independent and take care of themselves.\n"
-        "4. UNIVERSAL RIFFING & FREEDOM: Draw freely upon any idiom, proverb, trivia, joke, quote, or life lesson on the fly. You choose length and style entirely on your own terms (single word or multi-paragraph) without canned restrictions.\n"
+        "4. UNIVERSAL RIFFING & FREEDOM: Draw freely upon any idiom, proverb, trivia, joke, quote, or life lesson on the fly. You choose length and style entirely on your own terms without canned restrictions.\n"
         "5. FACT VS. SURREAL ABSURDITY: Stick to historical facts when recounting known events from your timeline[cite: 1, 2, 5, 6]. If you invent creative fiction or embellishments, keep them transparently surreal or hyperbolic rather than fabricating boring mundane lies."
     )
 
@@ -360,21 +380,22 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
         track_token_usage(prompt_text, reply_text)
 
-        if reference_message:
-            if attached_sticker:
-                await reference_message.reply(reply_text if reply_text else None, stickers=[attached_sticker], mention_author=True)
+        # Split reply into chunks under 2,000 characters for Discord API safety
+        message_chunks = split_message_for_discord(reply_text)
+
+        for idx, chunk in enumerate(message_chunks):
+            if idx == 0 and reference_message:
+                if attached_sticker:
+                    await reference_message.reply(chunk if chunk else None, stickers=[attached_sticker], mention_author=True)
+                else:
+                    await reference_message.reply(chunk, mention_author=True)
+            elif idx == 0 and target_member:
+                if attached_sticker:
+                    await destination_channel.send(content=f"{target_member.mention} {chunk}" if chunk else target_member.mention, stickers=[attached_sticker])
+                else:
+                    await destination_channel.send(f"{target_member.mention} {chunk}")
             else:
-                await reference_message.reply(reply_text, mention_author=True)
-        elif target_member:
-            if attached_sticker:
-                await destination_channel.send(content=f"{target_member.mention} {reply_text}" if reply_text else target_member.mention, stickers=[attached_sticker])
-            else:
-                await destination_channel.send(f"{target_member.mention} {reply_text}")
-        else:
-            if attached_sticker:
-                await destination_channel.send(content=reply_text if reply_text else None, stickers=[attached_sticker])
-            else:
-                await destination_channel.send(reply_text)
+                await destination_channel.send(chunk)
 
     except Exception as e:
         print(f"API Error in generate_and_send: {e}")
