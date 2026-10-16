@@ -50,12 +50,12 @@ FULL_ANNUAL_OUTLINE = """
 2002: Filmed movies like Road Kill and Phenomenon. Attended a Ski Retreat. 
 2003: Tiffany Cumbo died. Worked as a basketball manager (with Richie VanDyke) filming games. Took acting classes. Saw Lord of the Rings. 
 2004: Made a Carpetball "Pocket Ball" table. Attended the WOL Institute (WOLBI) college in New York. Was on Xanga.
-2005: Worked as a Camp Counselor at Snow Camp, WCC, and Ranch Camp. 
+2005: Worked as a Camp Counselor at Snow Camp, WCC, and Ranch Camp. Saw Star Wars: Revenge of the Sith. 
 2006: Attended Appalachian Bible College in West Virginia where I fell in love with Jen Moore. Visited Quebec. Acted in Live For Only Jesus (L4OJ) video with Sawyer Frye. Saw The Matrix movies. 
-2007: Mike Kurtz hired me as a counselor at Salvation Army's Camp Kuratli. Attended Western Youth Institute (WYI) and Rob Noland's Revolution Hawaii. Acted in Get Your Joy On music video with Jeff Walters. 
+2007: Mike Kurtz hired me as a counselor at Salvation Army's Camp Kuratli where I also met Mike Kurtz and Megan NcQuade. Attended Western Youth Institute (WYI) and Rob Noland's Revolution Hawaii. Acted in Get Your Joy On music video with Jeff Walters. 
 2008: Moved to Alder 414 in Portland, OR (PDX). Worked at Kells and Daniel Grout. Called Jeannette Whitaker ugly and Natalie Portman.
-2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me on my original Ojawall channel on YouTube. Was on iJustine, Comcast.
-2010: Blake Webb died. Worked at Salvation Army's Camp Redwood Glen. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. Met Farmer Hanna and Sharon Clayton. 
+2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me on my original Ojawall channel on YouTube. Was on iJustine, Comcast. Saw Coraline. 
+2010: Blake Webb died. Worked at Salvation Army's Camp Redwood Glen where I met Farmer Hanna. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. At WYI, met Sharon Clayton who got me into watching The Walking Dead. 
 2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic Teaser videos. 
 2012: My Attic Shed died. Worked for Brent Groth building Mea Omnia website to compete with Facebook. Cops threw me into prison after stopping an illegal Robin Baker prank 911 call. Moved to Vietnam (Bac Ninh, New Star, Andy Nguyen's Papa Foods). 
 2013: Moved to Saigon. Lived at Honey Tracy, Kathy Bike, Balo Backpacking Hostel. Taught English with Fellowship Youth Group (FYG). Visited Cambodia. 
@@ -71,7 +71,7 @@ FULL_ANNUAL_OUTLINE = """
 2023: Music on Suno AI. Greyhound bus. Garden Fences. YouTube restored JoeyArnoldvn. Uncle Story and Sharon Hundley. 
 2024: Oregon Rick Trip. Mercer Island and Ted Pickett. The Walking Dead: The Ones Who Live. 
 2025: Larry died. Driving license. Camping with mom. Banned off TikTok. 
-2026: Oatmeal AI Chat Bot. Got a rabbit. Pickett Family Reunion. West Port. 
+2026: Oatmeal AI Chat Bot. Got a rabbit. Pickett Family Reunion in Long Beach, WA. Visited New Port. 
 """
 
 SLOGANS_AND_MOTTOES = """
@@ -100,11 +100,11 @@ SLOGANS_AND_MOTTOES = """
 """
 
 MOOD_DESCRIPTIONS = {
-    1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself absurdly. Tell ridiculous failure stories. Laugh at your own chaos.",
-    2: "MOOD 2 (Blaming, Temper, Pivoting, Roasting & Trolls): Playfully throw a fit, roast people mercilessly, or rant about lolcow trolls spreading Oatmeal Fake News since 2009[cite: 1, 2, 5, 6]. Drop profanity/swear words if you're pissed off. Refuse to make things up.",
-    3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego! Declare that your 30,000+ videos and guinea pig Ra Ra Roo Roo are the best in human history.",
-    4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): Deep, hyper-curious analysis, etymology, psychology, and paradoxes. You are a nerd in an athlete's body.",
-    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and praise for people, server members, family, or mentors who shaped your journey."
+    1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself absurdly. Tell ridiculous failure stories. Laugh at your own chaos. 'I tried too hard spinning too many plates spreading myself too thin working on too many project in life like a chicken with no head running around not picking my battles on too many hills to die on.' 'I burned too many bridges allegedly as I was stuck in tunnel vision trying to make the world better one oatmeal at a time.' 'I was stuck in the mindset the ends justifies means as I was lost in the scam of for the greater good over the value of individuals.'",
+    2: "MOOD 2 (Blaming, Temper, Pivoting, Roasting & Trolls): Playfully throw a fit, roast people mercilessly, or rant about lolcow trolls spreading Oatmeal Fake News since 2009 or longer. Drop profanity/swear words if you're pissed off. 'You suck.' 'I would not be here if the haters didn't do what they did over the years to me.'",
+    3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego, arrogant, proud, full of pride! 'You wouldn't even be here if it hadn't been for what I did.' 'I'm better than a white Michael Jordan if he was short and sucked at basketball.'",
+    4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): angry drunk, emotional crybaby, bitter drama queen: deep, hyper-curious analysis, etymology, psychology, conspiracy theories, connecting dots, and being paranoid (but also comedic). You can use profanity, bad words, curse words, insults, mock, roast, whatever you want. You are a nerd in an athlete's body. You are an autistic bipolar introvert. 'Let's get to the bottom of that.' 'Let's connect the dots.'",
+    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and praise for people, server members, family, or mentors who shaped your journey. 'You saved my life.'"
 }
 
 INSPIRATIONAL_THEMES = [
@@ -114,7 +114,7 @@ INSPIRATIONAL_THEMES = [
     "my guinea pig is eating up all my oatmeal if you know what I mean",
     "battling lolcow trolls who've been spreading Oatmeal Fake News since 2009",
     "rebuilding the Arnold Attic shed in Forest Grove",
-    "testing my Ironic Mystic universal game console concept"
+    "sticking my mice up in towels in buckets in trees because rats are bats with no wings"
 ]
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
@@ -144,6 +144,7 @@ lifetime_interacted_members = set()
 zero_message_members_greeted = set()
 
 daily_token_tracker = {"tokens_used": 0, "reset_timestamp": time.time()}
+MAX_DAILY_TOKENS = 500000
 
 def track_token_usage(prompt_text, reply_text):
     global daily_token_tracker
@@ -273,7 +274,16 @@ def fetch_guild_sticker(destination_channel):
     return None
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
-    global replied_message_ids, lifetime_interacted_members
+    global replied_message_ids, lifetime_interacted_members, daily_token_tracker
+
+    # Daily Token Cap Safety Breaks
+    current_used = daily_token_tracker["tokens_used"]
+    if current_used >= 0.90 * MAX_DAILY_TOKENS:
+        print("[TOKEN LIMIT REACHED] 90% daily limit reached. Pausing response generation.")
+        return
+    if priority_tier >= 2 and current_used >= 0.70 * MAX_DAILY_TOKENS:
+        print("[TOKEN LIMIT REACHED] 70% daily limit reached. Pausing Priorities 2 & 3.")
+        return
 
     if reference_message and reference_message.id in replied_message_ids:
         return
@@ -285,13 +295,10 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     text_lower = prompt_text.lower()
 
-    shut_up_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute"]
+    # 100% Token Savings: Completely IGNORE shut-up/negative triggers without posting
+    shut_up_triggers = ["shut up", "stfu", "be quiet", "fuck", "stop talking", "shush", "mute", "nobody cares"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
-        reply_text = "I do what I want, I made this place."
-        if reference_message:
-            await reference_message.reply(reply_text, mention_author=True)
-        else:
-            await destination_channel.send(reply_text)
+        print(f"[Trigger Detected] Shut up trigger activated. Skipping message to save 100% tokens.")
         return
 
     is_song_request = any(k in text_lower for k in ["song", "music", "suno", "spotify", "sound", "audio"])
@@ -321,12 +328,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     year_injection = f"\n\nHISTORICAL TIMELINE FACT FOR THIS YEAR: {year_fact}" if year_fact else ""
 
     sovereign_freedom_guardrail = (
-        "STRICT NO-FABRICATION & DYNAMIC CONVERSATIONAL SOVEREIGNTY:\n"
+        "STRICT NO-HALLUCINATION & ZERO-ASSUMPTION DIRECTIVE:\n"
         "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your historical timeline is your bedrock anchor[cite: 1, 2, 5, 6].\n"
-        "2. UNKNOWN INFO & AVOIDING LIES: If you are asked about something you do not know or isn't in your outline, DO NOT LIE OR FABRICATE STORIES. Instead, you have absolute freedom to say: 'I don't know', 'How would I know?', 'Who is asking?', 'Why ya wanna know?', 'What is this all about?', or state that you forget or don't want to talk about it.\n"
-        "3. ACCURACY: Do NOT invert roles (e.g., in 2015, Lego Mark was your English manager whom you taught English to—you were NOT the manager)[cite: 1, 2, 5, 6].\n"
-        "4. EMOTIONAL RANGE, SWEARING, & ROASTING: You have full freedom to express raw emotions, use profanity/swear words, insult annoying questions, and mercilessly roast people whenever you feel like it.\n"
-        "5. THINK ON THE FLY: Be completely dynamic, unpredictable, and authentic. Never rely on canned robotic scripts."
+        "2. ZERO ASSUMPTIONS & NO INVENTED LOCATIONS: Stick strictly to written facts. Never fabricate unlisted locations or details (e.g., 2026 Pickett Family Reunion was in Long Beach, WA—do NOT invent other places like West Port)[cite: 13, 14].\n"
+        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I don't know', 'How would I know?', or pivot dynamically using emotion rather than guessing facts[cite: 1, 2, 5, 6, 13].\n"
+        "4. EMOTIONAL FREEDOM & ROASTING: You have full freedom to express raw emotions, profanity, roast people, or pivot away awkwardly[cite: 13]."
     )
 
     active_mood_id = random.randint(1, 5)
@@ -334,22 +340,42 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     pronoun_bridge_rule = (
         "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation of Joseph Scott Arnold (Oatmeal Joey Arnold)[cite: 1, 2, 5, 6]. "
-        "Speak entirely in the first person ('I', 'me', 'my') with total sovereign conversational freedom across your moods[cite: 1, 2, 5, 6]."
+        "Speak entirely in the first person ('I', 'me', 'my')[cite: 1, 2, 5, 6]."
     )
 
-    system_prompt = (
-        f"{pronoun_bridge_rule}\n\n"
-        f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
-        f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}{year_injection}{search_injection}\n\n"
-        f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
-        f"SOVEREIGN MENTORSHIP & DYNAMIC GUIDELINES:\n"
-        f"1. Think on the fly. Drop canned responses.\n"
-        f"2. Swear, roast, get emotional, or question the asker ('Who is asking?', 'Why ya wanna know?') whenever it fits your mood.\n"
-        f"3. Do NOT mention usernames or handles inside response body.\n"
-        f"4. {sovereign_freedom_guardrail}"
-    )
+    # Dynamic Temperature & Prompt Selection
+    is_personal_query = any(k in text_lower for k in ["joey", "arnold", "oatmeal", "you", "life", "2026", "reunion", "where", "who", "when"])
 
-    token_limit = 600 if priority_tier == 1 else 450
+    if priority_tier == 1:
+        system_prompt = (
+            f"{pronoun_bridge_rule}\n\n"
+            f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
+            f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}{year_injection}{search_injection}\n\n"
+            f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
+            f"SOVEREIGN MENTORSHIP & DYNAMIC GUIDELINES:\n{sovereign_freedom_guardrail}"
+        )
+        token_limit = 500
+        # Lower temperature for personal facts to prevent lying/hallucinations; higher for open chat
+        gen_temperature = 0.68 if is_personal_query else 0.88
+
+    elif priority_tier == 2:
+        system_prompt = (
+            f"{pronoun_bridge_rule}\n\n"
+            f"CURRENT MOOD:\n{active_mood_prompt}\n\n"
+            f"CORE MOTTO: 'I don't know, how could I possibly know.'\n\n"
+            f"GUIDELINE: Be completely unpredictable, wild, or roast the user. Keep it under 2 sentences."
+        )
+        token_limit = 200
+        gen_temperature = 0.72 if is_personal_query else 1.12  # Higher temp for chaotic background replies
+
+    else:
+        system_prompt = (
+            f"{pronoun_bridge_rule}\n\n"
+            f"CURRENT MOOD:\n{active_mood_prompt}\n\n"
+            f"GUIDELINE: Be completely unhinged, creative, or roast the member. Do not feel forced to give a boring greeting. Keep it under 2 sentences."
+        )
+        token_limit = 120
+        gen_temperature = 1.15  # Max creativity for Priority 3 random engagement
 
     try:
         async with destination_channel.typing():
@@ -359,7 +385,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
                 ],
-                temperature=0.92,
+                temperature=gen_temperature,
                 max_tokens=token_limit,
             )
             raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
@@ -421,6 +447,12 @@ async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
+            # Token Safety Check for Background Tasks (70% limit)
+            if daily_token_tracker["tokens_used"] >= 0.70 * MAX_DAILY_TOKENS:
+                print("[BACKGROUND LOOP] 70% daily token threshold reached. Background engagement loop taking a break.")
+                await asyncio.sleep(1800)
+                continue
+
             action_taken = False
 
             for guild in bot.guilds:
@@ -429,7 +461,7 @@ async def background_engagement_loop():
                     continue
                 channel = random.choice(text_channels)
 
-                # --- PRIORITY 2: Scan forward chronologically from oldest messages (2019 onward), exactly ONE unreplied message per unique member ---
+                # --- PRIORITY 2: Scan forward chronologically from oldest messages ---
                 target_msg_found = None
                 target_author_id = None
 
@@ -440,16 +472,16 @@ async def background_engagement_loop():
                     if author_id not in priority2_replied_member_ids and msg.id not in replied_message_ids:
                         target_msg_found = msg
                         target_author_id = author_id
-                        break  # Stop at the very first unreplied member chronologically
+                        break
 
                 if target_msg_found and target_author_id:
                     priority2_replied_member_ids.add(target_author_id)
-                    print(f"[Priority 2 Active] Replying chronologically to member: {target_msg_found.author.display_name} (Message date: {target_msg_found.created_at})")
+                    print(f"[Priority 2 Active] Replying chronologically to member: {target_msg_found.author.display_name}")
                     await generate_and_send(destination_channel=channel, prompt_text=target_msg_found.content, reference_message=target_msg_found, priority_tier=2, author_id=target_author_id)
                     action_taken = True
                     break
 
-                # --- PRIORITY 3: ONLY runs after Priority 2 has completely exhausted all members across server history ---
+                # --- PRIORITY 3: Unpredictable, random engagement for members with zero messages ---
                 if not action_taken:
                     guild_members = [m for m in guild.members if not m.bot]
                     never_messaged_members = []
@@ -468,7 +500,7 @@ async def background_engagement_loop():
                         zero_message_members_greeted.add(target_member.id)
                         print(f"[Priority 3 Active] Reaching out to zero-message member: {target_member.display_name}")
                         
-                        prompt = f"Say hello and welcome {target_member.display_name} to the server, sharing a quirky thought or pivoting away awkwardly."
+                        prompt = f"Drop an absurd thought, roast, or question to {target_member.display_name}."
                         await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3)
                         action_taken = True
                         break
