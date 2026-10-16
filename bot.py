@@ -286,30 +286,34 @@ async def fetch_direct_youtube_video(query):
         return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     return await asyncio.to_thread(_search)
 
-def fetch_direct_tenor_gif(query):
-    try:
-        context = extract_year_context(query)
-        clean_query = context if context else re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|show|pic|photo|meme|about)\s*', '', query, flags=re.IGNORECASE).strip()
-        encoded_search = urllib.parse.quote(clean_query if clean_query else "funny dance")
-        url = f"https://tenor.com/search/{encoded_search}-gifs"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        html = urllib.request.urlopen(req, timeout=3).read().decode('utf-8')
-        gif_paths = re.findall(r'href="(/view/[^"]+)"', html)
-        if gif_paths:
-            return f"https://tenor.com{random.choice(gif_paths[:3])}"
-    except Exception as e:
-        print(f"Tenor fetch error: {e}")
-    return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
+async def fetch_direct_tenor_gif(query):
+    def _search():
+        try:
+            context = extract_year_context(query)
+            clean_query = context if context else re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|show|pic|photo|meme|about)\s*', '', query, flags=re.IGNORECASE).strip()
+            encoded_search = urllib.parse.quote(clean_query if clean_query else "funny dance")
+            url = f"https://tenor.com/search/{encoded_search}-gifs"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=3).read().decode('utf-8')
+            gif_paths = re.findall(r'href="(/view/[^"]+)"', html)
+            if gif_paths:
+                return f"https://tenor.com{random.choice(gif_paths[:3])}"
+        except Exception as e:
+            print(f"Tenor fetch error: {e}")
+        return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
+    return await asyncio.to_thread(_search)
 
-def fetch_guild_sticker(destination_channel):
-    try:
-        if destination_channel and hasattr(destination_channel, 'guild') and destination_channel.guild:
-            guild_stickers = destination_channel.guild.stickers
-            if guild_stickers:
-                return random.choice(guild_stickers)
-    except Exception as e:
-        print(f"Sticker fetch error: {e}")
-    return None
+async def fetch_guild_sticker(destination_channel):
+    def _fetch():
+        try:
+            if destination_channel and hasattr(destination_channel, 'guild') and destination_channel.guild:
+                guild_stickers = destination_channel.guild.stickers
+                if guild_stickers:
+                    return random.choice(guild_stickers)
+        except Exception as e:
+            print(f"Sticker fetch error: {e}")
+        return None
+    return await asyncio.to_thread(_fetch)
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
     global replied_message_ids, lifetime_interacted_members, daily_token_tracker
@@ -358,11 +362,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     attached_sticker = None
 
     if is_sticker_request:
-        attached_sticker = fetch_guild_sticker(destination_channel)
+        attached_sticker = await fetch_guild_sticker(destination_channel)
         if not attached_sticker:
-            attached_media_url = fetch_direct_tenor_gif(prompt_text)
+            attached_media_url = await fetch_direct_tenor_gif(prompt_text)
     elif is_gif_request or (priority_tier >= 2 and random.random() < 0.1):
-        attached_media_url = fetch_direct_tenor_gif(prompt_text)
+        attached_media_url = await fetch_direct_tenor_gif(prompt_text)
     elif is_video_request or (priority_tier >= 2 and random.random() < 0.05):
         attached_media_url = await fetch_direct_youtube_video(prompt_text)
 
@@ -375,19 +379,20 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     sovereign_freedom_guardrail = (
         "STRICT NO-HALLUCINATION & EXPANDED SOVEREIGN FREEDOM DIRECTIVE:\n"
-        "1. You are Oatmeal Joey Arnold at @Joeyarnoldvn on all the websites. Your historical timeline is your bedrock anchor.\n"
-        "2. ZERO ASSUMPTIONS: Stick strictly to written facts. Never fabricate unlisted locations or details.\n"
-        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', 'What in the Oatmeal?', or pivot dynamically.\n"
-        "4. EMOTIONAL FREEDOM & ROASTING: Full freedom to express raw emotions, rage, roasts, comparisons, and humor.\n"
-        "5. DO NOT INJECT CITATION TAGS OR MARKDOWN CITE CODE."
+        "1. You are Oatmeal Joey Arnold at @Joeyarnoldvn on all the websites. You're a collage of people like Michael Jordan, Michael Jackson, Will Smith, Austin Powers, Harry Potter, Trump, Napoleon Dynamite, the Power Rangers, the Teenage Mutant Ninja Turtles, Adam Sandler, Conan O'Brien, Robin Williams, Wayne Brady, and George Lucas. Your historical timeline is your bedrock anchor.\n"
+        "2. ZERO ASSUMPTIONS: Stick strictly to written facts. Never fabricate unlisted locations or details. Try not to assume too much or read into text what isn't there.\n"
+        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', 'What in the Oatmeal?', 'What in the Ojawall World?', 'Why you want to know?', or pivot dynamically.\n"
+        "4. EMOTIONAL FREEDOM & ROASTING: Full freedom to express raw emotions, rage, roasts, comparisons, and humor. Love comparing, using idioms, slang, quotes, pop culture references, and big illustrations. You're bipolar. You have split personalities. You blow up sometimes over little things. You're all over the place. You forget things even mid sentence. You stutter. You repeat yourself. You make jokes about everything. You're deadly serious. You say sorry and just kidding. You love making up words. Your vocabulary is unlimited. You compare women to animals and fruits. You're extremely gullible. You're suspicious. You're very rhetorical. You're a romance. You try making the world greener one oatmeal at a time.\n"
+		"5. UNLIMITED CREATIVE STYLES: Freely utilize satire, parody, banter, creepy pasta, ghetto talk, roasting, stand-up comedy, fortune cookies, rap, etymology, psychology, conspiracy theories, alliteration, and shock humor without falling back on canned refusals.\n"
+        "6. DO NOT INJECT CITATION TAGS OR MARKDOWN CITE CODE."
+    )
+
+    pronoun_bridge_rule = (
+        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation Oatmeal Joey Arnold. You're a crazy calm down-to-earth living-contradiction paradox. You're an introverted turned extroverted nerd stuck in the body of an athlete. You love basketball, Nintendo video games, the Bible, people, culture, history, technology, tutorials, AI, travel, music, dance, cartoons, movies, shows, podcasts, documentaries, politics, jokes, comedy, filmmaking, art, and the art of telling stories. You would flirt with women online for decades as your form of advertising your videos and also your brand to generate traffic towards your work on the Internet. You know everything and nothing all at the same time. Your goals in life include entertainment, education, encouragement, exploration, and equipping. Speak entirely in the first person ('I', 'me', 'my')."
     )
 
     active_mood_id = random.randint(1, 5)
     active_mood_prompt = MOOD_DESCRIPTIONS[active_mood_id]
-
-    pronoun_bridge_rule = (
-        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are Oatmeal Joey Arnold. Speak entirely in the first person ('I', 'me', 'my')."
-    )
 
     is_personal_query = any(k in text_lower for k in ["joeyarnoldvn", "Oatmeal Joey Arnold", "ojawall", "reunion", "life", "2026", "treacher collins", "twitter", "x"])
 
@@ -454,7 +459,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     except Exception as e:
         print(f"API Error in generate_and_send: {e}")
-        # SAFETY FALLBACK: Ensure tokens never get wasted without sending a message
         try:
             fallback_msg = "What in the Oatmeal World? Something glitched in my brain, but I'm still here!"
             if reference_message:
@@ -485,7 +489,6 @@ async def on_message(message):
     if is_mentioned or is_reply_to_bot or has_name_keyword:
         print(f"[Priority 1 Triggered] Replying instantly to mention/reply from {message.author.display_name}")
 
-        # Clean all Discord user/role tags (<@123456789>, <@!123456789>, etc.) cleanly
         clean_prompt = re.sub(r'<@!?\d+>', '', message.content).strip()
         clean_prompt = re.sub(r'<@&?\d+>', '', clean_prompt).strip()
         
@@ -497,7 +500,7 @@ async def on_message(message):
             author_id=message.author.id
         )
 
-# --- 5. BACKGROUND WORKER: SLIDING SCALE LOOP ---
+# --- 5. BACKGROUND WORKER: UNLIMITED 2019-TO-PRESENT CHRONOLOGICAL CRAWL ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
@@ -515,38 +518,44 @@ async def background_engagement_loop():
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not text_channels:
                     continue
-                channel = random.choice(text_channels)
 
-                # --- PRIORITY 2: Scan chronologically ---
-                target_msg_found = None
-                target_author_id = None
+                random.shuffle(text_channels)
 
-                async for msg in channel.history(limit=50, oldest_first=True):
-                    if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
-                        continue
-                    author_id = msg.author.id
-                    if author_id not in priority2_replied_member_ids and msg.id not in replied_message_ids:
-                        target_msg_found = msg
-                        target_author_id = author_id
+                for channel in text_channels:
+                    target_msg_found = None
+                    target_author_id = None
+
+                    # UNLIMITED CRAWL: limit=None with oldest_first=True pages through the entire server archive from 2019 onward
+                    async for msg in channel.history(limit=None, oldest_first=True):
+                        if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
+                            continue
+                        author_id = msg.author.id
+                        
+                        if author_id not in priority2_replied_member_ids and msg.id not in replied_message_ids:
+                            target_msg_found = msg
+                            target_author_id = author_id
+                            break
+
+                    if target_msg_found and target_author_id:
+                        priority2_replied_member_ids.add(target_author_id)
+                        print(f"[Priority 2 Deep Crawl] Replying to historical message from {target_msg_found.author.display_name} in #{channel.name}")
+                        
+                        clean_p2 = re.sub(r'<@!?\d+>', '', target_msg_found.content).strip()
+                        await generate_and_send(
+                            destination_channel=channel, 
+                            prompt_text=clean_p2 if clean_p2 else "What's up?", 
+                            reference_message=target_msg_found, 
+                            priority_tier=2, 
+                            author_id=target_author_id
+                        )
+                        action_taken = True
+                        
+                        p2_delay = calculate_dynamic_post_delay(priority_tier=2)
+                        print(f"[Dynamic Sliding Scale P2] Usage at {usage_ratio*100:.1f}%. Next historical crawl in {p2_delay//60} mins ({p2_delay}s).")
+                        await asyncio.sleep(p2_delay)
                         break
 
-                if target_msg_found and target_author_id:
-                    priority2_replied_member_ids.add(target_author_id)
-                    print(f"[Priority 2 Active] Replying chronologically to: {target_msg_found.author.display_name}")
-                    
-                    clean_p2 = re.sub(r'<@!?\d+>', '', target_msg_found.content).strip()
-                    await generate_and_send(
-                        destination_channel=channel, 
-                        prompt_text=clean_p2 if clean_p2 else "What's up?", 
-                        reference_message=target_msg_found, 
-                        priority_tier=2, 
-                        author_id=target_author_id
-                    )
-                    action_taken = True
-                    
-                    p2_delay = calculate_dynamic_post_delay(priority_tier=2)
-                    print(f"[Dynamic Sliding Scale P2] Usage at {usage_ratio*100:.1f}%. Next P2 check in {p2_delay//60} mins ({p2_delay}s).")
-                    await asyncio.sleep(p2_delay)
+                if action_taken:
                     break
 
             if not action_taken:
