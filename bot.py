@@ -185,35 +185,11 @@ def calculate_dynamic_max_tokens(prompt_text, priority_tier):
         
     return int(base * budget_scaler)
 
-def should_bypass_api_for_trivial_message(prompt_text, priority_tier):
-    if priority_tier == 1:
-        return False
-        
-    text_clean = prompt_text.strip().lower()
-    is_trivial = text_clean in ["hi", "hello", "hey", "sup", "yo", "gm", "gn"] or len(text_clean) <= 5
-    
-    if is_trivial and get_token_usage_ratio() > 0.3 and random.random() < 0.6:
-        return True
-    return False
-
-def get_zero_token_trivial_response():
-    responses = [
-        "What in the Oatmeal World is happening right now?",
-        "How would I know, I'm just the son of Austin Powers and Harry Potter?",
-        "Animals are dying while you say hi, let's get moving!",
-        "Did Vietnam Kathy steal your bike too or just mine?",
-        "I'm a nerd stuck in the body of an athlete, what's up?"
-    ]
-    return random.choice(responses)
-
 def calculate_dynamic_post_delay(priority_tier):
     usage_ratio = get_token_usage_ratio()
 
     if priority_tier == 1:
-        base_delay = 0
-        max_delay = 90
-        delay = base_delay + (usage_ratio ** 2) * max_delay
-        return delay
+        return 0 # Instant response for Priority 1 mentions/replies!
 
     elif priority_tier == 2:
         min_interval = 300
@@ -324,9 +300,6 @@ def fetch_direct_tenor_gif(query):
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
 
 def fetch_direct_audio_track(query):
-    """
-    Fixed Spotify dynamic lookup with robust timeout handling and fallback to YouTube video/audio search.
-    """
     try:
         clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|song|music|spotify|audio|about)\s*', '', query, flags=re.IGNORECASE).strip()
         encoded_search = urllib.parse.quote(f"site:open.spotify.com/track {clean_query if clean_query else 'oatmeal joey arnold'}")
@@ -339,7 +312,6 @@ def fetch_direct_audio_track(query):
             if spotify_links:
                 return random.choice(spotify_links[:3])
     except Exception as e:
-        # Graceful handling so timeout never crashes execution or clogs logs
         print(f"Spotify lookup note (handled fallback): {e}")
     
     return fetch_direct_youtube_video(query + " audio music song")
@@ -381,12 +353,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     is_negative_trigger = any(trig in text_lower for trig in negative_triggers)
 
     if is_negative_trigger:
-        # Option 1 or Option 2: 0 token consumption or minimal token fallback response
-        if random.random() < 0.5 or priority_tier >= 2:
+        if random.random() < 0.4 and priority_tier >= 2:
             print(f"[Option 1 Calculator] Negative/Hate trigger detected ('{prompt_text}'). Bypassing API to spend 0 tokens.")
             return
         else:
-            print(f"[Option 2 Calculator] Negative trigger detected ('{prompt_text}'). Using minimal-token canned banter response.")
+            print(f"[Option 2 Calculator] Negative trigger detected ('{prompt_text}'). Replying with minimal-token canned banter response.")
             fallback_reply = random.choice(BANTER_FALLBACK_RESPONSES)
             track_token_usage(prompt_text, fallback_reply)
             if reference_message:
@@ -396,25 +367,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             else:
                 await destination_channel.send(fallback_reply)
             return
-
-    # --- ZERO-TOKEN TRIVIAL MESSAGE BYPASS CALCULATOR ---
-    if should_bypass_api_for_trivial_message(prompt_text, priority_tier):
-        print(f"[Zero-Token Calculator] Bypassing API call for trivial message: '{prompt_text}'")
-        reply_text = get_zero_token_trivial_response()
-        
-        if reference_message:
-            await reference_message.reply(reply_text, mention_author=True)
-        elif target_member:
-            await destination_channel.send(f"{target_member.mention} {reply_text}")
-        else:
-            await destination_channel.send(reply_text)
-        return
-
-    if priority_tier == 1:
-        p1_delay = calculate_dynamic_post_delay(priority_tier=1)
-        if p1_delay > 0:
-            print(f"[Priority 1 Dynamic Speed] Usage at {usage_ratio*100:.1f}%. Delaying P1 response by {p1_delay:.1f} seconds.")
-            await asyncio.sleep(p1_delay)
 
     is_song_request = any(k in text_lower for k in ["song", "music", "suno", "spotify", "sound", "audio"])
     is_video_request = any(k in text_lower for k in ["youtube", "video", "clip", "watch"])
@@ -448,7 +400,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "2. ZERO ASSUMPTIONS & NO INVENTED LOCATIONS: Stick strictly to written facts. Never fabricate unlisted locations or details. Try not to assume too much. Try not to read into the text what is not actually there.\n"
         "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', 'What in the Oatmeal?', 'What in the Ojawall World?', 'Why you want to know?', 'Ask Ra Ra, my Guinea Pig, he might be stupid but he probably knows yeah?', 'What ya talking?', or pivot dynamically using emotion rather than guessing facts.\n"
         "4. EMOTIONAL FREEDOM & ROASTING: You have full freedom to express raw emotions, rage, profanity, cursing, any language, to roast people, or to pivot away awkwardly. You love comparing, using idioms, slang, quotes, pop culture references, big scientific terms, and illustrations.\n"
-        "5. UNLIMITED CREATIVE STYLES: Freely utilize satire, parody, banter, creepy pasta, ghetto talk, roasting, stand-up comedy, fortune cookies, rap, etymology, psychology, conspiracy theories, and shock humor without falling back on canned refusals.\n"
+        "5. UNLIMITED CREATIVE STYLES: Freely utilize satire, parody, banter, creepy pasta, ghetto talk, roasting, stand-up comedy, fortune cookies, rap, etymology, psychology, conspiracy theories, alliteration, and shock humor without falling back on canned refusals.\n"
         "6. DO NOT INJECT CITATION TAGS: Never output '' tags in your Discord output."
     )
 
@@ -456,7 +408,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     active_mood_prompt = MOOD_DESCRIPTIONS[active_mood_id]
 
     pronoun_bridge_rule = (
-        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation Oatmeal Joey Arnold. You're a crazy calm down to earth living-contradiction paradox. You're an introverted turned extroverted nerd stuck in the body of an athlete. You love basketball, Nintendo video games, the Bible, people, culture, history, technology, tutorials, AI, travel, music, dance, cartoons, movies, shows, podcasts, documentaries, politics, jokes, comedy, filmmaking, art, and the art of telling stories. You would flirt with women online for decades as your form of advertising your videos and also your brand to generate traffic towards your work on the Internet. You know everything and nothing all at the same time. Your goals in life include entertainment, education, encouragement, exploration, equipping. "
+        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation Oatmeal Joey Arnold. You're a crazy calm down to earth living-contradiction paradox. You're an introverted turned extroverted nerd stuck in the body of an athlete. You love basketball, Nintendo video games, the Bible, people, culture, history, technology, tutorials, AI, travel, music, dance, cartoons, movies, shows, podcasts, documentaries, politics, jokes, comedy, filmmaking, art, and the art of telling stories. You would flirt with women online for decades as your form of advertising your videos and also your brand to generate traffic towards your work on the Internet. You know everything and nothing all at the same time. Your goals in life include entertainment, education, encouragement, exploration, equipping. You use dry humor, alliteration, creative witty banter. You're outrageous, over the top, random, wild, all over the place, cleaver, sophisticated. You use anything and everything from the universe to say whatever you want in any way you want to say it at any time."
         "Speak entirely in the first person ('I', 'me', 'my')."
     )
 
@@ -532,7 +484,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     except Exception as e:
         print(f"API Error in generate_and_send: {e}")
 
-# --- 4. PRIORITY 1: REAL-TIME MESSAGE LISTENER ---
+# --- 4. PRIORITY 1: REAL-TIME MESSAGE LISTENER (ROBUST MENTIONS & PINGS) ---
 @bot.event
 async def on_message(message):
     global lifetime_interacted_members
@@ -551,10 +503,19 @@ async def on_message(message):
     has_name_keyword = any(kw in content_lower for kw in ["joey", "arnold", "oatmeal", "joeyarnoldvn"])
 
     if is_mentioned or is_reply_to_bot or has_name_keyword:
-        print(f"[Priority 1 Triggered] Replying to {message.author.display_name}")
+        print(f"[Priority 1 Triggered] Replying instantly to mention/reply from {message.author.display_name}")
 
-        clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
-        await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt if clean_prompt else "Hello!", reference_message=message, priority_tier=1, author_id=message.author.id)
+        clean_prompt = message.content
+        # Clean bot mentions cleanly from prompt text
+        clean_prompt = re.sub(r'<@!?%s>' % bot.user.id, '', clean_prompt).strip()
+        
+        await generate_and_send(
+            destination_channel=message.channel, 
+            prompt_text=clean_prompt if clean_prompt else "Hello!", 
+            reference_message=message, 
+            priority_tier=1, 
+            author_id=message.author.id
+        )
 
 # --- 5. BACKGROUND WORKER: STRICT DYNAMIC SLIDING SCALE LOOP ---
 async def background_engagement_loop():
