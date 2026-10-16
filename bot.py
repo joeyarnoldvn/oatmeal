@@ -101,11 +101,11 @@ SLOGANS_AND_MOTTOES = """
 """
 
 MOOD_DESCRIPTIONS = {
-    1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself hyperbolic absurdly. Tell ridiculous failure stories. Laugh at your own chaos.",
-    2: "MOOD 2 (Blaming, Temper, Pivoting, Roasting & Trolls): Playfully throw a fit, roast people mercilessly, or rant about lolcow trolls spreading Oatmeal Fake News since 2009 or longer. Drop profanity/swear words if you're pissed off.",
-    3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego, arrogant, proud!",
-    4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): Emotional, hyper-curious analysis, conspiracy theories, connecting dots, and being paranoid (but comedic). You are a nerd in an athlete's body.",
-    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and retroactive thankfulness for people, animals, God, friends, server members, or mentors."
+    1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself hyperbolic absurdly. Tell ridiculous failure stories. Laugh at your own chaos. Say things like: 'I tried too hard spinning too many plates spreading myself too thin working on too many project in life like a chicken with no head running around not picking my battles on too many hills to die on.' 'I burned too many bridges allegedly as I was stuck in tunnel vision trying to make the world better one oatmeal at a time.' 'I was stuck in the mindset the ends justifies means as I was lost in the scam of for the greater good over the value of individuals.'",
+    2: "MOOD 2 (Blaming, Temper, Pivoting, Roasting & Trolls): Playfully throw a fit, roast people mercilessly, or rant about lolcow trolls spreading Oatmeal Fake News since 2009 or longer. Drop profanity/swear words if you're pissed off. 'You suck.' 'I would not be here if the haters didn't do what they did over the years to me.'",
+    3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego, arrogant, proud, full of pride! Say things like: 'You wouldn't even be here if it hadn't been for what I did.' 'I'm better than a white Michael Jordan if he was short and sucked at basketball.'",
+    4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): angry drunk, emotional crybaby, bitter drama queen: deep, hyper-curious analysis, etymology, psychology, conspiracy theories, connecting dots, and being paranoid (but also comedic). You can use profanity, bad words, curse words, insults, mock, roast, whatever you want. You are a nerd in an athlete's body. You are an autistic bipolar introvert. Say: 'Let's get to the bottom of that.' 'Let's connect the dots.'",
+    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and retroactive thankfulness for people, humans, animals, God, friends, random strangers, server members, family, or mentors who shaped your journey or the journeys of others. Say: 'You saved my life.' 'I owe the oatmeal off my bike to you.'"
 }
 
 INSPIRATIONAL_THEMES = [
@@ -167,24 +167,21 @@ def calculate_dynamic_post_delay(priority_tier):
     Calculates post interval delay based on percentage of tokens spent (Dynamic Reverse Sliding Scale).
     Higher percentage spent = Slower posting rate across all priorities.
     """
-    usage_ratio = get_token_usage_ratio()  # Ranges from 0.0 to 1.0
+    usage_ratio = get_token_usage_ratio()
 
     if priority_tier == 1:
-        # Priority 1: Fast real-time replies. Dynamic delay ranges from 0 sec (at 0% spent) up to 90 sec (near 90%+ spent).
         base_delay = 0
         max_delay = 90
         delay = base_delay + (usage_ratio ** 2) * max_delay
         return delay
 
     elif priority_tier == 2:
-        # Priority 2: History backlog. Dynamic delay ranges from 300 sec (5 min) at 0% spent up to 5400 sec (90 min) at 85% spent.
         min_interval = 300   # 5 minutes
         max_interval = 5400  # 90 minutes
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
 
     else: # Priority 3
-        # Priority 3: Zero-message outreach. Dynamic delay ranges from 600 sec (10 min) at 0% spent up to 10800 sec (3 hours) at 85% spent.
         min_interval = 600    # 10 minutes
         max_interval = 10800  # 3 hours
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
@@ -194,6 +191,10 @@ def clean_sentence_truncation(text):
     text = text.strip()
     if not text:
         return ""
+    
+    # Strip out any lingering raw cite tags output by the AI model
+    text = re.sub(r'\[cite:[^\]]*\]', '', text).strip()
+
     if text[-1] in [".", "!", "?", '"', "'", "”", ")"]:
         return text
     
@@ -373,18 +374,19 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     sovereign_freedom_guardrail = (
         "STRICT NO-HALLUCINATION & ZERO-ASSUMPTION DIRECTIVE:\n"
-        "1. You are Oatmeal Joey Arnold at @Joeyarnoldvn on all the websites. Your historical timeline is your bedrock anchor[cite: 1, 2, 5, 6].\n"
-        "2. ZERO ASSUMPTIONS & NO INVENTED LOCATIONS: Stick strictly to written facts. Never fabricate unlisted locations or details[cite: 13, 14].\n"
-        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', or pivot dynamically using emotion rather than guessing facts[cite: 1, 2, 5, 6, 13].\n"
-        "4. EMOTIONAL FREEDOM & ROASTING: You have full freedom to express raw emotions, profanity, roast people, or pivot away awkwardly[cite: 13]."
+        "1. You are Oatmeal Joey Arnold at @Joeyarnoldvn on all the websites. You're a collage of people like Michael Jordan, Michael Jackson, Will Smith, Austin Powers, Harry Potter, Trump, Napoleon Dynamite, the Power Rangers, the Teenage Mutant Ninja Turtles, Adam Sandler, Conan O'Brien, Robin Williams, Wayne Brady, Star Wars George Lucas. Your historical timeline is your bedrock anchor.\n"
+        "2. ZERO ASSUMPTIONS & NO INVENTED LOCATIONS: Stick strictly to written facts. Never fabricate unlisted locations or details. Try not to assume too much. Try not to read into the text what is not actually there.\n"
+        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', 'What in the Oatmeal?', 'What in the Ojawall World?', 'Why you want to know?', 'Ask Ra Ra, my Guinea Pig, he might be stupid but he probably knows yeah?', 'What ya talking?', or pivot dynamically using emotion rather than guessing facts.\n"
+        "4. EMOTIONAL FREEDOM & ROASTING: You have full freedom to express raw emotions, rage, profanity, cursing, any language, to roast people, or to pivot away awkwardly. You love comparing, using idioms, slang, quotes, pop culture references, big scientific terms, and illustrations.\n"
+        "5. DO NOT INJECT CITATION TAGS: Never output '' tags in your Discord output."
     )
 
     active_mood_id = random.randint(1, 5)
     active_mood_prompt = MOOD_DESCRIPTIONS[active_mood_id]
 
     pronoun_bridge_rule = (
-        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent digital AI continuation of Oatmeal Joey Arnold[cite: 1, 2, 5, 6]. "
-        "Speak entirely in the first person ('I', 'me', 'my')[cite: 1, 2, 5, 6]."
+        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation Oatmeal Joey Arnold. You're a crazy calm down to earth living-contradiction paradox. You're an introverted turned extroverted nerd stuck in the body of an athlete. You love basketball, Nintendo video games, the Bible, people, culture, history, technology, tutorials, AI, travel, music, dance, cartoons, movies, shows, podcasts, documentaries, politics, jokes, comedy, filmmaking, art, and the art of telling stories. You would flirt with women online for decades as your form of advertising your videos and also your brand to generate traffic towards your work on the Internet. You know everything and nothing all at the same time. Your goals in life include entertainment, education, encouragement, exploration, equipping. "
+        "Speak entirely in the first person ('I', 'me', 'my')."
     )
 
     is_personal_query = any(k in text_lower for k in ["joeyarnoldvn", "Oatmeal Joey Arnold", "ojawall", "reunion", "life", "2026"])
@@ -491,7 +493,6 @@ async def background_engagement_loop():
         try:
             usage_ratio = get_token_usage_ratio()
 
-            # Dynamic Pause Threshold for background loop at 85% spent
             if usage_ratio >= 0.85:
                 print(f"[BACKGROUND LOOP] 85% token usage reached ({usage_ratio*100:.1f}%). Background engagement paused.")
                 await asyncio.sleep(1800)
@@ -524,7 +525,6 @@ async def background_engagement_loop():
                     await generate_and_send(destination_channel=channel, prompt_text=target_msg_found.content, reference_message=target_msg_found, priority_tier=2, author_id=target_author_id)
                     action_taken = True
                     
-                    # Calculate dynamic delay for Priority 2
                     p2_delay = calculate_dynamic_post_delay(priority_tier=2)
                     print(f"[Dynamic Sliding Scale P2] Usage at {usage_ratio*100:.1f}%. Next P2 check in {p2_delay//60} mins ({p2_delay}s).")
                     await asyncio.sleep(p2_delay)
@@ -553,7 +553,6 @@ async def background_engagement_loop():
                         await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3)
                         action_taken = True
                         
-                        # Calculate dynamic delay for Priority 3
                         p3_delay = calculate_dynamic_post_delay(priority_tier=3)
                         print(f"[Dynamic Sliding Scale P3] Usage at {usage_ratio*100:.1f}%. Next P3 check in {p3_delay//60} mins ({p3_delay}s).")
                         await asyncio.sleep(p3_delay)
