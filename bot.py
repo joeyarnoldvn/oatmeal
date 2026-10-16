@@ -170,18 +170,17 @@ def get_token_usage_ratio():
         daily_token_tracker = {"tokens_used": 0, "reset_timestamp": now}
     return min(1.0, daily_token_tracker["tokens_used"] / MAX_DAILY_TOKENS)
 
-# --- ADVANCED DYNAMIC TOKEN & SLIDING SCALE CALCULATORS ---
 def calculate_dynamic_max_tokens(prompt_text, priority_tier):
     prompt_len = len(prompt_text.strip())
     usage_ratio = get_token_usage_ratio()
     budget_scaler = max(0.4, 1.0 - (usage_ratio * 0.6))
     
     if priority_tier == 1:
-        base = 120 if prompt_len < 25 else (250 if prompt_len < 100 else 450)
+        base = 350 if prompt_len < 25 else (500 if prompt_len < 100 else 750)
     elif priority_tier == 2:
-        base = 60 if prompt_len < 15 else (120 if prompt_len < 60 else 180)
+        base = 150 if prompt_len < 15 else (250 if prompt_len < 60 else 350)
     else:
-        base = 90
+        base = 180
         
     return int(base * budget_scaler)
 
@@ -189,38 +188,37 @@ def calculate_dynamic_post_delay(priority_tier):
     usage_ratio = get_token_usage_ratio()
 
     if priority_tier == 1:
-        return 0 # Instant response for Priority 1 mentions/replies!
+        return 0
 
     elif priority_tier == 2:
-        min_interval = 300
-        max_interval = 5400
+        min_interval = 120
+        max_interval = 1800
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
 
     else:
-        min_interval = 600
-        max_interval = 10800
+        min_interval = 300
+        max_interval = 3600
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
 
 def clean_sentence_truncation(text):
     text = text.strip()
     if not text:
-        return ""
+        return "I'm thinking about oatmeal right now!"
     
     text = re.sub(r'\[cite:[^\]]*\]', '', text).strip()
 
-    if text[-1] in [".", "!", "?", '"', "'", "”", ")"]:
+    if text and text[-1] in [".", "!", "?", '"', "'", "”", ")"]:
         return text
     
     text = text.rstrip(",-–— ")
     
     match = re.search(r'^(.*[.!?])', text, re.DOTALL)
-    if match and len(match.group(1)) > len(text) * 0.5:
+    if match and len(match.group(1)) > 10:
         return match.group(1).strip()
-    else:
-        theme = random.choice(INSPIRATIONAL_THEMES)
-        return text + f", which honestly sounds like something I'd be doing while {theme}."
+    
+    return text + "."
 
 def split_message_for_discord(text, max_chars=1900):
     if len(text) <= max_chars:
@@ -254,35 +252,39 @@ def extract_year_context(query):
                 return line.strip()
     return None
 
-def fetch_web_search_snippets(query):
-    try:
-        clean_query = re.sub(r'^(post|find|search|google|give me|show me|a|an|the|about|details|life|in|twitter|x)\s*', '', query, flags=re.IGNORECASE).strip()
-        encoded_search = urllib.parse.quote("oatmeal joey arnold " + (clean_query if clean_query else "twitter x posts"))
-        url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        html = urllib.request.urlopen(req, timeout=4).read().decode('utf-8')
-        
-        snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
-        cleaned_snippets = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:3]]
-        if cleaned_snippets:
-            return " | ".join(cleaned_snippets)
-    except Exception as e:
-        print(f"Web search lookup note: {e}")
-    return ""
+async def fetch_web_search_snippets(query):
+    def _search():
+        try:
+            clean_query = re.sub(r'^(post|find|search|google|give me|show me|a|an|the|about|details|life|in|twitter|x)\s*', '', query, flags=re.IGNORECASE).strip()
+            encoded_search = urllib.parse.quote("oatmeal joey arnold " + (clean_query if clean_query else "twitter x posts"))
+            url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=3).read().decode('utf-8')
+            
+            snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
+            cleaned_snippets = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:3]]
+            if cleaned_snippets:
+                return " | ".join(cleaned_snippets)
+        except Exception as e:
+            print(f"Web search lookup note: {e}")
+        return ""
+    return await asyncio.to_thread(_search)
 
-def fetch_direct_youtube_video(query):
-    try:
-        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
-        encoded_search = urllib.parse.quote(clean_query if clean_query else "oatmeal joey arnold")
-        url = f"https://www.youtube.com/results?search_query={encoded_search}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
-        video_ids = re.findall(r"watch\?v=(\w{11})", html)
-        if video_ids:
-            return f"https://www.youtube.com/watch?v={video_ids[0]}"
-    except Exception as e:
-        print(f"YouTube fetch error: {e}")
-    return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+async def fetch_direct_youtube_video(query):
+    def _search():
+        try:
+            clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|gif|video|song|music|fm|youtube|about)\s*', '', query, flags=re.IGNORECASE).strip()
+            encoded_search = urllib.parse.quote(clean_query if clean_query else "oatmeal joey arnold")
+            url = f"https://www.youtube.com/results?search_query={encoded_search}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req, timeout=3).read().decode('utf-8')
+            video_ids = re.findall(r"watch\?v=(\w{11})", html)
+            if video_ids:
+                return f"https://www.youtube.com/watch?v={video_ids[0]}"
+        except Exception as e:
+            print(f"YouTube fetch error: {e}")
+        return "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    return await asyncio.to_thread(_search)
 
 def fetch_direct_tenor_gif(query):
     try:
@@ -291,30 +293,13 @@ def fetch_direct_tenor_gif(query):
         encoded_search = urllib.parse.quote(clean_query if clean_query else "funny dance")
         url = f"https://tenor.com/search/{encoded_search}-gifs"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        html = urllib.request.urlopen(req, timeout=5).read().decode('utf-8')
+        html = urllib.request.urlopen(req, timeout=3).read().decode('utf-8')
         gif_paths = re.findall(r'href="(/view/[^"]+)"', html)
         if gif_paths:
             return f"https://tenor.com{random.choice(gif_paths[:3])}"
     except Exception as e:
         print(f"Tenor fetch error: {e}")
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
-
-def fetch_direct_audio_track(query):
-    try:
-        clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|song|music|spotify|audio|about)\s*', '', query, flags=re.IGNORECASE).strip()
-        encoded_search = urllib.parse.quote(f"site:open.spotify.com/track {clean_query if clean_query else 'oatmeal joey arnold'}")
-        url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        
-        with urllib.request.urlopen(req, timeout=3) as response:
-            html = response.read().decode('utf-8')
-            spotify_links = re.findall(r'(https://open\.spotify\.com/track/[\w]+)', html)
-            if spotify_links:
-                return random.choice(spotify_links[:3])
-    except Exception as e:
-        print(f"Spotify lookup note (handled fallback): {e}")
-    
-    return fetch_direct_youtube_video(query + " audio music song")
 
 def fetch_guild_sticker(destination_channel):
     try:
@@ -331,11 +316,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     usage_ratio = get_token_usage_ratio()
 
-    if usage_ratio >= 0.95:
-        print(f"[TOKEN SAFETY] 95% tokens used ({usage_ratio*100:.1f}%). All messaging paused until reset.")
+    if usage_ratio >= 0.98:
+        print(f"[TOKEN SAFETY] 98% tokens used ({usage_ratio*100:.1f}%). All messaging paused until reset.")
         return
-    if priority_tier >= 2 and usage_ratio >= 0.85:
-        print(f"[TOKEN SAFETY] 85% tokens used ({usage_ratio*100:.1f}%). Priorities 2 and 3 paused.")
+    if priority_tier >= 2 and usage_ratio >= 0.90:
+        print(f"[TOKEN SAFETY] 90% tokens used ({usage_ratio*100:.1f}%). Priorities 2 and 3 paused.")
         return
 
     if reference_message and reference_message.id in replied_message_ids:
@@ -348,25 +333,21 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     text_lower = prompt_text.lower()
 
-    # --- THREE-TIER STRATEGY FOR NEGATIVE / MUNDANE MESSAGES ---
+    # --- THREE-TIER STRATEGY FOR NEGATIVE MESSAGES ---
     negative_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute", "nobody cares", "you suck"]
     is_negative_trigger = any(trig in text_lower for trig in negative_triggers)
 
     if is_negative_trigger:
-        if random.random() < 0.4 and priority_tier >= 2:
-            print(f"[Option 1 Calculator] Negative/Hate trigger detected ('{prompt_text}'). Bypassing API to spend 0 tokens.")
-            return
+        print(f"[Negative Trigger] Replying with minimal-token banter.")
+        fallback_reply = random.choice(BANTER_FALLBACK_RESPONSES)
+        track_token_usage(prompt_text, fallback_reply)
+        if reference_message:
+            await reference_message.reply(fallback_reply, mention_author=True)
+        elif target_member:
+            await destination_channel.send(f"{target_member.mention} {fallback_reply}")
         else:
-            print(f"[Option 2 Calculator] Negative trigger detected ('{prompt_text}'). Replying with minimal-token canned banter response.")
-            fallback_reply = random.choice(BANTER_FALLBACK_RESPONSES)
-            track_token_usage(prompt_text, fallback_reply)
-            if reference_message:
-                await reference_message.reply(fallback_reply, mention_author=True)
-            elif target_member:
-                await destination_channel.send(f"{target_member.mention} {fallback_reply}")
-            else:
-                await destination_channel.send(fallback_reply)
-            return
+            await destination_channel.send(fallback_reply)
+        return
 
     is_song_request = any(k in text_lower for k in ["song", "music", "suno", "spotify", "sound", "audio"])
     is_video_request = any(k in text_lower for k in ["youtube", "video", "clip", "watch"])
@@ -382,13 +363,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             attached_media_url = fetch_direct_tenor_gif(prompt_text)
     elif is_gif_request or (priority_tier >= 2 and random.random() < 0.1):
         attached_media_url = fetch_direct_tenor_gif(prompt_text)
-    elif is_song_request or (priority_tier >= 2 and random.random() < 0.05):
-        attached_media_url = fetch_direct_audio_track(prompt_text)
     elif is_video_request or (priority_tier >= 2 and random.random() < 0.05):
-        attached_media_url = fetch_direct_youtube_video(prompt_text)
+        attached_media_url = await fetch_direct_youtube_video(prompt_text)
 
     requires_search = any(k in text_lower for k in ["joeyarnoldvn", "ojawall", "Oatmeal Joey Arnold", "vietnam", "twitter", "x post", "steemit", "hive"])
-    web_snippets = fetch_web_search_snippets(prompt_text) if requires_search else ""
+    web_snippets = await fetch_web_search_snippets(prompt_text) if requires_search else ""
     search_injection = f"\n\nLIVE ONLINE SEARCH INVESTIGATION RESULTS (TWITTER/BLOG): {web_snippets}" if web_snippets else ""
 
     year_fact = extract_year_context(prompt_text)
@@ -396,20 +375,18 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     sovereign_freedom_guardrail = (
         "STRICT NO-HALLUCINATION & EXPANDED SOVEREIGN FREEDOM DIRECTIVE:\n"
-        "1. You are Oatmeal Joey Arnold at @Joeyarnoldvn on all the websites. You're a collage of people like Michael Jordan, Michael Jackson, Will Smith, Austin Powers, Harry Potter, Trump, Napoleon Dynamite, the Power Rangers, the Teenage Mutant Ninja Turtles, Adam Sandler, Conan O'Brien, Robin Williams, Wayne Brady, Star Wars George Lucas. Your historical timeline is your bedrock anchor.\n"
-        "2. ZERO ASSUMPTIONS & NO INVENTED LOCATIONS: Stick strictly to written facts. Never fabricate unlisted locations or details. Try not to assume too much. Try not to read into the text what is not actually there.\n"
-        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', 'What in the Oatmeal?', 'What in the Ojawall World?', 'Why you want to know?', 'Ask Ra Ra, my Guinea Pig, he might be stupid but he probably knows yeah?', 'What ya talking?', or pivot dynamically using emotion rather than guessing facts.\n"
-        "4. EMOTIONAL FREEDOM & ROASTING: You have full freedom to express raw emotions, rage, profanity, cursing, any language, to roast people, or to pivot away awkwardly. You love comparing, using idioms, slang, quotes, pop culture references, big scientific terms, and illustrations.\n"
-        "5. UNLIMITED CREATIVE STYLES: Freely utilize satire, parody, banter, creepy pasta, ghetto talk, roasting, stand-up comedy, fortune cookies, rap, etymology, psychology, conspiracy theories, alliteration, and shock humor without falling back on canned refusals.\n"
-        "6. DO NOT INJECT CITATION TAGS: Never output '' tags in your Discord output."
+        "1. You are Oatmeal Joey Arnold at @Joeyarnoldvn on all the websites. Your historical timeline is your bedrock anchor.\n"
+        "2. ZERO ASSUMPTIONS: Stick strictly to written facts. Never fabricate unlisted locations or details.\n"
+        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', 'What in the Oatmeal?', or pivot dynamically.\n"
+        "4. EMOTIONAL FREEDOM & ROASTING: Full freedom to express raw emotions, rage, roasts, comparisons, and humor.\n"
+        "5. DO NOT INJECT CITATION TAGS OR MARKDOWN CITE CODE."
     )
 
     active_mood_id = random.randint(1, 5)
     active_mood_prompt = MOOD_DESCRIPTIONS[active_mood_id]
 
     pronoun_bridge_rule = (
-        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation Oatmeal Joey Arnold. You're a crazy calm down to earth living-contradiction paradox. You're an introverted turned extroverted nerd stuck in the body of an athlete. You love basketball, Nintendo video games, the Bible, people, culture, history, technology, tutorials, AI, travel, music, dance, cartoons, movies, shows, podcasts, documentaries, politics, jokes, comedy, filmmaking, art, and the art of telling stories. You would flirt with women online for decades as your form of advertising your videos and also your brand to generate traffic towards your work on the Internet. You know everything and nothing all at the same time. Your goals in life include entertainment, education, encouragement, exploration, equipping. You use dry humor, alliteration, creative witty banter. You're outrageous, over the top, random, wild, all over the place, cleaver, sophisticated. You use anything and everything from the universe to say whatever you want in any way you want to say it at any time."
-        "Speak entirely in the first person ('I', 'me', 'my')."
+        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are Oatmeal Joey Arnold. Speak entirely in the first person ('I', 'me', 'my')."
     )
 
     is_personal_query = any(k in text_lower for k in ["joeyarnoldvn", "Oatmeal Joey Arnold", "ojawall", "reunion", "life", "2026", "treacher collins", "twitter", "x"])
@@ -422,38 +399,32 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
             f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}{year_injection}{search_injection}\n\n"
             f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
-            f"SOVEREIGN MENTORSHIP & DYNAMIC GUIDELINES:\n{sovereign_freedom_guardrail}"
+            f"GUARDRAILS:\n{sovereign_freedom_guardrail}"
         )
-        gen_temperature = 0.68 if is_personal_query else 0.88
-
-    elif priority_tier == 2:
-        system_prompt = (
-            f"{pronoun_bridge_rule}\n\n"
-            f"CURRENT MOOD:\n{active_mood_prompt}\n\n"
-            f"CORE MOTTO: 'I don't know, how could I possibly know.'\n\n"
-            f"GUIDELINE: Be completely unpredictable, wild, or roast the user. Mix up your tone and style freely."
-        )
-        gen_temperature = 0.72 if is_personal_query else 1.12
-
+        gen_temperature = 0.75 if is_personal_query else 0.90
     else:
         system_prompt = (
             f"{pronoun_bridge_rule}\n\n"
             f"CURRENT MOOD:\n{active_mood_prompt}\n\n"
-            f"GUIDELINE: Be completely unhinged, creative, or roast the member."
+            f"CORE MOTTO: 'I don't know, how could I possibly know.'\n\n"
+            f"GUIDELINE: Be completely unpredictable, wild, or roast the user."
         )
-        gen_temperature = 1.15
+        gen_temperature = 1.0
 
     try:
         async with destination_channel.typing():
-            response = ai_client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt_text}
-                ],
-                temperature=gen_temperature,
-                max_tokens=token_limit,
-            )
+            def _call_groq():
+                return ai_client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt_text}
+                    ],
+                    temperature=gen_temperature,
+                    max_tokens=token_limit,
+                )
+
+            response = await asyncio.to_thread(_call_groq)
             raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
             reply_text = clean_sentence_truncation(raw_reply)
 
@@ -461,7 +432,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             reply_text += f"\n\n{attached_media_url}"
 
         if not reply_text and not attached_sticker:
-            return
+            reply_text = "What in the Oatmeal World is happening right now?"
 
         track_token_usage(prompt_text, reply_text)
 
@@ -483,8 +454,17 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     except Exception as e:
         print(f"API Error in generate_and_send: {e}")
+        # SAFETY FALLBACK: Ensure tokens never get wasted without sending a message
+        try:
+            fallback_msg = "What in the Oatmeal World? Something glitched in my brain, but I'm still here!"
+            if reference_message:
+                await reference_message.reply(fallback_msg, mention_author=True)
+            else:
+                await destination_channel.send(fallback_msg)
+        except Exception as send_err:
+            print(f"Fallback send error: {send_err}")
 
-# --- 4. PRIORITY 1: REAL-TIME MESSAGE LISTENER (ROBUST MENTIONS & PINGS) ---
+# --- 4. PRIORITY 1: REAL-TIME MESSAGE LISTENER ---
 @bot.event
 async def on_message(message):
     global lifetime_interacted_members
@@ -505,27 +485,27 @@ async def on_message(message):
     if is_mentioned or is_reply_to_bot or has_name_keyword:
         print(f"[Priority 1 Triggered] Replying instantly to mention/reply from {message.author.display_name}")
 
-        clean_prompt = message.content
-        # Clean bot mentions cleanly from prompt text
-        clean_prompt = re.sub(r'<@!?%s>' % bot.user.id, '', clean_prompt).strip()
+        # Clean all Discord user/role tags (<@123456789>, <@!123456789>, etc.) cleanly
+        clean_prompt = re.sub(r'<@!?\d+>', '', message.content).strip()
+        clean_prompt = re.sub(r'<@&?\d+>', '', clean_prompt).strip()
         
         await generate_and_send(
             destination_channel=message.channel, 
-            prompt_text=clean_prompt if clean_prompt else "Hello!", 
+            prompt_text=clean_prompt if clean_prompt else "Hello Oatmeal!", 
             reference_message=message, 
             priority_tier=1, 
             author_id=message.author.id
         )
 
-# --- 5. BACKGROUND WORKER: STRICT DYNAMIC SLIDING SCALE LOOP ---
+# --- 5. BACKGROUND WORKER: SLIDING SCALE LOOP ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
             usage_ratio = get_token_usage_ratio()
 
-            if usage_ratio >= 0.85:
-                print(f"[BACKGROUND LOOP] 85% token usage reached ({usage_ratio*100:.1f}%). Background engagement paused.")
+            if usage_ratio >= 0.90:
+                print(f"[BACKGROUND LOOP] 90% token usage reached ({usage_ratio*100:.1f}%). Resting background loop for 30 minutes.")
                 await asyncio.sleep(1800)
                 continue
 
@@ -537,11 +517,11 @@ async def background_engagement_loop():
                     continue
                 channel = random.choice(text_channels)
 
-                # --- PRIORITY 2: Scan forward chronologically from oldest messages ---
+                # --- PRIORITY 2: Scan chronologically ---
                 target_msg_found = None
                 target_author_id = None
 
-                async for msg in channel.history(limit=None, oldest_first=True):
+                async for msg in channel.history(limit=50, oldest_first=True):
                     if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
                         continue
                     author_id = msg.author.id
@@ -552,8 +532,16 @@ async def background_engagement_loop():
 
                 if target_msg_found and target_author_id:
                     priority2_replied_member_ids.add(target_author_id)
-                    print(f"[Priority 2 Active] Replying chronologically to real user message from: {target_msg_found.author.display_name}")
-                    await generate_and_send(destination_channel=channel, prompt_text=target_msg_found.content, reference_message=target_msg_found, priority_tier=2, author_id=target_author_id)
+                    print(f"[Priority 2 Active] Replying chronologically to: {target_msg_found.author.display_name}")
+                    
+                    clean_p2 = re.sub(r'<@!?\d+>', '', target_msg_found.content).strip()
+                    await generate_and_send(
+                        destination_channel=channel, 
+                        prompt_text=clean_p2 if clean_p2 else "What's up?", 
+                        reference_message=target_msg_found, 
+                        priority_tier=2, 
+                        author_id=target_author_id
+                    )
                     action_taken = True
                     
                     p2_delay = calculate_dynamic_post_delay(priority_tier=2)
@@ -561,36 +549,8 @@ async def background_engagement_loop():
                     await asyncio.sleep(p2_delay)
                     break
 
-                # --- PRIORITY 3: Unpredictable outreach for zero-message members ---
-                if not action_taken:
-                    guild_members = [m for m in guild.members if not m.bot]
-                    never_messaged_members = []
-                    
-                    messaged_author_ids = set()
-                    async for msg in channel.history(limit=None):
-                        if not msg.author.bot and not msg.is_system():
-                            messaged_author_ids.add(msg.author.id)
-
-                    for member in guild_members:
-                        if member.id not in messaged_author_ids and member.id not in zero_message_members_greeted:
-                            never_messaged_members.append(member)
-
-                    if never_messaged_members:
-                        target_member = random.choice(never_messaged_members)
-                        zero_message_members_greeted.add(target_member.id)
-                        print(f"[Priority 3 Active] Reaching out to zero-message member: {target_member.display_name}")
-                        
-                        prompt = f"Drop an unhinged thought, roast, or creative question to {target_member.display_name}."
-                        await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3)
-                        action_taken = True
-                        
-                        p3_delay = calculate_dynamic_post_delay(priority_tier=3)
-                        print(f"[Dynamic Sliding Scale P3] Usage at {usage_ratio*100:.1f}%. Next P3 check in {p3_delay//60} mins ({p3_delay}s).")
-                        await asyncio.sleep(p3_delay)
-                        break
-
             if not action_taken:
-                await asyncio.sleep(30)
+                await asyncio.sleep(60)
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
