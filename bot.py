@@ -119,11 +119,11 @@ INSPIRATIONAL_THEMES = [
     "writing diary blog posts on Hive Blog and Steemit blockchain"
 ]
 
-CANNED_REJECTION_REPLACEMENTS = [
-    "Hey, what are you, a professional racist or just practicing for clown tryouts?",
-    "What in the Oatmeal World is that supposed to mean? You sound like a busted speaker emitting pure static.",
-    "I'm here juggling basketballs, Bible verses, and Treacher Collins syndrome, and you drop that weak troll energy?",
-    "You must be one of those lolcow trolls who've been spamming Oatmeal Fake News since 2009. Try again buddy!"
+BANTER_FALLBACK_RESPONSES = [
+    "Oh no you suck? You wouldn't even be here in the Oatmeal World if it wasn't for me!",
+    "What do you mean I suck? I'm better than a white Michael Jordan if he was short and sucked at basketball!",
+    "You're calling me out while my guinea pig Ra Ra is eating all my oatmeal? Nice try buddy!",
+    "Oh you suck? Go practice your clown tryouts with the rest of the lolcow trolls spreading Oatmeal Fake News since 2009!"
 ]
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
@@ -172,13 +172,8 @@ def get_token_usage_ratio():
 
 # --- ADVANCED DYNAMIC TOKEN & SLIDING SCALE CALCULATORS ---
 def calculate_dynamic_max_tokens(prompt_text, priority_tier):
-    """
-    Sophisticated local calculator (0 LLM cost) that continuously minimizes
-    and optimizes token consumption based on prompt length, priority, and daily token ratio.
-    """
     prompt_len = len(prompt_text.strip())
     usage_ratio = get_token_usage_ratio()
-    
     budget_scaler = max(0.4, 1.0 - (usage_ratio * 0.6))
     
     if priority_tier == 1:
@@ -191,10 +186,6 @@ def calculate_dynamic_max_tokens(prompt_text, priority_tier):
     return int(base * budget_scaler)
 
 def should_bypass_api_for_trivial_message(prompt_text, priority_tier):
-    """
-    Calculates if a trivial message (e.g. 'hi') can be answered locally with zero tokens
-    to maximize efficiency without becoming boring.
-    """
     if priority_tier == 1:
         return False
         
@@ -241,9 +232,6 @@ def clean_sentence_truncation(text):
     if not text:
         return ""
     
-    if "I’m sorry, but I can’t help with that" in text or "I'm sorry, but I can't help with that" in text:
-        return random.choice(CANNED_REJECTION_REPLACEMENTS)
-
     text = re.sub(r'\[cite:[^\]]*\]', '', text).strip()
 
     if text[-1] in [".", "!", "?", '"', "'", "”", ")"]:
@@ -336,18 +324,23 @@ def fetch_direct_tenor_gif(query):
     return "https://tenor.com/view/cat-vibing-cat-dj-cat-party-cat-gif-22441671"
 
 def fetch_direct_audio_track(query):
+    """
+    Fixed Spotify dynamic lookup with robust timeout handling and fallback to YouTube video/audio search.
+    """
     try:
         clean_query = re.sub(r'^(post|find|search|give me|show me|a|an|the|song|music|spotify|audio|about)\s*', '', query, flags=re.IGNORECASE).strip()
         encoded_search = urllib.parse.quote(f"site:open.spotify.com/track {clean_query if clean_query else 'oatmeal joey arnold'}")
         url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        html = urllib.request.urlopen(req, timeout=4).read().decode('utf-8')
         
-        spotify_links = re.findall(r'(https://open\.spotify\.com/track/[\w]+)', html)
-        if spotify_links:
-            return random.choice(spotify_links[:3])
+        with urllib.request.urlopen(req, timeout=3) as response:
+            html = response.read().decode('utf-8')
+            spotify_links = re.findall(r'(https://open\.spotify\.com/track/[\w]+)', html)
+            if spotify_links:
+                return random.choice(spotify_links[:3])
     except Exception as e:
-        print(f"Spotify dynamic lookup note: {e}")
+        # Graceful handling so timeout never crashes execution or clogs logs
+        print(f"Spotify lookup note (handled fallback): {e}")
     
     return fetch_direct_youtube_video(query + " audio music song")
 
@@ -381,6 +374,29 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if author_id:
         lifetime_interacted_members.add(author_id)
 
+    text_lower = prompt_text.lower()
+
+    # --- THREE-TIER STRATEGY FOR NEGATIVE / MUNDANE MESSAGES ---
+    negative_triggers = ["shut up", "stfu", "be quiet", "stop talking", "shush", "mute", "nobody cares", "you suck"]
+    is_negative_trigger = any(trig in text_lower for trig in negative_triggers)
+
+    if is_negative_trigger:
+        # Option 1 or Option 2: 0 token consumption or minimal token fallback response
+        if random.random() < 0.5 or priority_tier >= 2:
+            print(f"[Option 1 Calculator] Negative/Hate trigger detected ('{prompt_text}'). Bypassing API to spend 0 tokens.")
+            return
+        else:
+            print(f"[Option 2 Calculator] Negative trigger detected ('{prompt_text}'). Using minimal-token canned banter response.")
+            fallback_reply = random.choice(BANTER_FALLBACK_RESPONSES)
+            track_token_usage(prompt_text, fallback_reply)
+            if reference_message:
+                await reference_message.reply(fallback_reply, mention_author=True)
+            elif target_member:
+                await destination_channel.send(f"{target_member.mention} {fallback_reply}")
+            else:
+                await destination_channel.send(fallback_reply)
+            return
+
     # --- ZERO-TOKEN TRIVIAL MESSAGE BYPASS CALCULATOR ---
     if should_bypass_api_for_trivial_message(prompt_text, priority_tier):
         print(f"[Zero-Token Calculator] Bypassing API call for trivial message: '{prompt_text}'")
@@ -393,8 +409,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         else:
             await destination_channel.send(reply_text)
         return
-
-    text_lower = prompt_text.lower()
 
     if priority_tier == 1:
         p1_delay = calculate_dynamic_post_delay(priority_tier=1)
