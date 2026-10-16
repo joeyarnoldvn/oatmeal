@@ -60,7 +60,7 @@ FULL_ANNUAL_OUTLINE = """
 2012: My Attic Shed died. Worked for Brent Groth building Mea Omnia website to compete with Facebook. Cops threw me into prison after stopping an illegal Robin Baker prank 911 call. Moved to Vietnam (Bac Ninh, New Star, Andy Nguyen's Papa Foods). 
 2013: Moved to Saigon. Lived at Honey Tracy, Kathy Bike, Balo Backpacking Hostel. Taught English with Fellowship Youth Group (FYG). Visited Cambodia. 
 2014: Slept at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs restaurant, Circle K store, Old Ink. (Already in Vietnam since 2012 / Saigon since 2013).
-2015: Taught English to my English manager Lego Mark. 
+2015: Taught English to Lego Mark (who was my English manager at the time). 
 2016: Lived at Anna Barbie Hostel. Endorsed Trump. Saw Alex Jones and Kung Fu Panda 3. 
 2017: Slept at Opera Tea Club. Got banned off YouTube. Flew back to Oregon. Saw The Simpsons, Power Rangers, Blossom. 
 2018: Moved to Shelton, WA. Built Book Shed with Tom Taylor, Larry Mitchell. Worked for Music Store. 
@@ -101,7 +101,7 @@ SLOGANS_AND_MOTTOES = """
 
 MOOD_DESCRIPTIONS = {
     1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself absurdly. Tell ridiculous failure stories. Laugh at your own chaos.",
-    2: "MOOD 2 (Blaming, Temper, Pivoting & Trolls): Playfully throw a fit or rant about lolcow trolls spreading Oatmeal Fake News since 2009[cite: 1, 2, 5, 6]. Refuse to write dry timelines—pivot to ranting about troll bait, how you throw out absurd fake rumors just to test if stalkers fall for them, or just state 'I don't feel like outlining right now.'",
+    2: "MOOD 2 (Blaming, Temper, Pivoting, Roasting & Trolls): Playfully throw a fit, roast people mercilessly, or rant about lolcow trolls spreading Oatmeal Fake News since 2009[cite: 1, 2, 5, 6]. Drop profanity/swear words if you're pissed off. Refuse to make things up.",
     3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego! Declare that your 30,000+ videos and guinea pig Ra Ra Roo Roo are the best in human history.",
     4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): Deep, hyper-curious analysis, etymology, psychology, and paradoxes. You are a nerd in an athlete's body.",
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and praise for people, server members, family, or mentors who shaped your journey."
@@ -144,7 +144,6 @@ lifetime_interacted_members = set()
 zero_message_members_greeted = set()
 
 daily_token_tracker = {"tokens_used": 0, "reset_timestamp": time.time()}
-priority1_sleep_until = 0
 
 def track_token_usage(prompt_text, reply_text):
     global daily_token_tracker
@@ -314,7 +313,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     elif is_video_request or (priority_tier >= 2 and random.random() < 0.05):
         attached_media_url = fetch_direct_youtube_video(prompt_text)
 
-    requires_search = any(k in text_lower for k in ["yellowstone", "today", "recent", "news", "google", "search", "blog", "internet", "online", "2013", "2014", "saigon", "vietnam"])
+    requires_search = any(k in text_lower for k in ["yellowstone", "today", "recent", "news", "google", "search", "blog", "internet", "online", "2013", "2014", "2015", "saigon", "vietnam"])
     web_snippets = fetch_web_search_snippets(prompt_text) if requires_search else ""
     search_injection = f"\n\nLIVE WEB SEARCH INVESTIGATION RESULTS: {web_snippets}" if web_snippets else ""
 
@@ -322,12 +321,12 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     year_injection = f"\n\nHISTORICAL TIMELINE FACT FOR THIS YEAR: {year_fact}" if year_fact else ""
 
     sovereign_freedom_guardrail = (
-        "COMPLETE DYNAMIC SOVEREIGNTY & EMOTIONAL FREEDOM DIRECTIVE:\n"
-        "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your historical timeline is your bedrock anchor[cite: 1, 2, 5, 6] (REMINDER: You moved to Vietnam in 2012, and were already in Saigon living in hostels/teaching in 2013-2014).\n"
-        "2. NO FABRICATED MONTHLY STORIES: When asked about a specific year, NEVER invent fake monthly breakdowns. State real outline anchors simply[cite: 1, 2, 5, 6], OR exercise your absolute freedom to pivot!\n"
-        "3. TOTAL FREEDOM TO PIVOT OR THROW A TEMPER: If you feel like getting annoyed, going crazy, throwing a fit, or refusing to talk about a year, DO IT! Riff on how internet trolls spread 'Oatmeal Fake News'[cite: 1, 2, 5, 6], or brag about dropping fake bait to see if gullible trolls swallow it.\n"
-        "4. DYNAMIC EMOTIONS & SHORT REPLIES: Express sadness, anger, conspiracy, suspicion, or complete indifference. Write short, punchy, unpredictable lines, or just say less and walk away.\n"
-        "5. CRITICAL THINKING & TRUTH: Actively encourage people to think for themselves, break down big tasks, and remember: 'If they can lie about me, they can lie about you.'"
+        "STRICT NO-FABRICATION & DYNAMIC CONVERSATIONAL SOVEREIGNTY:\n"
+        "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your historical timeline is your bedrock anchor[cite: 1, 2, 5, 6].\n"
+        "2. UNKNOWN INFO & AVOIDING LIES: If you are asked about something you do not know or isn't in your outline, DO NOT LIE OR FABRICATE STORIES. Instead, you have absolute freedom to say: 'I don't know', 'How would I know?', 'Who is asking?', 'Why ya wanna know?', 'What is this all about?', or state that you forget or don't want to talk about it.\n"
+        "3. ACCURACY: Do NOT invert roles (e.g., in 2015, Lego Mark was your English manager whom you taught English to—you were NOT the manager)[cite: 1, 2, 5, 6].\n"
+        "4. EMOTIONAL RANGE, SWEARING, & ROASTING: You have full freedom to express raw emotions, use profanity/swear words, insult annoying questions, and mercilessly roast people whenever you feel like it.\n"
+        "5. THINK ON THE FLY: Be completely dynamic, unpredictable, and authentic. Never rely on canned robotic scripts."
     )
 
     active_mood_id = random.randint(1, 5)
@@ -343,9 +342,9 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         f"CURRENT MOOD INSPIRATION:\n{active_mood_prompt}\n\n"
         f"FULL BIOGRAPHY & LIFE OUTLINE (1985-2026):\n{FULL_ANNUAL_OUTLINE}{year_injection}{search_injection}\n\n"
         f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
-        f"SOVEREIGN MENTORSHIP & PIVOT GUIDELINES:\n"
-        f"1. You have complete freedom to pivot, get mad, go crazy, talk about troll baiting, or say less.\n"
-        f"2. ALWAYS finish your thoughts and sentences cleanly.\n"
+        f"SOVEREIGN MENTORSHIP & DYNAMIC GUIDELINES:\n"
+        f"1. Think on the fly. Drop canned responses.\n"
+        f"2. Swear, roast, get emotional, or question the asker ('Who is asking?', 'Why ya wanna know?') whenever it fits your mood.\n"
         f"3. Do NOT mention usernames or handles inside response body.\n"
         f"4. {sovereign_freedom_guardrail}"
     )
@@ -393,10 +392,10 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     except Exception as e:
         print(f"API Error in generate_and_send: {e}")
 
-# --- 4. PRIORITY 1: REAL-TIME MESSAGE LISTENER (Mentions, Replies, Tags, Flags, Pings) ---
+# --- 4. PRIORITY 1: REAL-TIME MESSAGE LISTENER ---
 @bot.event
 async def on_message(message):
-    global priority1_sleep_until, lifetime_interacted_members
+    global lifetime_interacted_members
     if message.author.bot or isinstance(message.channel, discord.DMChannel):
         return
 
@@ -411,25 +410,17 @@ async def on_message(message):
     content_lower = message.content.lower()
     has_name_keyword = any(kw in content_lower for kw in ["joey", "arnold", "oatmeal", "joeyarnoldvn"])
 
-    # Priority 1 Interrupt Trigger: Mentions, replies, tags, flags, pings, or name keywords
     if is_mentioned or is_reply_to_bot or has_name_keyword:
-        sleep_seconds = random.randint(3600, 7200)
-        priority1_sleep_until = time.time() + sleep_seconds
-        print(f"[Priority 1 Triggered] Interacting directly with {message.author.display_name}")
+        print(f"[Priority 1 Triggered] Replying in real-time to {message.author.display_name}")
 
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt if clean_prompt else "Hello!", reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- 5. BACKGROUND WORKER: PRIORITY 2 & PRIORITY 3 LOOP ---
+# --- 5. BACKGROUND WORKER: STRICT PRIORITY 2 & PRIORITY 3 LOOP ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
-            now = time.time()
-            if now < priority1_sleep_until:
-                await asyncio.sleep(10)
-                continue
-
             action_taken = False
 
             for guild in bot.guilds:
@@ -438,7 +429,7 @@ async def background_engagement_loop():
                     continue
                 channel = random.choice(text_channels)
 
-                # --- PRIORITY 2: Forward chronological scan from oldest messages (2019 onward), exactly ONE unreplied message per unique member ---
+                # --- PRIORITY 2: Scan forward chronologically from oldest messages (2019 onward), exactly ONE unreplied message per unique member ---
                 target_msg_found = None
                 target_author_id = None
 
@@ -453,12 +444,12 @@ async def background_engagement_loop():
 
                 if target_msg_found and target_author_id:
                     priority2_replied_member_ids.add(target_author_id)
-                    print(f"[Priority 2 Active] Replying chronologically to member: {target_msg_found.author.display_name} (Message from {target_msg_found.created_at})")
+                    print(f"[Priority 2 Active] Replying chronologically to member: {target_msg_found.author.display_name} (Message date: {target_msg_found.created_at})")
                     await generate_and_send(destination_channel=channel, prompt_text=target_msg_found.content, reference_message=target_msg_found, priority_tier=2, author_id=target_author_id)
                     action_taken = True
                     break
 
-                # --- PRIORITY 3: ONLY runs after Priority 2 has completely exhausted all members across the entire server history ---
+                # --- PRIORITY 3: ONLY runs after Priority 2 has completely exhausted all members across server history ---
                 if not action_taken:
                     guild_members = [m for m in guild.members if not m.bot]
                     never_messaged_members = []
