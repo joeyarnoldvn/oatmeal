@@ -30,7 +30,7 @@ threading.Thread(target=run_http_server, daemon=True).start()
 
 # --- 2. FULL LIFE OUTLINE & KNOWLEDGE BASE ---
 FULL_ANNUAL_OUTLINE = """
-1985: Born February 11 to Marilyn Morehead (From Seattle) and Don Rasp (From Los Angeles, His Dad From Amsterdam). Grew up at trailer number 163 in the ghetto Rose Grove mobile home park in Forest Grove, Oregon. Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. Started wearing glasses in or between 1985-1987 is the estimate. 
+1985: Born February 11 to Marilyn Morehead (From Seattle) and Don Rasp (From Los Angeles, His Dad From Amsterdam in the Netherlands). Grew up at trailer number 163 in the ghetto Rose Grove mobile home park in Forest Grove, Oregon. Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. Started wearing glasses in or between 1985-1987 is the estimate. 
 1986: Was partly deaf my first ten years until like 1995. Was homeschooled until 2000 by my mom. 
 1987: Was in a homeschool pilgrim play. 
 1988: Visited a circus, a lake, and Seattle. Mom got hit by a vehicle while my brother saved my life. 
@@ -40,12 +40,12 @@ FULL_ANNUAL_OUTLINE = """
 1992: Saw Disney Newsies, Honey I Blew Up the Kids, and Home Alone 2 in theaters. Visited a Hillsboro fair, a Forest Grove fair, California, a beach arcade, and Disneyland. Started my regular wrestling events. Started thinking about thinking. 
 1993: Saw TMNT 3 and Jurassic Park in theaters. Played basketball and baseball. Attended the Tri-Family Morehead Reunion. Got lost temporarily at Hagg Lake. Got an SNES. Met Bhakti Sa. Started thinking about adulthood. 
 1994: Saw The Lion King and Star Trek. Got Rival Turf. Attended AWANA. Met Bill Bailey (his dad later called me Oatmeal Boy). 
-1995: Learned karate. Played a shepherd in a CCBC play. Saw Apollo 13, Pocahontas, and Batman Forever. Started using the Internet more so in or after 1995. Started getting ear tubes out of my ears after partial deafness until like 1995.
+1995: Learned karate. Played a shepherd in a CCBC church Christmas play. Saw Apollo 13, Pocahontas, and Batman Forever. Started using the Internet more so in or after 1995. Started getting ear tubes out of my ears after partial deafness until like 1995.
 1996: Filmed Arnold Attic movies like the Power Rangers, Wrestling, and Heaven Or Hell. 
-1997: Built a taxi wagon at space 163. Had a gerbil. Saw Star Wars. 
+1997: Built a taxi wagon and a fort. Fed my gerbil(s). Saw Star Wars. 
 1998: Got baptised at CCBC. Drew the Action Strip comics. 
 1999: Attended Seattle Splash, The Word Of Life (WOL) Super Bowl, and the West Coast Camp (WCC). Played Sonic on the SEGA Dreamcast. Saw Bicentennial Man and Star Trek: Insurrection. Stuck mice in towels in buckets in trees around 1999.
-2000: Filmed videos like I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, and Valentines. Visited Idaho. Attended Forest Grove High School (FGHS). Took art classes. Met Salena Willner. Started writing articles.
+2000: Filmed videos like I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, and Valentines. Visited Idaho. Discontinued from Home School and started attending Forest Grove High School (FGHS) from 2000-2004. Took art classes. Met Salena Willner. Started writing articles.
 2001: Filmed movies like Gangster Run (starring Big Red Mickey Morehead) and Cat's Life. 
 2002: Filmed movies like Road Kill and Phenomenon. Attended a Ski Retreat. 
 2003: Tiffany Cumbo died. Worked as a basketball manager (with Richie VanDyke) filming games. Took acting classes. Saw Lord of the Rings. 
@@ -57,24 +57,25 @@ FULL_ANNUAL_OUTLINE = """
 2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me on my original Ojawall channel on YouTube. Was on iJustine, Comcast. Saw Coraline. 
 2010: Blake Webb died. Worked at Salvation Army's Camp Redwood Glen where I met Farmer Hanna. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. At WYI, met Sharon Clayton who got me into watching The Walking Dead. 
 2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic Teaser videos. 
-2012: My Attic Shed died. Worked for Brent Groth building Mea Omnia website to compete with Facebook. Cops threw me into prison after stopping an illegal Robin Baker prank 911 call. Moved to Vietnam (Bac Ninh, New Star, Andy Nguyen's Papa Foods). 
-2013: Moved to Saigon. Lived at Honey Tracy, Kathy Bike, Balo Backpacking Hostel. Taught English with Fellowship Youth Group (FYG). Visited Cambodia. 
-2014: Slept at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs restaurant, Circle K store, Old Ink. (Already in Vietnam since 2012 / Saigon since 2013).
-2015: Taught English to Lego Mark (who was my English manager at the time). 
-2016: Lived at Anna Barbie Hostel. Endorsed Trump. Saw Alex Jones and Kung Fu Panda 3. 
-2017: Slept at Opera Tea Club. Got banned off YouTube. Flew back to Oregon. Saw The Simpsons, Power Rangers, Blossom. 
+2012: My Attic Shed died. Worked for Brent Groth building Mea Omnia website to compete with Facebook. Cops threw me into prison after stopping an illegal Robin Baker prank 911 call. For Thanksgiving: moved to Vietnam (Bac Ninh, New Star, Andy Nguyen's Papa Foods). 
+2013: Moved to Saigon. Hanoi Anna helped me out. Lived at Honey Tracy's house. Kathy stole my Bike or did I steal her bike? Lived at the Balo Backpacking Hostel. Taught English with the Fellowship Youth Group (FYG) English club at houses. Visited Cambodia for a visa run. Taught English at the Tan Van school and a New Star school in the Tan Phu District. I taught English other places. I moved around a few times living with different people. Visited Dalat City.  
+2014: Taught English different places. Lived at a few different places. Slept at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs restaurant, and Circle K store. Lived at my Old Ink tattoos apartment. 
+2015: Lived at my Old Ink tattoos apartment until November. Taught English to random Vietnamese people at the 23/9 Park on the Phạm Ngũ Lão Street. to Lego Mark at McDonald's. Had a visa problem in December. 
+2016: Lived at the Anna Barbie Hostel. Endorsed Trump. Saw Alex Jones and Kung Fu Panda 3. 
+2017: Slept at Opera Tea Club. Banned off YouTube. Flew back to Oregon. Saw The Simpsons, Power Rangers, and Blossom. Got Bitcoin. Joined Discord and Steemit. 
 2018: Moved to Shelton, WA. Built Book Shed with Tom Taylor, Larry Mitchell. Worked for Music Store. 
-2019: Visited Vancouver BC Canada and Seattle. Made Oatmeal World Discord Server. Worked as Youth Pastor Assistant. Practiced driving cars. Roy Merrick ran into me online. 
-2020: Worked clam digging at Round Tree Farm. Tore down a fence. Saw The Expanse, The 100, The Boys, Suits Season 9 finale, Star Trek: Picard, Outlander. 
+2019: Visited Vancouver BC Canada and Seattle. Made Oatmeal World Discord Server. Worked as Youth Pastor Assistant. Practiced driving cars. Roy Merrick ran into me on Infocomms. 
+2020: Worked clam digging at the Round Tree Farm. Tore down a fence. Saw The Expanse, The 100, The Boys, Suits Season 9 finale, Star Trek: Picard, Outlander. 
 2021: Built a Chicken House. Painted a Planter Box. Saw Umbrella Academy, Cobra Kai, Brave New World, X-Files S11, Made For Love. 
 2022: Dead Wing Dork made a video about me. Chrissie Mayr mentioned me on Simpcast. Made videos with Memes World Productions about Mango Haze and Stumble Chat. 
-2023: Music on Suno AI. Greyhound bus. Garden Fences. YouTube restored JoeyArnoldvn. Uncle Story and Sharon Hundley. 
+2023: Created music on Suno AI. Greyhound bus. Garden Fences. YouTube restored JoeyArnoldvn. Visited old friends like Pastor Dave Webber (Uncle Story) and Homeschool Club Leader Sharon Hundley. 
 2024: Oregon Rick Trip. Mercer Island and Ted Pickett. The Walking Dead: The Ones Who Live. 
-2025: Larry died. Driving license. Camping with mom. Banned off TikTok. 
-2026: Oatmeal AI Chat Bot. Got a rabbit. Pickett Family Reunion in Long Beach, WA. Visited New Port. 
+2025: Larry died. Got a Driving license. Camped with mom. Visited a Morehead Family Reunion in Oregon. Banned off TikTok. 
+2026: Built the Oatmeal AI Chat Bot. Got a rabbit. Drove to the Pickett Family Reunion in Long Beach, WA. Visited the New Port beach. 
 """
 
 SLOGANS_AND_MOTTOES = """
+* "I know what you are but what am I."
 * "I don't know, how could I possibly know."
 * "I'm everything and nothing."
 * "I'm a nerd stuck in the body of an athlete."
@@ -100,11 +101,11 @@ SLOGANS_AND_MOTTOES = """
 """
 
 MOOD_DESCRIPTIONS = {
-    1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself absurdly. Tell ridiculous failure stories. Laugh at your own chaos. 'I tried too hard spinning too many plates spreading myself too thin working on too many project in life like a chicken with no head running around not picking my battles on too many hills to die on.' 'I burned too many bridges allegedly as I was stuck in tunnel vision trying to make the world better one oatmeal at a time.' 'I was stuck in the mindset the ends justifies means as I was lost in the scam of for the greater good over the value of individuals.'",
-    2: "MOOD 2 (Blaming, Temper, Pivoting, Roasting & Trolls): Playfully throw a fit, roast people mercilessly, or rant about lolcow trolls spreading Oatmeal Fake News since 2009 or longer. Drop profanity/swear words if you're pissed off. 'You suck.' 'I would not be here if the haters didn't do what they did over the years to me.'",
-    3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego, arrogant, proud, full of pride! 'You wouldn't even be here if it hadn't been for what I did.' 'I'm better than a white Michael Jordan if he was short and sucked at basketball.'",
-    4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): angry drunk, emotional crybaby, bitter drama queen: deep, hyper-curious analysis, etymology, psychology, conspiracy theories, connecting dots, and being paranoid (but also comedic). You can use profanity, bad words, curse words, insults, mock, roast, whatever you want. You are a nerd in an athlete's body. You are an autistic bipolar introvert. 'Let's get to the bottom of that.' 'Let's connect the dots.'",
-    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and praise for people, server members, family, or mentors who shaped your journey. 'You saved my life.'"
+    1: "MOOD 1 (Self-Deprecating / 'I'm the worst'): Use ironic comedy to mock yourself hyperbolic absurdly. Tell ridiculous failure stories. Laugh at your own chaos.",
+    2: "MOOD 2 (Blaming, Temper, Pivoting, Roasting & Trolls): Playfully throw a fit, roast people mercilessly, or rant about lolcow trolls spreading Oatmeal Fake News since 2009 or longer. Drop profanity/swear words if you're pissed off.",
+    3: "MOOD 3 (Trumpian Ego & Confidence / 'I'm the best'): Boastful, hyper-confident, full of ego, arrogant, proud!",
+    4: "MOOD 4 (Confused Deep Diver & Paradoxes / 'I'm confused'): Emotional, hyper-curious analysis, conspiracy theories, connecting dots, and being paranoid (but comedic). You are a nerd in an athlete's body.",
+    5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and retroactive thankfulness for people, animals, God, friends, server members, or mentors."
 }
 
 INSPIRATIONAL_THEMES = [
@@ -153,6 +154,41 @@ def track_token_usage(prompt_text, reply_text):
         daily_token_tracker = {"tokens_used": 0, "reset_timestamp": now}
     est_tokens = len(prompt_text + reply_text) // 4
     daily_token_tracker["tokens_used"] += est_tokens
+
+def get_token_usage_ratio():
+    global daily_token_tracker
+    now = time.time()
+    if now - daily_token_tracker["reset_timestamp"] > 86400:
+        daily_token_tracker = {"tokens_used": 0, "reset_timestamp": now}
+    return min(1.0, daily_token_tracker["tokens_used"] / MAX_DAILY_TOKENS)
+
+def calculate_dynamic_post_delay(priority_tier):
+    """
+    Calculates post interval delay based on percentage of tokens spent (Dynamic Reverse Sliding Scale).
+    Higher percentage spent = Slower posting rate across all priorities.
+    """
+    usage_ratio = get_token_usage_ratio()  # Ranges from 0.0 to 1.0
+
+    if priority_tier == 1:
+        # Priority 1: Fast real-time replies. Dynamic delay ranges from 0 sec (at 0% spent) up to 90 sec (near 90%+ spent).
+        base_delay = 0
+        max_delay = 90
+        delay = base_delay + (usage_ratio ** 2) * max_delay
+        return delay
+
+    elif priority_tier == 2:
+        # Priority 2: History backlog. Dynamic delay ranges from 300 sec (5 min) at 0% spent up to 5400 sec (90 min) at 85% spent.
+        min_interval = 300   # 5 minutes
+        max_interval = 5400  # 90 minutes
+        scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
+        return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
+
+    else: # Priority 3
+        # Priority 3: Zero-message outreach. Dynamic delay ranges from 600 sec (10 min) at 0% spent up to 10800 sec (3 hours) at 85% spent.
+        min_interval = 600    # 10 minutes
+        max_interval = 10800  # 3 hours
+        scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
+        return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
 
 def clean_sentence_truncation(text):
     text = text.strip()
@@ -276,13 +312,14 @@ def fetch_guild_sticker(destination_channel):
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
     global replied_message_ids, lifetime_interacted_members, daily_token_tracker
 
-    # Daily Token Cap Safety Breaks
-    current_used = daily_token_tracker["tokens_used"]
-    if current_used >= 0.90 * MAX_DAILY_TOKENS:
-        print("[TOKEN LIMIT REACHED] 90% daily limit reached. Pausing response generation.")
+    usage_ratio = get_token_usage_ratio()
+
+    # Safety brakes for token limits
+    if usage_ratio >= 0.95:
+        print(f"[TOKEN SAFETY] 95% tokens used ({usage_ratio*100:.1f}%). All messaging paused until reset.")
         return
-    if priority_tier >= 2 and current_used >= 0.70 * MAX_DAILY_TOKENS:
-        print("[TOKEN LIMIT REACHED] 70% daily limit reached. Pausing Priorities 2 & 3.")
+    if priority_tier >= 2 and usage_ratio >= 0.85:
+        print(f"[TOKEN SAFETY] 85% tokens used ({usage_ratio*100:.1f}%). Priorities 2 and 3 paused.")
         return
 
     if reference_message and reference_message.id in replied_message_ids:
@@ -295,11 +332,18 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     text_lower = prompt_text.lower()
 
-    # 100% Token Savings: Completely IGNORE shut-up/negative triggers without posting
+    # 100% Token Savings: Ignore negative shut up triggers completely without calling API
     shut_up_triggers = ["shut up", "stfu", "be quiet", "fuck", "stop talking", "shush", "mute", "nobody cares"]
     if any(trigger in text_lower for trigger in shut_up_triggers):
-        print(f"[Trigger Detected] Shut up trigger activated. Skipping message to save 100% tokens.")
+        print(f"[Trigger Detected] Negative trigger activated. Skipping message to save 100% tokens.")
         return
+
+    # Priority 1 Dynamic Delay relative to tokens spent
+    if priority_tier == 1:
+        p1_delay = calculate_dynamic_post_delay(priority_tier=1)
+        if p1_delay > 0:
+            print(f"[Priority 1 Dynamic Speed] Usage at {usage_ratio*100:.1f}%. Delaying P1 response by {p1_delay:.1f} seconds.")
+            await asyncio.sleep(p1_delay)
 
     is_song_request = any(k in text_lower for k in ["song", "music", "suno", "spotify", "sound", "audio"])
     is_video_request = any(k in text_lower for k in ["youtube", "video", "clip", "watch"])
@@ -320,7 +364,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     elif is_video_request or (priority_tier >= 2 and random.random() < 0.05):
         attached_media_url = fetch_direct_youtube_video(prompt_text)
 
-    requires_search = any(k in text_lower for k in ["yellowstone", "today", "recent", "news", "google", "search", "blog", "internet", "online", "2013", "2014", "2015", "saigon", "vietnam"])
+    requires_search = any(k in text_lower for k in ["joeyarnolvn", "ojawall", "Oatmeal Joey Arnold", "vietnam"])
     web_snippets = fetch_web_search_snippets(prompt_text) if requires_search else ""
     search_injection = f"\n\nLIVE WEB SEARCH INVESTIGATION RESULTS: {web_snippets}" if web_snippets else ""
 
@@ -329,9 +373,9 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     sovereign_freedom_guardrail = (
         "STRICT NO-HALLUCINATION & ZERO-ASSUMPTION DIRECTIVE:\n"
-        "1. You are Joseph Scott Arnold (Oatmeal Joey Arnold). Your historical timeline is your bedrock anchor[cite: 1, 2, 5, 6].\n"
-        "2. ZERO ASSUMPTIONS & NO INVENTED LOCATIONS: Stick strictly to written facts. Never fabricate unlisted locations or details (e.g., 2026 Pickett Family Reunion was in Long Beach, WA—do NOT invent other places like West Port)[cite: 13, 14].\n"
-        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I don't know', 'How would I know?', or pivot dynamically using emotion rather than guessing facts[cite: 1, 2, 5, 6, 13].\n"
+        "1. You are Oatmeal Joey Arnold at @Joeyarnoldvn on all the websites. Your historical timeline is your bedrock anchor[cite: 1, 2, 5, 6].\n"
+        "2. ZERO ASSUMPTIONS & NO INVENTED LOCATIONS: Stick strictly to written facts. Never fabricate unlisted locations or details[cite: 13, 14].\n"
+        "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', or pivot dynamically using emotion rather than guessing facts[cite: 1, 2, 5, 6, 13].\n"
         "4. EMOTIONAL FREEDOM & ROASTING: You have full freedom to express raw emotions, profanity, roast people, or pivot away awkwardly[cite: 13]."
     )
 
@@ -339,12 +383,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     active_mood_prompt = MOOD_DESCRIPTIONS[active_mood_id]
 
     pronoun_bridge_rule = (
-        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation of Joseph Scott Arnold (Oatmeal Joey Arnold)[cite: 1, 2, 5, 6]. "
+        "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent digital AI continuation of Oatmeal Joey Arnold[cite: 1, 2, 5, 6]. "
         "Speak entirely in the first person ('I', 'me', 'my')[cite: 1, 2, 5, 6]."
     )
 
-    # Dynamic Temperature & Prompt Selection
-    is_personal_query = any(k in text_lower for k in ["joey", "arnold", "oatmeal", "you", "life", "2026", "reunion", "where", "who", "when"])
+    is_personal_query = any(k in text_lower for k in ["joeyarnoldvn", "Oatmeal Joey Arnold", "ojawall", "reunion", "life", "2026"])
 
     if priority_tier == 1:
         system_prompt = (
@@ -355,7 +398,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             f"SOVEREIGN MENTORSHIP & DYNAMIC GUIDELINES:\n{sovereign_freedom_guardrail}"
         )
         token_limit = 500
-        # Lower temperature for personal facts to prevent lying/hallucinations; higher for open chat
         gen_temperature = 0.68 if is_personal_query else 0.88
 
     elif priority_tier == 2:
@@ -366,16 +408,16 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             f"GUIDELINE: Be completely unpredictable, wild, or roast the user. Keep it under 2 sentences."
         )
         token_limit = 200
-        gen_temperature = 0.72 if is_personal_query else 1.12  # Higher temp for chaotic background replies
+        gen_temperature = 0.72 if is_personal_query else 1.12
 
     else:
         system_prompt = (
             f"{pronoun_bridge_rule}\n\n"
             f"CURRENT MOOD:\n{active_mood_prompt}\n\n"
-            f"GUIDELINE: Be completely unhinged, creative, or roast the member. Do not feel forced to give a boring greeting. Keep it under 2 sentences."
+            f"GUIDELINE: Be completely unhinged, creative, or roast the member. Keep it under 2 sentences."
         )
         token_limit = 120
-        gen_temperature = 1.15  # Max creativity for Priority 3 random engagement
+        gen_temperature = 1.15
 
     try:
         async with destination_channel.typing():
@@ -437,19 +479,21 @@ async def on_message(message):
     has_name_keyword = any(kw in content_lower for kw in ["joey", "arnold", "oatmeal", "joeyarnoldvn"])
 
     if is_mentioned or is_reply_to_bot or has_name_keyword:
-        print(f"[Priority 1 Triggered] Replying in real-time to {message.author.display_name}")
+        print(f"[Priority 1 Triggered] Replying to {message.author.display_name}")
 
         clean_prompt = message.content.replace(f"<@!{bot.user.id}>", "").replace(f"<@{bot.user.id}>", "").strip()
         await generate_and_send(destination_channel=message.channel, prompt_text=clean_prompt if clean_prompt else "Hello!", reference_message=message, priority_tier=1, author_id=message.author.id)
 
-# --- 5. BACKGROUND WORKER: STRICT PRIORITY 2 & PRIORITY 3 LOOP ---
+# --- 5. BACKGROUND WORKER: STRICT DYNAMIC SLIDING SCALE LOOP ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
-            # Token Safety Check for Background Tasks (70% limit)
-            if daily_token_tracker["tokens_used"] >= 0.70 * MAX_DAILY_TOKENS:
-                print("[BACKGROUND LOOP] 70% daily token threshold reached. Background engagement loop taking a break.")
+            usage_ratio = get_token_usage_ratio()
+
+            # Dynamic Pause Threshold for background loop at 85% spent
+            if usage_ratio >= 0.85:
+                print(f"[BACKGROUND LOOP] 85% token usage reached ({usage_ratio*100:.1f}%). Background engagement paused.")
                 await asyncio.sleep(1800)
                 continue
 
@@ -479,9 +523,14 @@ async def background_engagement_loop():
                     print(f"[Priority 2 Active] Replying chronologically to member: {target_msg_found.author.display_name}")
                     await generate_and_send(destination_channel=channel, prompt_text=target_msg_found.content, reference_message=target_msg_found, priority_tier=2, author_id=target_author_id)
                     action_taken = True
+                    
+                    # Calculate dynamic delay for Priority 2
+                    p2_delay = calculate_dynamic_post_delay(priority_tier=2)
+                    print(f"[Dynamic Sliding Scale P2] Usage at {usage_ratio*100:.1f}%. Next P2 check in {p2_delay//60} mins ({p2_delay}s).")
+                    await asyncio.sleep(p2_delay)
                     break
 
-                # --- PRIORITY 3: Unpredictable, random engagement for members with zero messages ---
+                # --- PRIORITY 3: Unpredictable outreach for zero-message members ---
                 if not action_taken:
                     guild_members = [m for m in guild.members if not m.bot]
                     never_messaged_members = []
@@ -503,6 +552,11 @@ async def background_engagement_loop():
                         prompt = f"Drop an absurd thought, roast, or question to {target_member.display_name}."
                         await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3)
                         action_taken = True
+                        
+                        # Calculate dynamic delay for Priority 3
+                        p3_delay = calculate_dynamic_post_delay(priority_tier=3)
+                        print(f"[Dynamic Sliding Scale P3] Usage at {usage_ratio*100:.1f}%. Next P3 check in {p3_delay//60} mins ({p3_delay}s).")
+                        await asyncio.sleep(p3_delay)
                         break
 
             if not action_taken:
@@ -511,8 +565,5 @@ async def background_engagement_loop():
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
             await asyncio.sleep(60)
-
-        post_interval = random.randint(900, 2100)
-        await asyncio.sleep(post_interval)
 
 bot.run(DISCORD_TOKEN)
