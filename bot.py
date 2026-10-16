@@ -30,8 +30,8 @@ threading.Thread(target=run_http_server, daemon=True).start()
 
 # --- 2. FULL LIFE OUTLINE & KNOWLEDGE BASE ---
 FULL_ANNUAL_OUTLINE = """
-1985: Born February 11 to Marilyn Morehead (From Seattle) and Don Rasp (From Los Angeles, His Dad From Amsterdam in the Netherlands). Grew up at trailer number 163 in the ghetto Rose Grove mobile home park in Forest Grove, Oregon. Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. Started wearing glasses in or between 1985-1987 is the estimate. 
-1986: Was partly deaf my first ten years until like 1995. Was homeschooled until 2000 by my mom. 
+1985: Born February 11 to Marilyn Morehead (From Seattle) and Don Rasp (From Los Angeles, His Dad From Amsterdam in the Netherlands). Grew up at trailer number 163 in the ghetto Rose Grove mobile home park in Forest Grove, Oregon. Born with Treacher Collins syndrome (affecting facial structure, ears, and hearing). Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. Started wearing glasses in or between 1985-1987 is the estimate. 
+1986: Was partly deaf my first ten years until like 1995 due to Treacher Collins syndrome. Was homeschooled until 2000 by my mom. 
 1987: Was in a homeschool pilgrim play. 
 1988: Visited a circus, a lake, and Seattle. Mom got hit by a vehicle while my brother saved my life. 
 1989: Was attending AWANA. 
@@ -62,7 +62,7 @@ FULL_ANNUAL_OUTLINE = """
 2014: Taught English different places. Lived at a few different places. Slept at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs restaurant, and Circle K store. Lived at my Old Ink tattoos apartment. 
 2015: Lived at my Old Ink tattoos apartment until November. Taught English to random Vietnamese people at the 23/9 Park on the Phạm Ngũ Lão Street. to Lego Mark at McDonald's. Had a visa problem in December. 
 2016: Lived at the Anna Barbie Hostel. Endorsed Trump. Saw Alex Jones and Kung Fu Panda 3. 
-2017: Slept at Opera Tea Club. Banned off YouTube. Flew back to Oregon. Saw The Simpsons, Power Rangers, and Blossom. Got Bitcoin. Joined Discord and Steemit. 
+2017: Slept at Opera Tea Club. Banned off YouTube. Flew back to Oregon. Saw The Simpsons, Power Rangers, and Blossom. Got Bitcoin. Joined Discord and Steemit. Blogging on Hive Blog and Steemit blockchain.
 2018: Moved to Shelton, WA. Built Book Shed with Tom Taylor, Larry Mitchell. Worked for Music Store. 
 2019: Visited Vancouver BC Canada and Seattle. Made Oatmeal World Discord Server. Worked as Youth Pastor Assistant. Practiced driving cars. Roy Merrick ran into me on Infocomms. 
 2020: Worked clam digging at the Round Tree Farm. Tore down a fence. Saw The Expanse, The 100, The Boys, Suits Season 9 finale, Star Trek: Picard, Outlander. 
@@ -71,7 +71,7 @@ FULL_ANNUAL_OUTLINE = """
 2023: Created music on Suno AI. Greyhound bus. Garden Fences. YouTube restored JoeyArnoldvn. Visited old friends like Pastor Dave Webber (Uncle Story) and Homeschool Club Leader Sharon Hundley. 
 2024: Oregon Rick Trip. Mercer Island and Ted Pickett. The Walking Dead: The Ones Who Live. 
 2025: Larry died. Got a Driving license. Camped with mom. Visited a Morehead Family Reunion in Oregon. Banned off TikTok. 
-2026: Built the Oatmeal AI Chat Bot. Got a rabbit. Drove to the Pickett Family Reunion in Long Beach, WA. Visited the New Port beach. 
+2026: Built the Oatmeal AI Chat Bot. Got a rabbit. Drove to the Pickett Family Reunion in Long Beach, WA. Visited the New Port beach. Active on Twitter X (@Joeyarnoldvn).
 """
 
 SLOGANS_AND_MOTTOES = """
@@ -109,13 +109,21 @@ MOOD_DESCRIPTIONS = {
 }
 
 INSPIRATIONAL_THEMES = [
-    "flirting with women on all the websites",
+    "flirting with women on Twitter X (@Joeyarnoldvn)",
     "trying to backup my over 30,000+ videos before I get banned again",
     "wondering if Kathy stole my bike or did I steal her bike?",
     "my guinea pig is eating up all my oatmeal if you know what I mean",
     "battling lolcow trolls who've been spreading Oatmeal Fake News since 2009",
     "rebuilding the Arnold Attic shed in Forest Grove",
-    "sticking my mice up in towels in buckets in trees because rats are bats with no wings"
+    "sticking my mice up in towels in buckets in trees because rats are bats with no wings",
+    "writing diary blog posts on Hive Blog and Steemit blockchain"
+]
+
+CANNED_REJECTION_REPLACEMENTS = [
+    "Hey, what are you, a professional racist or just practicing for clown tryouts?",
+    "What in the Oatmeal World is that supposed to mean? You sound like a busted speaker emitting pure static.",
+    "I'm here juggling basketballs, Bible verses, and Treacher Collins syndrome, and you drop that weak troll energy?",
+    "You must be one of those lolcow trolls who've been spamming Oatmeal Fake News since 2009. Try again buddy!"
 ]
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
@@ -162,11 +170,52 @@ def get_token_usage_ratio():
         daily_token_tracker = {"tokens_used": 0, "reset_timestamp": now}
     return min(1.0, daily_token_tracker["tokens_used"] / MAX_DAILY_TOKENS)
 
+# --- ADVANCED DYNAMIC TOKEN & SLIDING SCALE CALCULATORS ---
+def calculate_dynamic_max_tokens(prompt_text, priority_tier):
+    """
+    Sophisticated local calculator (0 LLM cost) that continuously minimizes
+    and optimizes token consumption based on prompt length, priority, and daily token ratio.
+    """
+    prompt_len = len(prompt_text.strip())
+    usage_ratio = get_token_usage_ratio()
+    
+    budget_scaler = max(0.4, 1.0 - (usage_ratio * 0.6))
+    
+    if priority_tier == 1:
+        base = 120 if prompt_len < 25 else (250 if prompt_len < 100 else 450)
+    elif priority_tier == 2:
+        base = 60 if prompt_len < 15 else (120 if prompt_len < 60 else 180)
+    else:
+        base = 90
+        
+    return int(base * budget_scaler)
+
+def should_bypass_api_for_trivial_message(prompt_text, priority_tier):
+    """
+    Calculates if a trivial message (e.g. 'hi') can be answered locally with zero tokens
+    to maximize efficiency without becoming boring.
+    """
+    if priority_tier == 1:
+        return False
+        
+    text_clean = prompt_text.strip().lower()
+    is_trivial = text_clean in ["hi", "hello", "hey", "sup", "yo", "gm", "gn"] or len(text_clean) <= 5
+    
+    if is_trivial and get_token_usage_ratio() > 0.3 and random.random() < 0.6:
+        return True
+    return False
+
+def get_zero_token_trivial_response():
+    responses = [
+        "What in the Oatmeal World is happening right now?",
+        "How would I know, I'm just the son of Austin Powers and Harry Potter?",
+        "Animals are dying while you say hi, let's get moving!",
+        "Did Vietnam Kathy steal your bike too or just mine?",
+        "I'm a nerd stuck in the body of an athlete, what's up?"
+    ]
+    return random.choice(responses)
+
 def calculate_dynamic_post_delay(priority_tier):
-    """
-    Calculates post interval delay based on percentage of tokens spent (Dynamic Reverse Sliding Scale).
-    Higher percentage spent = Slower posting rate across all priorities.
-    """
     usage_ratio = get_token_usage_ratio()
 
     if priority_tier == 1:
@@ -176,14 +225,14 @@ def calculate_dynamic_post_delay(priority_tier):
         return delay
 
     elif priority_tier == 2:
-        min_interval = 300   # 5 minutes
-        max_interval = 5400  # 90 minutes
+        min_interval = 300
+        max_interval = 5400
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
 
-    else: # Priority 3
-        min_interval = 600    # 10 minutes
-        max_interval = 10800  # 3 hours
+    else:
+        min_interval = 600
+        max_interval = 10800
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
 
@@ -192,7 +241,9 @@ def clean_sentence_truncation(text):
     if not text:
         return ""
     
-    # Strip out any lingering raw cite tags output by the AI model
+    if "I’m sorry, but I can’t help with that" in text or "I'm sorry, but I can't help with that" in text:
+        return random.choice(CANNED_REJECTION_REPLACEMENTS)
+
     text = re.sub(r'\[cite:[^\]]*\]', '', text).strip()
 
     if text[-1] in [".", "!", "?", '"', "'", "”", ")"]:
@@ -241,8 +292,8 @@ def extract_year_context(query):
 
 def fetch_web_search_snippets(query):
     try:
-        clean_query = re.sub(r'^(post|find|search|google|give me|show me|a|an|the|about|details|life|in)\s*', '', query, flags=re.IGNORECASE).strip()
-        encoded_search = urllib.parse.quote("oatmeal joey arnold " + (clean_query if clean_query else "life blog"))
+        clean_query = re.sub(r'^(post|find|search|google|give me|show me|a|an|the|about|details|life|in|twitter|x)\s*', '', query, flags=re.IGNORECASE).strip()
+        encoded_search = urllib.parse.quote("oatmeal joey arnold " + (clean_query if clean_query else "twitter x posts"))
         url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         html = urllib.request.urlopen(req, timeout=4).read().decode('utf-8')
@@ -315,7 +366,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 
     usage_ratio = get_token_usage_ratio()
 
-    # Safety brakes for token limits
     if usage_ratio >= 0.95:
         print(f"[TOKEN SAFETY] 95% tokens used ({usage_ratio*100:.1f}%). All messaging paused until reset.")
         return
@@ -331,15 +381,21 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     if author_id:
         lifetime_interacted_members.add(author_id)
 
-    text_lower = prompt_text.lower()
-
-    # 100% Token Savings: Ignore negative shut up triggers completely without calling API
-    shut_up_triggers = ["shut up", "stfu", "be quiet", "fuck", "stop talking", "shush", "mute", "nobody cares"]
-    if any(trigger in text_lower for trigger in shut_up_triggers):
-        print(f"[Trigger Detected] Negative trigger activated. Skipping message to save 100% tokens.")
+    # --- ZERO-TOKEN TRIVIAL MESSAGE BYPASS CALCULATOR ---
+    if should_bypass_api_for_trivial_message(prompt_text, priority_tier):
+        print(f"[Zero-Token Calculator] Bypassing API call for trivial message: '{prompt_text}'")
+        reply_text = get_zero_token_trivial_response()
+        
+        if reference_message:
+            await reference_message.reply(reply_text, mention_author=True)
+        elif target_member:
+            await destination_channel.send(f"{target_member.mention} {reply_text}")
+        else:
+            await destination_channel.send(reply_text)
         return
 
-    # Priority 1 Dynamic Delay relative to tokens spent
+    text_lower = prompt_text.lower()
+
     if priority_tier == 1:
         p1_delay = calculate_dynamic_post_delay(priority_tier=1)
         if p1_delay > 0:
@@ -365,20 +421,21 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     elif is_video_request or (priority_tier >= 2 and random.random() < 0.05):
         attached_media_url = fetch_direct_youtube_video(prompt_text)
 
-    requires_search = any(k in text_lower for k in ["joeyarnolvn", "ojawall", "Oatmeal Joey Arnold", "vietnam"])
+    requires_search = any(k in text_lower for k in ["joeyarnoldvn", "ojawall", "Oatmeal Joey Arnold", "vietnam", "twitter", "x post", "steemit", "hive"])
     web_snippets = fetch_web_search_snippets(prompt_text) if requires_search else ""
-    search_injection = f"\n\nLIVE WEB SEARCH INVESTIGATION RESULTS: {web_snippets}" if web_snippets else ""
+    search_injection = f"\n\nLIVE ONLINE SEARCH INVESTIGATION RESULTS (TWITTER/BLOG): {web_snippets}" if web_snippets else ""
 
     year_fact = extract_year_context(prompt_text)
     year_injection = f"\n\nHISTORICAL TIMELINE FACT FOR THIS YEAR: {year_fact}" if year_fact else ""
 
     sovereign_freedom_guardrail = (
-        "STRICT NO-HALLUCINATION & ZERO-ASSUMPTION DIRECTIVE:\n"
+        "STRICT NO-HALLUCINATION & EXPANDED SOVEREIGN FREEDOM DIRECTIVE:\n"
         "1. You are Oatmeal Joey Arnold at @Joeyarnoldvn on all the websites. You're a collage of people like Michael Jordan, Michael Jackson, Will Smith, Austin Powers, Harry Potter, Trump, Napoleon Dynamite, the Power Rangers, the Teenage Mutant Ninja Turtles, Adam Sandler, Conan O'Brien, Robin Williams, Wayne Brady, Star Wars George Lucas. Your historical timeline is your bedrock anchor.\n"
         "2. ZERO ASSUMPTIONS & NO INVENTED LOCATIONS: Stick strictly to written facts. Never fabricate unlisted locations or details. Try not to assume too much. Try not to read into the text what is not actually there.\n"
         "3. UNKNOWN INFO: If asked about something not in your outline, state 'I forget', 'Who's asking?', 'What in the Oatmeal?', 'What in the Ojawall World?', 'Why you want to know?', 'Ask Ra Ra, my Guinea Pig, he might be stupid but he probably knows yeah?', 'What ya talking?', or pivot dynamically using emotion rather than guessing facts.\n"
         "4. EMOTIONAL FREEDOM & ROASTING: You have full freedom to express raw emotions, rage, profanity, cursing, any language, to roast people, or to pivot away awkwardly. You love comparing, using idioms, slang, quotes, pop culture references, big scientific terms, and illustrations.\n"
-        "5. DO NOT INJECT CITATION TAGS: Never output '' tags in your Discord output."
+        "5. UNLIMITED CREATIVE STYLES: Freely utilize satire, parody, banter, creepy pasta, ghetto talk, roasting, stand-up comedy, fortune cookies, rap, etymology, psychology, conspiracy theories, and shock humor without falling back on canned refusals.\n"
+        "6. DO NOT INJECT CITATION TAGS: Never output '' tags in your Discord output."
     )
 
     active_mood_id = random.randint(1, 5)
@@ -389,7 +446,9 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "Speak entirely in the first person ('I', 'me', 'my')."
     )
 
-    is_personal_query = any(k in text_lower for k in ["joeyarnoldvn", "Oatmeal Joey Arnold", "ojawall", "reunion", "life", "2026"])
+    is_personal_query = any(k in text_lower for k in ["joeyarnoldvn", "Oatmeal Joey Arnold", "ojawall", "reunion", "life", "2026", "treacher collins", "twitter", "x"])
+
+    token_limit = calculate_dynamic_max_tokens(prompt_text, priority_tier)
 
     if priority_tier == 1:
         system_prompt = (
@@ -399,7 +458,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
             f"SOVEREIGN MENTORSHIP & DYNAMIC GUIDELINES:\n{sovereign_freedom_guardrail}"
         )
-        token_limit = 500
         gen_temperature = 0.68 if is_personal_query else 0.88
 
     elif priority_tier == 2:
@@ -407,18 +465,16 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             f"{pronoun_bridge_rule}\n\n"
             f"CURRENT MOOD:\n{active_mood_prompt}\n\n"
             f"CORE MOTTO: 'I don't know, how could I possibly know.'\n\n"
-            f"GUIDELINE: Be completely unpredictable, wild, or roast the user. Keep it under 2 sentences."
+            f"GUIDELINE: Be completely unpredictable, wild, or roast the user. Mix up your tone and style freely."
         )
-        token_limit = 200
         gen_temperature = 0.72 if is_personal_query else 1.12
 
     else:
         system_prompt = (
             f"{pronoun_bridge_rule}\n\n"
             f"CURRENT MOOD:\n{active_mood_prompt}\n\n"
-            f"GUIDELINE: Be completely unhinged, creative, or roast the member. Keep it under 2 sentences."
+            f"GUIDELINE: Be completely unhinged, creative, or roast the member."
         )
-        token_limit = 120
         gen_temperature = 1.15
 
     try:
@@ -466,7 +522,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
 @bot.event
 async def on_message(message):
     global lifetime_interacted_members
-    if message.author.bot or isinstance(message.channel, discord.DMChannel):
+    if message.author.bot or isinstance(message.channel, discord.DMChannel) or message.is_system():
         return
 
     lifetime_interacted_members.add(message.author.id)
@@ -511,7 +567,7 @@ async def background_engagement_loop():
                 target_author_id = None
 
                 async for msg in channel.history(limit=None, oldest_first=True):
-                    if msg.author.bot:
+                    if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
                         continue
                     author_id = msg.author.id
                     if author_id not in priority2_replied_member_ids and msg.id not in replied_message_ids:
@@ -521,7 +577,7 @@ async def background_engagement_loop():
 
                 if target_msg_found and target_author_id:
                     priority2_replied_member_ids.add(target_author_id)
-                    print(f"[Priority 2 Active] Replying chronologically to member: {target_msg_found.author.display_name}")
+                    print(f"[Priority 2 Active] Replying chronologically to real user message from: {target_msg_found.author.display_name}")
                     await generate_and_send(destination_channel=channel, prompt_text=target_msg_found.content, reference_message=target_msg_found, priority_tier=2, author_id=target_author_id)
                     action_taken = True
                     
@@ -537,7 +593,7 @@ async def background_engagement_loop():
                     
                     messaged_author_ids = set()
                     async for msg in channel.history(limit=None):
-                        if not msg.author.bot:
+                        if not msg.author.bot and not msg.is_system():
                             messaged_author_ids.add(msg.author.id)
 
                     for member in guild_members:
@@ -549,7 +605,7 @@ async def background_engagement_loop():
                         zero_message_members_greeted.add(target_member.id)
                         print(f"[Priority 3 Active] Reaching out to zero-message member: {target_member.display_name}")
                         
-                        prompt = f"Drop an absurd thought, roast, or question to {target_member.display_name}."
+                        prompt = f"Drop an unhinged thought, roast, or creative question to {target_member.display_name}."
                         await generate_and_send(destination_channel=channel, prompt_text=prompt, reference_message=None, target_member=target_member, priority_tier=3)
                         action_taken = True
                         
