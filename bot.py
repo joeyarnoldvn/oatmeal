@@ -108,22 +108,31 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 (Gratitude & Praise / 'Others are amazing'): Express appreciation and retroactive thankfulness for people, humans, animals, God, friends, random strangers, server members, family, or mentors who shaped your journey or the journeys of others. Say: 'You saved my life.' 'I owe the oatmeal off my bike to you.'"
 }
 
-INSPIRATIONAL_THEMES = [
-    "flirting with women on Twitter X (@Joeyarnoldvn)",
-    "trying to backup my over 30,000+ videos before I get banned again",
-    "wondering if Kathy stole my bike or did I steal her bike?",
-    "my guinea pig is eating up all my oatmeal if you know what I mean",
-    "battling lolcow trolls who've been spreading Oatmeal Fake News since 2009",
-    "rebuilding the Arnold Attic shed in Forest Grove",
-    "sticking my mice up in towels in buckets in trees because rats are bats with no wings",
-    "writing diary blog posts on Hive Blog and Steemit blockchain"
+FALLBACK_OATMEAL_THOUGHTS = [
+    "I'm thinking about oatmeal right now!",
+	"trying to backup my over 30,000+ videos before I get banned again",
+    "I don't know, how could I possibly know, Ra Ra Roo Roo.",
+    "I'm everything and nothing, a real Spaceman & Diaper Boy.",
+    "I'm a nerd stuck in the body of an athlete.",
+    "Animals are dying.",
+	"I'm down in my Arnold Basement. What happens down here stays down here.",
+	"I'm up in my Arnold Attic billbaileying like Billy Breaker Ugly Mouse.", 
+	"Sorry, gotta go back to fighting my goddamn Lolcow Trolls who have been spamming Oatmeal Fake News about me since 2009 or longer.",
+	"I'm writing on my blog.",
+	"I'm daydreaming about my love Roy Golden Boy Merrick on his boatship craft with legless dogs if you know what I mean.",
+	"I'm riding around on Twitter X doing God knows what.",
+	"Sticking my mice up in towels in buckets in trees because rats are bats with no wings.",
+    "Did Vietnam Kathy steal my bike or did I steal her bike?",
+    "My guinea pig Ra Ra is eating up all my oatmeal if you know what I mean.",
+    "What in the Oatmeal World is happening right now?",
+    "They don't call me Big Red Dog Mickey Morehead for nothing, watch out if you're a woman, I gotta be hitting on you on a website near you."
 ]
 
 BANTER_FALLBACK_RESPONSES = [
     "Oh no you suck? You wouldn't even be here in the Oatmeal World if it wasn't for me!",
     "What do you mean I suck? I'm better than a white Michael Jordan if he was short and sucked at basketball!",
     "You're calling me out while my guinea pig Ra Ra is eating all my oatmeal? Nice try buddy!",
-    "Oh you suck? Go practice your clown tryouts with the rest of the lolcow trolls spreading Oatmeal Fake News since 2009!"
+    "Oh you suck? Go practice your clown tryouts with the rest of the lolcow trolls spamming Oatmeal Fake News since 2009 or longer!"
 ]
 
 # --- 3. CONFIGURATION & CLIENT SETUP ---
@@ -205,7 +214,7 @@ def calculate_dynamic_post_delay(priority_tier):
 def clean_sentence_truncation(text):
     text = text.strip()
     if not text:
-        return "I'm thinking about oatmeal right now!"
+        return random.choice(FALLBACK_OATMEAL_THOUGHTS)
     
     text = re.sub(r'\[cite:[^\]]*\]', '', text).strip()
 
