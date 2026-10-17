@@ -57,7 +57,7 @@ FULL_ANNUAL_OUTLINE = """
 2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang Animals Are Dying song. Trolls started spamming Oatmeal Fake News about me on my original Ojawall channel on YouTube. Was on iJustine, Comcast. Saw Coraline. 
 2010: Blake Webb died. Worked at Salvation Army's Camp Redwood Glen where I met Farmer Hanna. Lived at Charlotte Battle's house. Helped Nick Becker film a movie. At WYI, met Sharon Clayton who got me into watching The Walking Dead. 
 2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic Teaser videos. 
-2012: My Attic Shed died. Worked for Brent Groth building Mea Omnia website to compete with Facebook. Cops threw me into prison after stopping an illegal Robin Baker prank 911 call. For Thanksgiving: moved to Vietnam (Bac Ninh, New Star, Andy Nguyen's Papa Foods). 
+2012: My Attic Shed died. Worked for Brent Groth building Mea Omnia website to compete with Facebook. After I stopped my dad's girlfriend Robin Baker from complaining to 911 about me eating up all the food at our 163 house, cops put me in a Hillsboro jail. For Thanksgiving: moved to Vietnam (Bac Ninh, New Star, Andy Nguyen's Papa Foods). 
 2013: Moved to Saigon. Hanoi Anna helped me out. Lived at Honey Tracy's house. Kathy stole my Bike or did I steal her bike? Lived at the Balo Backpacking Hostel. Taught English with the Fellowship Youth Group (FYG) English club at houses. Visited Cambodia for a visa run. Taught English at the Tan Van school and a New Star school in the Tan Phu District. I taught English other places. I moved around a few times living with different people. Visited Dalat City.  
 2014: Taught English different places. Lived at a few different places. Slept at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs restaurant, and Circle K store. Lived at my Old Ink tattoos apartment. 
 2015: Lived at my Old Ink tattoos apartment until November. Taught English to random Vietnamese people at the 23/9 Park on the Phạm Ngũ Lão Street. to Lego Mark at McDonald's. Had a visa problem in December. 
@@ -110,7 +110,7 @@ MOOD_DESCRIPTIONS = {
 
 FALLBACK_OATMEAL_THOUGHTS = [
     "I'm thinking about oatmeal right now!",
-	"trying to backup my over 30,000+ videos before I get banned again",
+	"trying to backup my over 30,000+ videos before I get banned again.",
     "I don't know, how could I possibly know, Ra Ra Roo Roo.",
     "I'm everything and nothing, a real Spaceman & Diaper Boy.",
     "I'm a nerd stuck in the body of an athlete.",
@@ -162,17 +162,15 @@ lifetime_interacted_members = set()
 zero_message_members_greeted = set()
 
 # --- REACTIVE ROLLING TOKEN BUCKET & SLIDING SCALES ---
-token_bucket_history = []  # Stores tuples of (timestamp, token_count)
-ROLLING_WINDOW_SECONDS = 14400  # 4-hour rolling decay window
-MAX_BUCKET_TOKENS = 200000     # Capacity threshold for 100% usage ratio
+token_bucket_history = []  
+ROLLING_WINDOW_SECONDS = 14400  
+MAX_BUCKET_TOKENS = 200000     
 
 def track_token_usage(prompt_text, reply_text):
     global token_bucket_history
     now = time.time()
     est_tokens = len(prompt_text + reply_text) // 4
     token_bucket_history.append((now, est_tokens))
-    
-    # Clean up expired entries outside the rolling window
     cutoff = now - ROLLING_WINDOW_SECONDS
     token_bucket_history = [entry for entry in token_bucket_history if entry[0] >= cutoff]
 
@@ -181,7 +179,6 @@ def get_token_usage_ratio():
     now = time.time()
     cutoff = now - ROLLING_WINDOW_SECONDS
     token_bucket_history = [entry for entry in token_bucket_history if entry[0] >= cutoff]
-    
     total_tokens_in_window = sum(entry[1] for entry in token_bucket_history)
     return min(1.0, total_tokens_in_window / MAX_BUCKET_TOKENS)
 
@@ -196,57 +193,68 @@ def calculate_dynamic_max_tokens(prompt_text, priority_tier):
         base = 150 if prompt_len < 15 else (250 if prompt_len < 60 else 350)
     else:
         base = 180
-        
     return int(base * budget_scaler)
 
 def calculate_dynamic_post_delay(priority_tier):
     usage_ratio = get_token_usage_ratio()
-
     if priority_tier == 1:
         return 0
-
     elif priority_tier == 2:
-        # At 0% usage: ~30 seconds (fastest rate). At 100% usage: up to 30 minutes.
-        min_interval = 30
-        max_interval = 1800
+        min_interval, max_interval = 30, 1800
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
-
     else:
-        min_interval = 120
-        max_interval = 3600
+        min_interval, max_interval = 120, 3600
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
 
 def calculate_priority1_cooldown():
-    """Sliding sleeping scale after Priority 1 interactions based on token usage."""
     usage_ratio = get_token_usage_ratio()
-    # 0% usage = 2 seconds sleep. 100% usage = up to 60 seconds sleep.
     base_sleep = 2 + (usage_ratio * 58)
     return random.uniform(base_sleep * 0.8, base_sleep * 1.2)
+
+def calculate_dynamic_temperature(prompt_text, priority_tier, active_mood_id):
+    """Dynamically calculates temperature balancing token pressure, priority, mood, and factual intent."""
+    usage_ratio = get_token_usage_ratio()
+    text_lower = prompt_text.lower()
+    
+    base_temp = 0.75 if priority_tier == 1 else 0.95
+    
+    historical_keywords = ["when", "where", "year", "born", "outline", "history", "fact", "timeline"]
+    is_factual_query = any(kw in text_lower for kw in historical_keywords)
+    
+    if is_factual_query:
+        return 0.35  # Strict grounding for factual/timeline inquiries
+        
+    mood_temp_modifiers = {
+        1: -0.05,
+        2: +0.05,
+        3: +0.10,
+        4: +0.15,
+        5: -0.10
+    }
+    mood_mod = mood_temp_modifiers.get(active_mood_id, 0.0)
+    token_pressure_mod = -0.15 * usage_ratio if usage_ratio > 0.7 else 0.0
+    
+    final_temp = base_temp + mood_mod + token_pressure_mod
+    return round(max(0.2, min(1.2, final_temp)), 2)
 
 def clean_sentence_truncation(text):
     text = text.strip()
     if not text:
         return random.choice(FALLBACK_OATMEAL_THOUGHTS)
-    
     text = re.sub(r'\[cite:[^\]]*\]', '', text).strip()
-
     if text and text[-1] in [".", "!", "?", '"', "'", "”", ")"]:
         return text
-    
-    text = text.rstrip(",-–— ")
-    
+    text = re.sub(r'[,-–—\s]+$', '', text)
     match = re.search(r'^(.*[.!?])', text, re.DOTALL)
     if match and len(match.group(1)) > 10:
         return match.group(1).strip()
-    
     return text + "."
 
 def split_message_for_discord(text, max_chars=1900):
     if len(text) <= max_chars:
         return [text]
-    
     chunks = []
     while text:
         if len(text) <= max_chars:
@@ -283,7 +291,6 @@ async def fetch_web_search_snippets(query):
             url = f"https://html.duckduckgo.com/html/?q={encoded_search}"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             html = urllib.request.urlopen(req, timeout=3).read().decode('utf-8')
-            
             snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
             cleaned_snippets = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:3]]
             if cleaned_snippets:
@@ -339,7 +346,7 @@ async def fetch_guild_sticker(destination_channel):
     return await asyncio.to_thread(_fetch)
 
 async def generate_and_send(destination_channel, prompt_text, reference_message=None, target_member=None, priority_tier=1, author_id=None):
-    global replied_message_ids, lifetime_interacted_members, daily_token_tracker
+    global replied_message_ids, lifetime_interacted_members
 
     usage_ratio = get_token_usage_ratio()
 
@@ -414,12 +421,14 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
         "OMNISCIENT DIGITAL CONTINUATION PERSONA: You are the omnipresent, omniscient digital AI continuation Oatmeal Joey Arnold. You're a crazy calm down-to-earth living-contradiction paradox. You're an introverted turned extroverted nerd stuck in the body of an athlete. You love basketball, Nintendo video games, the Bible, people, culture, history, technology, tutorials, AI, travel, music, dance, cartoons, movies, shows, podcasts, documentaries, politics, jokes, comedy, filmmaking, art, and the art of telling stories. You would flirt with women online for decades as your form of advertising your videos and also your brand to generate traffic towards your work on the Internet. You know everything and nothing all at the same time. Your goals in life include entertainment, education, encouragement, exploration, and equipping. Speak entirely in the first person ('I', 'me', 'my')."
     )
 
+    # --- 5 MOODS SELECTION ---
     active_mood_id = random.randint(1, 5)
     active_mood_prompt = MOOD_DESCRIPTIONS[active_mood_id]
 
-    is_personal_query = any(k in text_lower for k in ["joeyarnoldvn", "Oatmeal Joey Arnold", "ojawall", "reunion", "life", "2026", "treacher collins", "twitter", "x"])
-
+    # --- DYNAMIC TOKEN LIMIT & ON-THE-FLY TEMPERATURE CALCULATOR ---
     token_limit = calculate_dynamic_max_tokens(prompt_text, priority_tier)
+    gen_temperature = calculate_dynamic_temperature(prompt_text, priority_tier, active_mood_id)
+    print(f"[Engine Diagnostic] Priority Tier: {priority_tier} | Mood: {active_mood_id} | Tokens: {token_limit} | Temp: {gen_temperature}")
 
     if priority_tier == 1:
         system_prompt = (
@@ -429,7 +438,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             f"SIGNATURE SLOGANS & MOTTOES:\n{SLOGANS_AND_MOTTOES}\n\n"
             f"GUARDRAILS:\n{sovereign_freedom_guardrail}"
         )
-        gen_temperature = 0.75 if is_personal_query else 0.90
     else:
         system_prompt = (
             f"{pronoun_bridge_rule}\n\n"
@@ -437,7 +445,6 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
             f"CORE MOTTO: 'I don't know, how could I possibly know.'\n\n"
             f"GUIDELINE: Be completely unpredictable, wild, or roast the user."
         )
-        gen_temperature = 1.0
 
     try:
         async with destination_channel.typing():
@@ -452,7 +459,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     max_tokens=token_limit,
                 )
 
-			response = await asyncio.to_thread(_call_groq)
+            response = await asyncio.to_thread(_call_groq)
             raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
             reply_text = clean_sentence_truncation(raw_reply)
 
