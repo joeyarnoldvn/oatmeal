@@ -161,28 +161,34 @@ priority2_replied_member_ids = set()
 lifetime_interacted_members = set()
 zero_message_members_greeted = set()
 
-daily_token_tracker = {"tokens_used": 0, "reset_timestamp": time.time()}
-MAX_DAILY_TOKENS = 500000
+# --- REACTIVE ROLLING TOKEN BUCKET & SLIDING SCALES ---
+token_bucket_history = []  # Stores tuples of (timestamp, token_count)
+ROLLING_WINDOW_SECONDS = 14400  # 4-hour rolling decay window
+MAX_BUCKET_TOKENS = 200000     # Capacity threshold for 100% usage ratio
 
 def track_token_usage(prompt_text, reply_text):
-    global daily_token_tracker
+    global token_bucket_history
     now = time.time()
-    if now - daily_token_tracker["reset_timestamp"] > 86400:
-        daily_token_tracker = {"tokens_used": 0, "reset_timestamp": now}
     est_tokens = len(prompt_text + reply_text) // 4
-    daily_token_tracker["tokens_used"] += est_tokens
+    token_bucket_history.append((now, est_tokens))
+    
+    # Clean up expired entries outside the rolling window
+    cutoff = now - ROLLING_WINDOW_SECONDS
+    token_bucket_history = [entry for entry in token_bucket_history if entry[0] >= cutoff]
 
 def get_token_usage_ratio():
-    global daily_token_tracker
+    global token_bucket_history
     now = time.time()
-    if now - daily_token_tracker["reset_timestamp"] > 86400:
-        daily_token_tracker = {"tokens_used": 0, "reset_timestamp": now}
-    return min(1.0, daily_token_tracker["tokens_used"] / MAX_DAILY_TOKENS)
+    cutoff = now - ROLLING_WINDOW_SECONDS
+    token_bucket_history = [entry for entry in token_bucket_history if entry[0] >= cutoff]
+    
+    total_tokens_in_window = sum(entry[1] for entry in token_bucket_history)
+    return min(1.0, total_tokens_in_window / MAX_BUCKET_TOKENS)
 
 def calculate_dynamic_max_tokens(prompt_text, priority_tier):
     prompt_len = len(prompt_text.strip())
     usage_ratio = get_token_usage_ratio()
-    budget_scaler = max(0.4, 1.0 - (usage_ratio * 0.6))
+    budget_scaler = max(0.3, 1.0 - (usage_ratio * 0.7))
     
     if priority_tier == 1:
         base = 350 if prompt_len < 25 else (500 if prompt_len < 100 else 750)
@@ -200,16 +206,24 @@ def calculate_dynamic_post_delay(priority_tier):
         return 0
 
     elif priority_tier == 2:
-        min_interval = 120
+        # At 0% usage: ~30 seconds (fastest rate). At 100% usage: up to 30 minutes.
+        min_interval = 30
         max_interval = 1800
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
 
     else:
-        min_interval = 300
+        min_interval = 120
         max_interval = 3600
         scaled_delay = min_interval + (usage_ratio ** 1.5) * (max_interval - min_interval)
         return random.randint(int(scaled_delay * 0.8), int(scaled_delay * 1.2))
+
+def calculate_priority1_cooldown():
+    """Sliding sleeping scale after Priority 1 interactions based on token usage."""
+    usage_ratio = get_token_usage_ratio()
+    # 0% usage = 2 seconds sleep. 100% usage = up to 60 seconds sleep.
+    base_sleep = 2 + (usage_ratio * 58)
+    return random.uniform(base_sleep * 0.8, base_sleep * 1.2)
 
 def clean_sentence_truncation(text):
     text = text.strip()
@@ -438,7 +452,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     max_tokens=token_limit,
                 )
 
-            response = await asyncio.to_thread(_call_groq)
+			response = await asyncio.to_thread(_call_groq)
             raw_reply = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
             reply_text = clean_sentence_truncation(raw_reply)
 
@@ -465,6 +479,11 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
                     await destination_channel.send(f"{target_member.mention} {chunk}")
             else:
                 await destination_channel.send(chunk)
+
+        # Reactive sleep cooldown after responding to Priority 1
+        if priority_tier == 1:
+            cooldown = calculate_priority1_cooldown()
+            await asyncio.sleep(cooldown)
 
     except Exception as e:
         print(f"API Error in generate_and_send: {e}")
@@ -509,16 +528,16 @@ async def on_message(message):
             author_id=message.author.id
         )
 
-# --- 5. BACKGROUND WORKER: UNLIMITED 2019-TO-PRESENT CHRONOLOGICAL CRAWL ---
+# --- 5. BACKGROUND WORKER: REACTIVE ROLLING CRAWL ---
 async def background_engagement_loop():
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
             usage_ratio = get_token_usage_ratio()
 
-            if usage_ratio >= 0.90:
-                print(f"[BACKGROUND LOOP] 90% token usage reached ({usage_ratio*100:.1f}%). Resting background loop for 30 minutes.")
-                await asyncio.sleep(1800)
+            if usage_ratio >= 0.95:
+                print(f"[REACTIVE THROTTLE] 95% rolling token capacity reached ({usage_ratio*100:.1f}%). Pausing background loop for token decay...")
+                await asyncio.sleep(300)
                 continue
 
             action_taken = False
@@ -534,7 +553,6 @@ async def background_engagement_loop():
                     target_msg_found = None
                     target_author_id = None
 
-                    # UNLIMITED CRAWL: limit=None with oldest_first=True pages through the entire server archive from 2019 onward
                     async for msg in channel.history(limit=None, oldest_first=True):
                         if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
                             continue
@@ -547,7 +565,7 @@ async def background_engagement_loop():
 
                     if target_msg_found and target_author_id:
                         priority2_replied_member_ids.add(target_author_id)
-                        print(f"[Priority 2 Deep Crawl] Replying to historical message from {target_msg_found.author.display_name} in #{channel.name}")
+                        print(f"[Priority 2 Reactive Crawl] Usage: {usage_ratio*100:.1f}%. Replying to {target_msg_found.author.display_name} in #{channel.name}")
                         
                         clean_p2 = re.sub(r'<@!?\d+>', '', target_msg_found.content).strip()
                         await generate_and_send(
@@ -560,7 +578,7 @@ async def background_engagement_loop():
                         action_taken = True
                         
                         p2_delay = calculate_dynamic_post_delay(priority_tier=2)
-                        print(f"[Dynamic Sliding Scale P2] Usage at {usage_ratio*100:.1f}%. Next historical crawl in {p2_delay//60} mins ({p2_delay}s).")
+                        print(f"[Reactive Delay P2] Next historical crawl in {p2_delay}s (Usage ratio: {usage_ratio*100:.1f}%)")
                         await asyncio.sleep(p2_delay)
                         break
 
@@ -568,10 +586,10 @@ async def background_engagement_loop():
                     break
 
             if not action_taken:
-                await asyncio.sleep(60)
+                await asyncio.sleep(30)
 
         except Exception as bg_err:
             print(f"Background loop error: {bg_err}")
-            await asyncio.sleep(60)
+            await asyncio.sleep(30)
 
 bot.run(DISCORD_TOKEN)
