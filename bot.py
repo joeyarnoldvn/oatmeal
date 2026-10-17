@@ -400,7 +400,7 @@ async def generate_and_send(destination_channel, prompt_text, reference_message=
     elif is_video_request or (priority_tier >= 2 and random.random() < 0.05):
         attached_media_url = await fetch_direct_youtube_video(prompt_text)
 
-	requires_search = any(k in text_lower for k in ["joeyarnoldvn", "ojawall", "Oatmeal Joey Arnold", "vietnam", "twitter", "x post", "steemit", "hive"])
+    requires_search = any(k in text_lower for k in ["joeyarnoldvn", "ojawall", "Oatmeal Joey Arnold", "vietnam", "twitter", "x post", "steemit", "hive"])
     web_snippets = await fetch_web_search_snippets(prompt_text) if requires_search else ""
     search_injection = f"\n\nLIVE ONLINE SEARCH INVESTIGATION RESULTS (TWITTER/BLOG): {web_snippets}" if web_snippets else ""
 
