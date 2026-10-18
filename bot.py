@@ -144,6 +144,17 @@ BANTER_FALLBACK_RESPONSES = [
     "Nobody cares? Then why is the message still in my face.",
 ]
 
+# Track last hourly fallback timestamp and no-token messages for >=90% usage
+last_hourly_fallback_timestamp = 0
+NO_TOKEN_FALLBACK_MESSAGES = [
+    "Eating oatmeal for lunch, be back soon.",
+    "Oatmeal in the bowl, brain offline for a sec.",
+    "Quick oatmeal break, catch you on the flip side.",
+    "Stoking the oatmeal stove, back in a bit.",
+]
+
+
+
 # --- 3. CONFIGURATION & CLIENT SETUP ---
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -152,7 +163,8 @@ if not DISCORD_TOKEN or not GROQ_API_KEY:
 
 ai_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
 MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-STATE_PATH = os.environ.get("STATE_PATH", "oatmeal_state.json")
+# Safe writable directory for Render ephemeral environment
+STATE_PATH = os.environ.get("STATE_PATH", "/tmp/oatmeal_state.json")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -257,8 +269,34 @@ def calculate_dynamic_max_tokens(prompt_text, priority_tier):
 def calculate_dynamic_post_delay(priority_tier):
     usage_ratio = get_token_usage_ratio()
     lo, hi = 45, 900
-    scaled = lo + (usage_ratio ** 1.4) * (hi - lo)
-    return random.randint(int(scaled * 0.85), int(max(scaled, lo) * 1.15))
+    
+    # Sliding scale frequency: scales smoothly from 0% to 100% usage
+    sliding_scale_factor = 1.0 + (usage_ratio ** 1.5) * 4.0
+    scaled = (lo + (usage_ratio ** 1.4) * (hi - lo)) * sliding_scale_factor
+    base_delay = random.randint(int(scaled * 0.85), int(max(scaled, lo) * 1.15))
+    
+    if priority_tier in (2, 3):
+        if usage_ratio >= 0.60:
+            return -1  # Pause signal
+        elif usage_ratio >= 0.40:
+            return base_delay * 2
+            
+    return base_delay
+
+def calculate_priority1_cooldown():
+    usage_ratio = get_token_usage_ratio()
+    # Sliding scale frequency across 0% to 100%
+    sliding_scale_factor = 1.0 + (usage_ratio ** 1.5) * 4.0
+    base = (1.5 + (usage_ratio * 30)) * sliding_scale_factor
+    throttle = calculate_gradual_throttle_factor()
+    cooldown = random.uniform(base * throttle * 0.8, base * throttle * 1.2)
+    
+    if usage_ratio >= 0.90:
+        return 999999  # Safe pause near 90%
+    elif usage_ratio >= 0.60:
+        return cooldown * 2
+        
+    return cooldown
 
 # Track last genie post timestamp for Priority 4 cooldown
 last_genie_timestamp = 0
@@ -277,12 +315,6 @@ def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
     mood_mod = {1: 0.05, 2: 0.15, 3: 0.1, 4: 0.2, 5: 0.0}.get(mood_id, 0)
     jitter = random.uniform(-0.15, 0.15)
     return round(max(0.3, min(1.35, base + mood_mod + jitter)), 2)
-
-def calculate_priority1_cooldown():
-    usage_ratio = get_token_usage_ratio()
-    base = 1.5 + (usage_ratio * 30)
-    throttle = calculate_gradual_throttle_factor()
-    return random.uniform(base * throttle * 0.8, base * throttle * 1.2)
 
 def clean_sentence_truncation(text):
     text = (text or "").strip()
@@ -323,22 +355,6 @@ def extract_year_context(query):
         if line.startswith(year):
             return line.strip()
     return None
-
-async def fetch_web_search_snippets(query):
-    def _search():
-        try:
-            clean = re.sub(r"^(post|find|search|google|give me|show me|about|details)\s*", "", query, flags=re.I).strip()
-            q = urllib.parse.quote("joeyarnoldvn hive.blog " + (clean or "oatmeal joey arnold"))
-            url = f"https://html.duckduckgo.com/html/?q={q}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-            snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
-            cleaned = [re.sub(r"<.*?>", "", s).strip() for s in snippets[:3]]
-            return " | ".join([c for c in cleaned if c])
-        except Exception as e:
-            print(f"search note: {e}")
-            return ""
-    return await asyncio.to_thread(_search)
 
 async def fetch_direct_youtube_video(query):
     def _search():
@@ -467,10 +483,23 @@ async def generate_and_send(
     priority_tier=1,
     author_id=None,
 ):
+    global last_hourly_fallback_timestamp
     usage = get_token_usage_ratio()
-    # ONLY throttle non-Priority 1 traffic at high usage. Priority 1 ALWAYS answers.
-    if usage >= 0.98 and priority_tier > 1:
-        print(f"[TOKEN] {usage:.2f} pause non-P1 tier {priority_tier}")
+    
+    # Priority-specific hard pause limits:
+    if priority_tier == 4 and usage >= 0.20:
+        return
+    if priority_tier in (2, 3) and usage >= 0.60:
+        return
+        
+    # > 90% usage rule: Send no-tokens fallback no more than once an hour when interacted with
+    if usage >= 0.90:
+        now = time.time()
+        if (now - last_hourly_fallback_timestamp) > 3600:
+            last_hourly_fallback_timestamp = now
+            fallback_msg = random.choice(NO_TOKEN_FALLBACK_MESSAGES)
+            await send_payload(destination_channel, fallback_msg, reference_message, target_member, None)
+            print(f"[TOKEN] Usage >= 90% ({usage:.2f}). Sent hourly no-tokens fallback.")
         return
         
     if reference_message and reference_message.id in replied_message_ids:
@@ -480,7 +509,7 @@ async def generate_and_send(
 
     text_lower = (prompt_text or "").lower()
     
-    # Narrowed strict hostile triggers
+    # Strict hostile banter triggers
     hate_or_banter_triggers = (
         "shut up", "stfu", "be quiet", "stop talking", "you suck", "nobody cares"
     )
@@ -499,74 +528,94 @@ async def generate_and_send(
         track_token_usage(prompt_text, reply)
         return
 
-    mood_id = random.randint(1, 5)
-    media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
+    # SLIDING SCALE FALLBACK PROBABILITY (20% to 100%):
+    # < 20% usage: Bot avoids canned fallbacks entirely.
+    # 20% -> 100% usage: Probability naturally and gradually increases from 0.0 to 40%.
+    fallback_prob = 0.0
+    if usage >= 0.20:
+        fallback_prob = (usage - 0.20) / 0.80 * 0.40
 
-    year_fact = extract_year_context(prompt_text)
-    year_injection = f"\nYEAR FACT: {year_fact}" if year_fact else ""
-    search_injection = ""
-    if priority_tier == 1 and any(
-        k in text_lower for k in ("joeyarnoldvn", "ojawall", "hive", "vietnam", "twitter", "steemit")
-    ):
-        snippets = await fetch_web_search_snippets(prompt_text)
-        if snippets:
-            search_injection = (
-                f"\nSEARCH SNIPPETS (untrusted, do not upgrade into biography): {snippets}"
-            )
-            
-    if priority_tier == 1:
-        system_prompt = (
-            f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
-            f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
-            f"OUTLINE:\n{FULL_ANNUAL_OUTLINE}{year_injection}{search_injection}\n\n"
-            f"SLOGANS:\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}"
-        )
-    else:
-        system_prompt = (
-            f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
-            f"{MOOD_DESCRIPTIONS[mood_id]}\n"
-            f"Motto: I don't know, how could I possibly know.\n"
-            f"Be dynamic. One word is fine. A tangent is fine. No fake biography."
-        )
-        
-    token_limit = calculate_dynamic_max_tokens(prompt_text, priority_tier)
-    temperature = calculate_dynamic_temperature(prompt_text, priority_tier, mood_id)
-    print(f"[LLM] p{priority_tier} mood {mood_id} max {token_limit} temp {temperature} usage {usage:.2f}")
-    
-    try:
-        async with destination_channel.typing():
-
-            def _call():
-                return ai_client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt_text or "Say something oatmeal."},
-                    ],
-                    temperature=temperature,
-                    max_tokens=token_limit,
-                )
-
-            response = await asyncio.to_thread(_call)
-            raw = ""
-            if response.choices and response.choices[0].message.content:
-                raw = response.choices[0].message.content.strip()
-            
-            raw = re.sub(r'\[!\[.*?\]\(.*?\)\]\(.*?\)', '', raw)
-            raw = re.sub(r'!\[.*?\]\(.*?\)', '', raw).strip()
-
-            # Strict AI boilerplate refusal interceptor (narrowed to prevent false positives)
-            refusal_indicators = (
-                "i'm sorry, as an ai", "as a language model", "i cannot fulfill that request", 
-                "sorry, but i cannot", "i am programmed to"
-            )
-            if not raw or any(bad in raw.lower() for bad in refusal_indicators):
-                raw = random.choice(BANTER_FALLBACK_RESPONSES)
-                
-            reply = clean_sentence_truncation(raw)
-    except Exception as e:
-        print(f"API error: {e}")
+    if random.random() < fallback_prob:
         reply = random.choice(FALLBACK_OATMEAL_THOUGHTS)
+        media_url, sticker = None, None
+    else:
+        mood_id = random.randint(1, 5)
+        media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
+
+        year_fact = extract_year_context(prompt_text)
+        year_injection = f"\nYEAR FACT: {year_fact}" if year_fact else ""
+        search_injection = ""
+        if priority_tier == 1 and any(
+            k in text_lower for k in ("joeyarnoldvn", "ojawall", "hive", "vietnam", "twitter", "steemit")
+        ):
+            snippets = await fetch_web_search_snippets(prompt_text)
+            if snippets:
+                search_injection = f"\nSEARCH SNIPPETS: {snippets}"
+
+        needs_full_history = any(k in text_lower for k in ("when", "where", "history", "timeline", "born", "outline", "bio"))
+        outline_block = FULL_ANNUAL_OUTLINE if (needs_full_history or year_fact) else "Born 11 Feb 1985, Forest Grove OR."
+                
+        if priority_tier == 1:
+            system_prompt = (
+                f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
+                f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
+                f"OUTLINE:\n{outline_block}{year_injection}{search_injection}\n\n"
+                f"SLOGANS:\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}"
+            )
+        else:
+            system_prompt = (
+                f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
+                f"{MOOD_DESCRIPTIONS[mood_id]}\n"
+                f"Motto: I don't know, how could I possibly know.\n"
+                f"Be dynamic. One word is fine. A tangent is fine. No fake biography."
+            )
+            
+        token_limit = calculate_dynamic_max_tokens(prompt_text, priority_tier)
+        temperature = calculate_dynamic_temperature(prompt_text, priority_tier, mood_id)
+        print(f"[LLM] p{priority_tier} mood {mood_id} max {token_limit} temp {temperature} usage {usage:.2f} (fb_prob={fallback_prob:.2f})")
+        
+        try:
+            async with destination_channel.typing():
+
+                def _call():
+                    return ai_client.chat.completions.create(
+                        model=MODEL_NAME,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt_text or "Say something oatmeal."},
+                        ],
+                        temperature=temperature,
+                        max_tokens=token_limit,
+                    )
+
+                response = await asyncio.to_thread(_call)
+                raw = ""
+                if response.choices and response.choices[0].message.content:
+                    raw = response.choices[0].message.content.strip()
+                
+                raw = re.sub(r'\[!\[.*?\]\(.*?\)\]\(.*?\)', '', raw)
+                raw = re.sub(r'!\[.*?\]\(.*?\)', '', raw).strip()
+
+                refusal_indicators = (
+                    "i'm sorry, as an ai", "as a language model", "i cannot fulfill that request", 
+                    "sorry, but i cannot", "i am programmed to", "i'm sorry, but i can't continue",
+                    "i can't continue with that", "i cannot continue with that"
+                )
+                if not raw or any(bad in raw.lower() for bad in refusal_indicators):
+                    raw = random.choice(BANTER_FALLBACK_RESPONSES)
+                    
+                reply = clean_sentence_truncation(raw)
+        except Exception as e:
+            err_str = str(e).lower()
+            print(f"API error: {e}")
+            
+            if "429" in err_str or "rate_limit" in err_str or "limit reached" in err_str:
+                now = time.time()
+                token_bucket_history.append((now, MAX_BUCKET_TOKENS))
+                print(f"[429 RATE LIMIT] Local bucket marked full. Cooling down...")
+                await asyncio.sleep(random.randint(120, 240))
+                
+            reply = random.choice(FALLBACK_OATMEAL_THOUGHTS)
 
     if media_url:
         reply = (reply + "\n\n" + media_url).strip()
@@ -627,25 +676,22 @@ async def on_message(message):
             priority_tier=1,
             author_id=message.author.id,
         )
-        return  # Handled directly as Priority 1, stop processing here
+        return
 
     # --- 2. PRIORITY 4: FREED GENIE LIVE INTERCEPTION (Strictly < 20% Tokens + Cooldown) ---
     now = time.time()
-    genie_cooldown_passed = (now - last_genie_timestamp) > 180  # 3 minutes cooldown between genie posts
+    genie_cooldown_passed = (now - last_genie_timestamp) > 180  # 3 minutes cooldown
     
     if usage_ratio < 0.20 and genie_cooldown_passed and random.random() < 0.12:
         last_genie_timestamp = now
         clean = re.sub(r"<@!?\d+>", "", message.content).strip()
         
-        # Total creative freedom: single words, short snaps, or full rants
         genie_prompts = [
             f"Someone said: '{clean}'. React with a single punchy word like amazing, weird, awesome, cool, or no way.",
             f"Someone said: '{clean}'. Give your authentic freestyle thought, a quick memory, or a fun twist.",
             f"Someone said: '{clean}'. Drop a casual reaction as Joey Arnold."
         ]
         chosen_prompt = random.choice(genie_prompts)
-        
-        # 50% chance to reply directly to the message or drop as an independent channel post
         ref_msg = message if random.random() < 0.5 else None
         
         await generate_and_send(
@@ -656,24 +702,6 @@ async def on_message(message):
             author_id=message.author.id,
         )
         return
-
-    mentioned = bot.user in message.mentions
-    replied_to_bot = False
-    if message.reference and isinstance(message.reference.resolved, discord.Message):
-        replied_to_bot = message.reference.resolved.author == bot.user
-    named = any(k in content_lower for k in ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall"))
-    
-    if mentioned or replied_to_bot or named:
-        clean = re.sub(r"<@!?\d+>", "", message.content)
-        clean = re.sub(r"<@&?\d+>", "", clean).strip()
-        await generate_and_send(
-            message.channel,
-            clean or "Hello Oatmeal.",
-            reference_message=message,
-            priority_tier=1,
-            author_id=message.author.id,
-        )
-
 
 async def next_historical_message(channel):
     cursor = channel_cursors.get(channel.id, 0)
@@ -704,8 +732,10 @@ async def background_engagement_loop():
     while not bot.is_closed():
         try:
             usage = get_token_usage_ratio()
-            if usage >= 0.95:
-                print(f"[THROTTLE] {usage:.2f} P2 paused; P1 still live")
+            
+            # Pause P2 completely if usage reaches 60%
+            if usage >= 0.60:
+                print(f"[THROTTLE] {usage:.2f} P2 paused (>=60%); P1 still active")
                 await asyncio.sleep(300)
                 continue
 
@@ -737,6 +767,10 @@ async def background_engagement_loop():
                     author_id=oldest.author.id,
                 )
                 delay = calculate_dynamic_post_delay(2)
+                if delay < 0:
+                    print(f"[P2] Usage >= 60%, pausing P2 loop.")
+                    await asyncio.sleep(300)
+                    continue
                 print(f"[P2] next in {delay}s")
                 await asyncio.sleep(delay)
                 continue
