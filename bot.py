@@ -201,6 +201,22 @@ token_bucket_history = []
 ROLLING_WINDOW_SECONDS = 14400
 MAX_BUCKET_TOKENS = 200000
 
+def track_token_usage(prompt_text, reply_text):
+    global token_bucket_history
+    now = time.time()
+    est = max(1, len(prompt_text + reply_text) // 4)
+    token_bucket_history.append((now, est))
+    cutoff = now - ROLLING_WINDOW_SECONDS
+    token_bucket_history = [e for e in token_bucket_history if e[0] >= cutoff]
+
+def get_token_usage_ratio():
+    global token_bucket_history
+    now = time.time()
+    cutoff = now - ROLLING_WINDOW_SECONDS
+    token_bucket_history = [e for e in token_bucket_history if e[0] >= cutoff]
+    total = sum(e[1] for e in token_bucket_history)
+    return min(1.0, total / MAX_BUCKET_TOKENS)
+
 STANDARD_STICKERS = [
     (751606379340365834, "wow"),
     (749054660769218631, "wave"),
