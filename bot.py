@@ -185,6 +185,22 @@ token_bucket_history = []
 ROLLING_WINDOW_SECONDS = 14400
 MAX_BUCKET_TOKENS = 200000
 
+# Initialize missing timestamp for Priority 4 Genie
+last_genie_timestamp = 0
+
+def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
+    text = (prompt_text or "").lower()
+    if any(k in text for k in ("when", "where", "year", "born", "outline", "history", "timeline")):
+        return 0.4
+    base = 0.95 if priority_tier == 1 else 1.15
+    mood_mod = {1: 0.05, 2: 0.15, 3: 0.1, 4: 0.2, 5: 0.0}.get(mood_id, 0)
+    jitter = random.uniform(-0.15, 0.15)
+    return round(max(0.3, min(1.35, base + mood_mod + jitter)), 2)
+
+token_bucket_history = []
+ROLLING_WINDOW_SECONDS = 14400
+MAX_BUCKET_TOKENS = 200000
+
 STANDARD_STICKERS = [
     (751606379340365834, "wow"),
     (749054660769218631, "wave"),
@@ -231,90 +247,50 @@ load_state()
 def p2_key(guild_id, user_id):
     return f"{int(guild_id)}:{int(user_id)}"
 
-def track_token_usage(prompt_text, reply_text):
-    global token_bucket_history
-    now = time.time()
-    est = max(1, len(prompt_text + reply_text) // 4)
-    token_bucket_history.append((now, est))
-    cutoff = now - ROLLING_WINDOW_SECONDS
-    token_bucket_history = [e for e in token_bucket_history if e[0] >= cutoff]
-
-def get_token_usage_ratio():
-    global token_bucket_history
-    now = time.time()
-    cutoff = now - ROLLING_WINDOW_SECONDS
-    token_bucket_history = [e for e in token_bucket_history if e[0] >= cutoff]
-    total = sum(e[1] for e in token_bucket_history)
-    return min(1.0, total / MAX_BUCKET_TOKENS)
+def get_priority_power_factor(priority_tier):
+    """Returns the strict hierarchy rank: P1 (most generous) down to P4 (strict)."""
+    return {
+        1: 1.00,  # Best / Fastest / Largest
+        2: 0.75,  # Second
+        3: 0.50,  # Third
+        4: 0.25   # Strictest / Slowest
+    }.get(priority_tier, 0.40)
 
 def calculate_dynamic_max_tokens(prompt_text, priority_tier):
-    prompt_len = len(prompt_text.strip())
-    usage_ratio = get_token_usage_ratio()
-    budget = max(0.45, 1.0 - (usage_ratio * 0.45)) # Less aggressive token starvation
+    usage_ratio = get_token_usage_ratio() # 0.0 to 1.0
+    power = get_priority_power_factor(priority_tier)
     
-    # Allow occasional spontaneous long rants (up to Discord limits) or very short lines
-    rant_roll = random.random()
-    if rant_roll < 0.12:  # 12% chance for a spontaneous long rant/story
-        base = random.randint(600, 1500)
-    elif rant_roll < 0.40: # Medium length reply
-        base = 250 if prompt_len < 30 else 450
-    else:                  # Short snappy reply or joke
-        base = 60 if prompt_len < 15 else 180
-
-    if priority_tier > 1:
-        base = int(base * 0.75)
-        
-    return max(60, int(base * budget))
+    # As usage goes from 0% to 100%, token size scales down inversely in proportion
+    scaling_curve = max(0.10, (1.0 - usage_ratio) * (1.0 - (usage_ratio ** 1.5) * 0.5))
+    
+    base_limit = 900 if priority_tier == 1 else (600 if priority_tier == 2 else (350 if priority_tier == 3 else 150))
+    calculated = int(base_limit * power * scaling_curve)
+    
+    return max(20, calculated)
 
 def calculate_dynamic_post_delay(priority_tier):
     usage_ratio = get_token_usage_ratio()
-    lo, hi = 45, 900
+    power = get_priority_power_factor(priority_tier)
     
-    # Sliding scale frequency: scales smoothly from 0% to 100% usage
-    sliding_scale_factor = 1.0 + (usage_ratio ** 1.5) * 4.0
-    scaled = (lo + (usage_ratio ** 1.4) * (hi - lo)) * sliding_scale_factor
-    base_delay = random.randint(int(scaled * 0.85), int(max(scaled, lo) * 1.15))
+    # Base speeds in seconds (P1 has shortest delays = fastest; P4 has longest delays = slowest)
+    base_min = 15 + (4 - priority_tier) * 25
+    base_max = 45 + (4 - priority_tier) * 60
     
-    if priority_tier in (2, 3):
-        if usage_ratio >= 0.60:
-            return -1  # Pause signal
-        elif usage_ratio >= 0.40:
-            return base_delay * 2
-            
-    return base_delay
+    # Gradual slowdown from 0% to 100% (approx 5x slower by 80% usage)
+    slowdown = 1.0 + (usage_ratio ** 1.8) * 6.0
+    priority_penalty = 1.0 / max(0.2, power)
+    
+    final_min = base_min * slowdown * priority_penalty
+    final_max = base_max * slowdown * priority_penalty
+    
+    # Randomized time interval for organic posting cadence
+    return random.uniform(final_min, final_max)
 
 def calculate_priority1_cooldown():
     usage_ratio = get_token_usage_ratio()
-    # Sliding scale frequency across 0% to 100%
-    sliding_scale_factor = 1.0 + (usage_ratio ** 1.5) * 4.0
-    base = (1.5 + (usage_ratio * 30)) * sliding_scale_factor
-    throttle = calculate_gradual_throttle_factor()
-    cooldown = random.uniform(base * throttle * 0.8, base * throttle * 1.2)
-    
-    if usage_ratio >= 0.90:
-        return 999999  # Safe pause near 90%
-    elif usage_ratio >= 0.60:
-        return cooldown * 2
-        
-    return cooldown
-
-# Track last genie post timestamp for Priority 4 cooldown
-last_genie_timestamp = 0
-
-def calculate_gradual_throttle_factor():
-    """Returns a multiplier from 1.0 (empty) up to 5.0+ (nearing 100% token cap)."""
-    usage = get_token_usage_ratio()
-    # As usage goes from 0.0 to 1.0, throttle factor scales up non-linearly to conserve tokens
-    return 1.0 + (usage ** 1.8) * 6.0
-
-def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
-    text = (prompt_text or "").lower()
-    if any(k in text for k in ("when", "where", "year", "born", "outline", "history", "timeline")):
-        return 0.4
-    base = 0.95 if priority_tier == 1 else 1.15
-    mood_mod = {1: 0.05, 2: 0.15, 3: 0.1, 4: 0.2, 5: 0.0}.get(mood_id, 0)
-    jitter = random.uniform(-0.15, 0.15)
-    return round(max(0.3, min(1.35, base + mood_mod + jitter)), 2)
+    base_cd = random.uniform(1.5, 5.0)
+    scaling = 1.0 + (usage_ratio ** 2.0) * 8.0
+    return base_cd * scaling
 
 def clean_sentence_truncation(text):
     text = (text or "").strip()
@@ -486,20 +462,14 @@ async def generate_and_send(
     global last_hourly_fallback_timestamp
     usage = get_token_usage_ratio()
     
-    # Priority-specific hard pause limits:
-    if priority_tier == 4 and usage >= 0.20:
-        return
-    if priority_tier in (2, 3) and usage >= 0.60:
-        return
-        
-    # > 90% usage rule: Send no-tokens fallback no more than once an hour when interacted with
-    if usage >= 0.90:
+    # >= 98% usage safety rule: Send no-tokens fallback no more than once an hour
+    if usage >= 0.98:
         now = time.time()
         if (now - last_hourly_fallback_timestamp) > 3600:
             last_hourly_fallback_timestamp = now
             fallback_msg = random.choice(NO_TOKEN_FALLBACK_MESSAGES)
             await send_payload(destination_channel, fallback_msg, reference_message, target_member, None)
-            print(f"[TOKEN] Usage >= 90% ({usage:.2f}). Sent hourly no-tokens fallback.")
+            print(f"[TOKEN] Usage >= 98% ({usage:.2f}). Sent hourly no-tokens fallback.")
         return
         
     if reference_message and reference_message.id in replied_message_ids:
@@ -509,7 +479,6 @@ async def generate_and_send(
 
     text_lower = (prompt_text or "").lower()
     
-    # Strict hostile banter triggers
     hate_or_banter_triggers = (
         "shut up", "stfu", "be quiet", "stop talking", "you suck", "nobody cares"
     )
@@ -528,12 +497,8 @@ async def generate_and_send(
         track_token_usage(prompt_text, reply)
         return
 
-    # SLIDING SCALE FALLBACK PROBABILITY (20% to 100%):
-    # < 20% usage: Bot avoids canned fallbacks entirely.
-    # 20% -> 100% usage: Probability naturally and gradually increases from 0.0 to 40%.
-    fallback_prob = 0.0
-    if usage >= 0.20:
-        fallback_prob = (usage - 0.20) / 0.80 * 0.40
+    # Continuous sliding scale fallback probability from 0% to 100% usage:
+    fallback_prob = min(0.65, usage * 0.65)
 
     if random.random() < fallback_prob:
         reply = random.choice(FALLBACK_OATMEAL_THOUGHTS)
@@ -545,13 +510,7 @@ async def generate_and_send(
         year_fact = extract_year_context(prompt_text)
         year_injection = f"\nYEAR FACT: {year_fact}" if year_fact else ""
         search_injection = ""
-        if priority_tier == 1 and any(
-            k in text_lower for k in ("joeyarnoldvn", "ojawall", "hive", "vietnam", "twitter", "steemit")
-        ):
-            snippets = await fetch_web_search_snippets(prompt_text)
-            if snippets:
-                search_injection = f"\nSEARCH SNIPPETS: {snippets}"
-
+        
         needs_full_history = any(k in text_lower for k in ("when", "where", "history", "timeline", "born", "outline", "bio"))
         outline_block = FULL_ANNUAL_OUTLINE if (needs_full_history or year_fact) else "Born 11 Feb 1985, Forest Grove OR."
                 
@@ -610,10 +569,8 @@ async def generate_and_send(
             print(f"API error: {e}")
             
             if "429" in err_str or "rate_limit" in err_str or "limit reached" in err_str:
-                now = time.time()
-                token_bucket_history.append((now, MAX_BUCKET_TOKENS))
-                print(f"[429 RATE LIMIT] Local bucket marked full. Cooling down...")
-                await asyncio.sleep(random.randint(120, 240))
+                print(f"[429 RATE LIMIT] Rate limit hit. Backing off gracefully for drip recovery...")
+                await asyncio.sleep(random.randint(15, 30))
                 
             reply = random.choice(FALLBACK_OATMEAL_THOUGHTS)
 
@@ -678,11 +635,13 @@ async def on_message(message):
         )
         return
 
-    # --- 2. PRIORITY 4: FREED GENIE LIVE INTERCEPTION (Strictly < 20% Tokens + Cooldown) ---
+# --- 2. PRIORITY 4: FREED GENIE LIVE INTERCEPTION (Gradual scaling, never hard-stopped) ---
     now = time.time()
-    genie_cooldown_passed = (now - last_genie_timestamp) > 180  # 3 minutes cooldown
+    genie_cooldown = 60 + (usage_ratio * 300) # Delay scales up smoothly as usage increases
+    genie_cooldown_passed = (now - last_genie_timestamp) > genie_cooldown
     
-    if usage_ratio < 0.20 and genie_cooldown_passed and random.random() < 0.12:
+    genie_prob = max(0.02, 0.15 * (1.0 - usage_ratio)) # Probability shrinks as usage nears 100%
+    if genie_cooldown_passed and random.random() < genie_prob:
         last_genie_timestamp = now
         clean = re.sub(r"<@!?\d+>", "", message.content).strip()
         
@@ -732,14 +691,9 @@ async def background_engagement_loop():
     while not bot.is_closed():
         try:
             usage = get_token_usage_ratio()
-            
-            # Pause P2 completely if usage reaches 60%
-            if usage >= 0.60:
-                print(f"[THROTTLE] {usage:.2f} P2 paused (>=60%); P1 still active")
-                await asyncio.sleep(300)
-                continue
 
             oldest = None
+            target_channel = None
             for guild in list(bot.guilds):
                 channels = [
                     c
@@ -751,12 +705,13 @@ async def background_engagement_loop():
                     msg = await next_historical_message(channel)
                     if msg and (oldest is None or msg.id < oldest.id):
                         oldest = msg
+                        target_channel = channel
 
             if oldest is not None:
                 p2_complete = False
                 print(
                     f"[P2] {oldest.author} in #{oldest.channel.name} id={oldest.id} "
-                    f"done={len(priority2_replied_member_ids)} usage={usage:.2f}"
+                    f"unique members replied: {len(priority2_replied_member_ids)} usage={usage:.2f}"
                 )
                 clean = re.sub(r"<@!?\d+>", "", oldest.content or "").strip()
                 await generate_and_send(
@@ -767,18 +722,42 @@ async def background_engagement_loop():
                     author_id=oldest.author.id,
                 )
                 delay = calculate_dynamic_post_delay(2)
-                if delay < 0:
-                    print(f"[P2] Usage >= 60%, pausing P2 loop.")
-                    await asyncio.sleep(300)
-                    continue
-                print(f"[P2] next in {delay}s")
+                print(f"[P2] next in {delay:.1f}s (usage: {usage:.2f})")
                 await asyncio.sleep(delay)
                 continue
 
+            # --- PRIORITY 3: STRICTLY DISABLED UNTIL EVERY UNIQUE MEMBER SINCE 2019 IS REPLIED TO ---
             if not p2_complete:
                 p2_complete = True
                 save_state()
-                print("[P2] COMPLETE for current history. Priority 3 remains disabled by design.")
+                print("[P2] COMPLETE! Every unique member across the entire server history has now received a reply. Priority 3 is now unlocked.")
+
+            # Priority 3 active ONLY after 100% of historical unique members are cleared
+            if p2_complete and random.random() < 0.25:
+                for guild in list(bot.guilds):
+                    active_channels = [
+                        c for c in guild.text_channels
+                        if c.permissions_for(guild.me).send_messages
+                    ]
+                    if active_channels:
+                        chosen_chan = random.choice(active_channels)
+                        p3_prompts = [
+                            "Drop a random thought about the 1990s, VCRs, or your trailer park days in Forest Grove.",
+                            "Say something about basketball, sneakers, or being a nerd in an athlete's body.",
+                            "Make an observational remark about animals dying or making the world greener.",
+                            "Drop a classic Oatmeal slogan or unexpected life wisdom."
+                        ]
+                        prompt = random.choice(p3_prompts)
+                        print(f"[P3] Proactive spark in #{chosen_chan.name} (usage: {usage:.2f})")
+                        await generate_and_send(
+                            chosen_chan,
+                            prompt,
+                            priority_tier=3,
+                        )
+                        delay = calculate_dynamic_post_delay(3)
+                        await asyncio.sleep(delay)
+                        break
+
             await asyncio.sleep(60)
         except Exception as e:
             print(f"background error: {e}")
