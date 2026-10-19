@@ -411,11 +411,6 @@ async def fetch_clean_tenor_gif(query):
             return ""
     return await asyncio.to_thread(_search)
 
-def pollinations_image_url(prompt):
-    text = re.sub(r"\s+", " ", (prompt or "")).strip()[:160] or "bowl of oatmeal on a wooden table, 1990s film still, cinematic"
-    seed = random.randint(1, 999999)
-    return f"https://image.pollinations.ai/prompt/{urllib.parse.quote(text)}?width=768&height=768&nologo=true&seed={seed}"
-
 async def fetch_hive_article_link(query):
     """Dynamically scrapes live article URLs from Hive/PeakD search results based on the user's specific query."""
     def _search():
@@ -479,9 +474,25 @@ async def fetch_guild_sticker(channel):
         return random.choice(stickers)
     return standard_sticker()
 
+async def fetch_image_file_bytes(prompt):
+    """Downloads Pollinations image bytes and returns a discord.File attachment to hide raw text URLs."""
+    def _download():
+        try:
+            clean = re.sub(r"^(draw|sketch|paint|picture of|image of|art)\s*", "", prompt or "", flags=re.I).strip()[:120]
+            seed = random.randint(1, 999999)
+            img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(clean or 'bowl of oatmeal')}?width=768&height=768&nologo=true&seed={seed}"
+            req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
+            data = urllib.request.urlopen(req, timeout=8).read()
+            return discord.File(io.BytesIO(data), filename="oatmeal_art.jpg")
+        except Exception as e:
+            print(f"image download error: {e}")
+            return None
+    return await asyncio.to_thread(_download)
+
 async def choose_media(prompt_text, priority_tier, channel):
     text = (prompt_text or "").lower()
     url = ""
+    file_attachment = None
     sticker = None
 
     wants_draw = any(k in text for k in ("draw", "sketch", "paint", "illustrat", "picture of", "image of", "art")) and not any(k in text for k in ("link", "article", "website", "page"))
@@ -494,7 +505,7 @@ async def choose_media(prompt_text, priority_tier, channel):
     if wants_link:
         url = await fetch_hive_article_link(prompt_text)
     elif wants_draw:
-        url = pollinations_image_url(prompt_text)
+        file_attachment = await fetch_image_file_bytes(prompt_text)
     elif wants_audio:
         url = await fetch_suno_track_link(prompt_text)
     elif wants_video:
@@ -506,11 +517,11 @@ async def choose_media(prompt_text, priority_tier, channel):
     else:
         if priority_tier in (2, 3):
             if random.random() > 0.01:
-                return "", None  # 1% unprompted media rule
+                return "", None, None  # 1% unprompted media rule
 
         roll = random.random()
         if roll < 0.30:
-            url = pollinations_image_url(prompt_text)
+            file_attachment = await fetch_image_file_bytes(prompt_text)
         elif roll < 0.60:
             url = await fetch_clean_tenor_gif(prompt_text)
         elif roll < 0.85:
@@ -520,15 +531,17 @@ async def choose_media(prompt_text, priority_tier, channel):
         else:
             sticker = await fetch_guild_sticker(channel)
 
-    return url, sticker
+    return url, file_attachment, sticker
 
-async def send_payload(channel, text, reference, member, sticker):
+async def send_payload(channel, text, reference, member, file_attachment, sticker):
     chunks = split_message_for_discord(text or "")
-    if not chunks and sticker is None:
+    if not chunks and file_attachment is None and sticker is None:
         chunks = [get_dynamic_parody_thought()]
 
     for idx, chunk in enumerate(chunks or [""]):
         kwargs = {}
+        if idx == 0 and file_attachment is not None:
+            kwargs["file"] = file_attachment
         if idx == 0 and sticker is not None:
             kwargs["stickers"] = [sticker]
         try:
@@ -565,10 +578,10 @@ async def generate_and_send(
 
     text_lower = (prompt_text or "").lower()
 
-    hate_or_banter_triggers = ("shut up", "stfu", "be quiet", "stop talking", "you suck", "nobody cares")
+    hate_or_banter_triggers = ("shut up", "stfu", "be quiet", "stop talking", "you suck", "nobody cares")	
     if any(t in text_lower for t in hate_or_banter_triggers):
         reply = random.choice(BANTER_FALLBACK_RESPONSES)
-        await send_payload(destination_channel, reply, reference_message, target_member, None)
+        await send_payload(destination_channel, reply, reference_message, target_member, None, None)
         if reference_message:
             mark_replied(reference_message.id, reference_message.channel.id, advance_cursor=(priority_tier >= 2))
             if priority_tier >= 2 and reference_message.guild:
@@ -578,7 +591,7 @@ async def generate_and_send(
         return
 
     mood_id = random.randint(1, 5)
-    media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
+    media_url, file_attachment, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
 
     year_fact = extract_year_context(prompt_text)
     year_injection = f"\nYEAR FACT: {year_fact}" if year_fact else ""
@@ -611,6 +624,7 @@ async def generate_and_send(
     token_limit = calculate_dynamic_max_tokens(prompt_text, priority_tier)
     temperature = calculate_dynamic_temperature(prompt_text, priority_tier, mood_id)
 
+
     reply = ""
     try:
         async with destination_channel.typing():
@@ -634,24 +648,20 @@ async def generate_and_send(
             raw = re.sub(r'!\[.*?\]\(.*?\)', '', raw).strip()
 
             refusal_indicators = (
-                "i'm sorry, as an ai", "as a language model", "i cannot fulfill that request",
-                "sorry, but i cannot", "i am programmed to", "i'm sorry, but i can't continue",
-                "i can't continue with that", "i cannot continue with that",
-                "i can't help with that", "i cannot help with that",
-                "i'm not able to", "i am not able to", "i won't continue",
-                "i cannot engage", "i must decline", "against my guidelines",
-                "i'm sorry, but i can't", "sorry, i can't", "i can't assist with that"
+                "i'm sorry", "as an ai", "i cannot", "i can't comply",
+                "i can't help", "against my guidelines", "i am unable"
             )
 
             if not raw or any(bad in raw.lower() for bad in refusal_indicators):
-                raw = ""
+                print(f"[REFUSAL PURGED]: {raw}")
+                raw = random.choice(BANTER_FALLBACK_RESPONSES)
 
             reply = clean_sentence_truncation(raw) if raw else ""
 
     except Exception as e:
         print(f"API generation error: {e}")
 
-    if not reply and not media_url and sticker is None:
+    if not reply and not media_url and file_attachment is None and sticker is None:
         if priority_tier == 4:
             return  
         reply = get_dynamic_parody_thought()
@@ -662,10 +672,10 @@ async def generate_and_send(
         else:
             reply = media_url
 
-    if reply and len(reply) < 100 and random.random() < 0.25:
+    if reply and len(reply) < 100 and random.random() < 0.25 and not file_attachment:
         reply = reply + " " + random.choice(EMOJI_POOL)
 
-    await send_payload(destination_channel, reply, reference_message, target_member, sticker)
+    await send_payload(destination_channel, reply, reference_message, target_member, file_attachment, sticker)
     track_token_usage(prompt_text, reply)
 
     if reference_message:
