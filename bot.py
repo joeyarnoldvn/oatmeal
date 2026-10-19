@@ -66,6 +66,7 @@ ROLLING_WINDOW_SECONDS = 14400          # 4-hour rolling window
 MAX_BUCKET_TOKENS = 200000
 last_genie_timestamp = 0.0
 last_hourly_fallback_timestamp = 0.0
+
 # ============================================================
 # 3. IDENTITY, OUTLINE, VOICE, MOODS
 # ============================================================
@@ -89,7 +90,7 @@ FULL_ANNUAL_OUTLINE = """
 2001: Filmed movies like Gangster Run (starring Big Red Mickey Morehead) and Cat's Life.
 2002: Filmed movies like Road Kill and Phenomenon. Attended a Ski Retreat.
 2003: Tiffany Cumbo died. Worked as a basketball manager (with Richie VanDyke) filming games. Took acting classes. Saw Lord of the Rings.
-2004: Made a Carpetball "Pocket Ball" table. Attended the WOL Institute (WOLBI) college in New York. Blogged on Xanga. Visited New York City for New Year's Eve and watched a bootlegged The Incredibles in New Jersey.
+2004: Made a Carpetball "Pocket Ball" table. Attended the WOL Institute (WOLBI) college in New York. Blogged on Xanga. Visited New Year's Eve in NYC and watched a bootlegged The Incredibles in New Jersey.
 2005: Worked as a Camp Counselor at Snow Camp, WCC, and Ranch Camp. Saw Star Wars: Revenge of the Sith.
 2006: Attended Appalachian Bible College in West Virginia where I fell in love with Jen Moore. Visited Quebec. Acted in Live For Only Jesus (L4OJ) video with Sawyer Frye. Saw The Matrix movies.
 2007: Mike Kurtz hired me as a counselor at Salvation Army's Camp Kuratli where I also met Mike Kurtz and Megan McQuade. Attended Western Youth Institute (WYI) and Rob Noland's Revolution Hawaii. Acted in Get Your Joy On music video with Jeff Walters.
@@ -215,22 +216,67 @@ PRONOUN_BRIDGE = (
     "You are the digital continuation of Oatmeal Joey Arnold. Paradox: introvert and extrovert, Oregon nerd, "
     "filmmaker, musician, historian, basketball body. Speak only as I / me / my. Never narrate yourself as a bot."
 )
-
 # ============================================================
 # 4. STATE + PROGRESSIVE THROTTLE & TOKEN HELPERS (0% to 100%)
 # ============================================================
+def load_state():
+    global replied_message_ids, channel_cursors, priority2_replied_member_ids, p2_complete
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        replied_message_ids = set(int(x) for x in data.get("replied", []))
+        channel_cursors = {int(k): int(v) for k, v in data.get("cursors", {}).items()}
+        priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
+        p2_complete = bool(data.get("p2_complete", False))
+        print(f"[STATE] Loaded: {len(replied_message_ids)} replies, {len(channel_cursors)} cursors, p2_complete={p2_complete}")
+    except Exception as e:
+        print(f"[STATE] Fresh start ({e})")
+
+def save_state():
+    def _write():
+        try:
+            replied = list(replied_message_ids)
+            if len(replied) > 50000:
+                replied = replied[-50000:]
+            tmp = STATE_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({
+                    "replied": replied,
+                    "cursors": {str(k): v for k, v in channel_cursors.items()},
+                    "p2_done_members": list(priority2_replied_member_ids),
+                    "p2_complete": p2_complete,
+                }, f)
+            os.replace(tmp, STATE_PATH)
+        except Exception as e:
+            print(f"[STATE] Save failed: {e}")
+    threading.Thread(target=_write, daemon=True).start()
+
+load_state()
+
+def p2_key(guild_id, user_id):
+    return f"{int(guild_id)}:{int(user_id)}"
+
+def track_token_usage(prompt_text, reply_text):
+    global token_bucket_history
+    now = time.time()
+    est = max(1, (len(prompt_text or "") + len(reply_text or "")) // 4)
+    token_bucket_history.append((now, est))
+    cutoff = now - ROLLING_WINDOW_SECONDS
+    token_bucket_history = [e for e in token_bucket_history if e[0] >= cutoff]
+
+def get_token_usage_ratio():
+    global token_bucket_history
+    now = time.time()
+    cutoff = now - ROLLING_WINDOW_SECONDS
+    token_bucket_history = [e for e in token_bucket_history if e[0] >= cutoff]
+    total = sum(e[1] for e in token_bucket_history)
+    return min(1.0, total / MAX_BUCKET_TOKENS)
 
 def get_priority_power_factor(priority_tier):
-    # Priority 1: least throttle (highest power scaling)
-    # Priority 4: most throttle (lowest power scaling)
     return {1: 1.00, 2: 0.70, 3: 0.45, 4: 0.20}.get(priority_tier, 0.30)
 
 def calculate_dynamic_max_tokens(prompt_text, priority_tier):
-    """
-    Limits the maximum tokens based on usage ratio (0.0 to 1.0).
-    At 0% usage, max tokens are generous. At 100% usage, caps clamp down to minimum limits.
-    """
-    usage = get_token_usage_ratio()  # 0.0 (0%) to 1.0 (100%)
+    usage = get_token_usage_ratio()
     power = get_priority_power_factor(priority_tier)
 
     if priority_tier == 1:
@@ -239,33 +285,26 @@ def calculate_dynamic_max_tokens(prompt_text, priority_tier):
         base_max_tokens = 250
     elif priority_tier == 3:
         base_max_tokens = 150
-    else:  # Priority 4 (Genie)
+    else:
         base_max_tokens = 80
 
-    # Smooth linear-to-exponential throttle compression from 0% to 100%
     throttle_multiplier = max(0.08, 1.0 - (usage ** 1.2))
     allowed_limit = int(base_max_tokens * power * throttle_multiplier)
     return max(16, allowed_limit)
 
 def calculate_dynamic_post_delay(priority_tier):
-    """
-    Posting frequency delay: scales smoothly from fast (at 0% token usage) 
-    to slow/throttled (approaching 100% usage).
-    """
-    usage = get_token_usage_ratio() # 0.0 to 1.0
+    usage = get_token_usage_ratio()
     power = get_priority_power_factor(priority_tier)
 
-    # Base minimum/maximum intervals in seconds at 0% usage
     if priority_tier == 1:
         min_sec, max_sec = 1.0, 3.0
     elif priority_tier == 2:
         min_sec, max_sec = 10.0, 25.0
     elif priority_tier == 3:
         min_sec, max_sec = 20.0, 50.0
-    else:  # Priority 4
+    else:
         min_sec, max_sec = 15.0, 40.0
 
-    # Incline throttle factor: 1.0x at 0% usage, scaling up heavily as usage nears 100%
     throttle_slowdown = 1.0 + (usage ** 1.5) * 12.0
     priority_penalty = 1.0 / max(0.15, power)
 
@@ -283,6 +322,48 @@ def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
     base = 0.90 if priority_tier == 1 else 1.15
     mood_mod = {1: 0.05, 2: 0.15, 3: 0.1, 4: 0.2, 5: 0.0}.get(mood_id, 0)
     return round(max(0.25, min(1.35, base + mood_mod + random.uniform(-0.1, 0.1))), 2)
+
+def clean_sentence_truncation(text):
+    text = (text or "").strip()
+    if not text:
+        return random.choice(FALLBACK_OATMEAL_THOUGHTS)
+    text = re.sub(r"\[cite:[^\]]*\]", "", text).strip()
+    if text and text[-1] in ".!?\"'\u201d)":
+        return text
+    text = re.sub(r"[,-\u2013\u2014\s]+$", "", text)
+    match = re.search(r"^(.*[.!?])", text, re.DOTALL)
+    if match and len(match.group(1)) > 8:
+        return match.group(1).strip()
+    return text
+
+def split_message_for_discord(text, max_chars=1900):
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= max_chars:
+            chunks.append(text)
+            break
+        split_idx = text.rfind("\n", 0, max_chars)
+        if split_idx == -1:
+            split_idx = text.rfind(" ", 0, max_chars)
+        if split_idx <= 0:
+            split_idx = max_chars
+        chunks.append(text[:split_idx].strip())
+        text = text[split_idx:].strip()
+    return [c for c in chunks if c]
+
+def extract_year_context(query):
+    match = re.search(r"\b(198[5-9]|199\d|20[0-2]\d)\b", query or "")
+    if not match:
+        return None
+    year = match.group(1)
+    for line in FULL_ANNUAL_OUTLINE.split("\n"):
+        if line.startswith(year):
+            return line.strip()
+    return None
 
 # ============================================================
 # 5. MEDIA SYSTEM (expanded)
@@ -354,10 +435,6 @@ async def fetch_guild_sticker(channel):
     return standard_sticker()
 
 async def choose_media(prompt_text, priority_tier, channel):
-    """
-    Always attempts to find media options (Tenor GIFs, YouTube videos, Pollinations artwork, Suno tracks, or stickers)
-    based on capability rather than forcing a canned fallback.
-    """
     text = (prompt_text or "").lower()
     url = ""
     sticker = None
@@ -382,11 +459,9 @@ async def choose_media(prompt_text, priority_tier, channel):
     elif wants_sticker:
         sticker = await fetch_guild_sticker(channel)
     else:
-        # Dynamic spontaneous choice based on rolling activity
         roll = random.random()
         usage = get_token_usage_ratio()
         
-        # When token usage is low (near 0%), media variety is high and dynamic
         if roll < (0.55 - (usage * 0.2)):
             url = await fetch_direct_tenor_gif(prompt_text)
         elif roll < (0.80 - (usage * 0.15)):
@@ -421,7 +496,6 @@ async def send_payload(channel, text, reference, member, sticker):
 # ============================================================
 # 6. CORE GENERATION
 # ============================================================
-
 async def generate_and_send(
     destination_channel,
     prompt_text,
@@ -433,7 +507,6 @@ async def generate_and_send(
     global last_hourly_fallback_timestamp
     usage = get_token_usage_ratio()
 
-    # Hard emergency lockout only at absolute maximum token ceiling (99%+)
     if usage >= 0.99:
         now = time.time()
         if (now - last_hourly_fallback_timestamp) > 3600:
@@ -449,7 +522,6 @@ async def generate_and_send(
 
     text_lower = (prompt_text or "").lower()
 
-# Fast banter path for specific trigger words
     hate_or_banter_triggers = ("shut up", "stfu", "be quiet", "stop talking", "you suck", "nobody cares")
     if any(t in text_lower for t in hate_or_banter_triggers):
         reply = random.choice(BANTER_FALLBACK_RESPONSES)
@@ -463,8 +535,6 @@ async def generate_and_send(
         return
 
     mood_id = random.randint(1, 5)
-    
-    # Try fetching media first (dynamic and rich)
     media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
 
     year_fact = extract_year_context(prompt_text)
@@ -477,7 +547,6 @@ async def generate_and_send(
     ))
     outline_block = FULL_ANNUAL_OUTLINE if (needs_full_history or year_fact) else "Born 11 Feb 1985, Forest Grove OR. Outline is the keel."
 
-    # Keep responses shorter and punchier for non-priority-1 tiers
     length_modifier = " Keep it short, punchy, dynamic, and interesting." if priority_tier > 1 else ""
 
     if priority_tier == 1:
@@ -531,24 +600,21 @@ async def generate_and_send(
             )
 
             if not raw or any(bad in raw.lower() for bad in refusal_indicators):
-                raw = ""  # Let media or short dynamic text carry the payload instead of failing
+                raw = ""
 
             reply = clean_sentence_truncation(raw) if raw else ""
 
     except Exception as e:
         print(f"API generation error: {e}")
-        # Absolute last resort fallback only when API fails completely
         if not media_url and sticker is None:
             reply = random.choice(FALLBACK_OATMEAL_THOUGHTS)
 
-    # Attach media if available
     if media_url:
         if reply:
             reply = (reply + "\n\n" + media_url).strip()
         else:
             reply = media_url
 
-    # Light emoji sprinkle on shorter dynamic messages
     if reply and len(reply) < 100 and random.random() < 0.25:
         reply = reply + " " + random.choice(EMOJI_POOL)
 
@@ -575,6 +641,7 @@ def mark_replied(message_id, channel_id=None, advance_cursor=False):
 # ============================================================
 # 7. EVENTS + BACKGROUND LOOP
 # ============================================================
+
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in as {bot.user}")
@@ -586,14 +653,21 @@ async def on_message(message):
     if message.author.bot or message.guild is None or message.is_system():
         return
 
-    lifetime_interacted_members.add(message.author.id)
+    lifetime_interacted_members.add(message.author.id)  # <--- Fixed: 4 spaces
     usage_ratio = get_token_usage_ratio()
     content_lower = message.content.lower()
 
-    mentioned = bot.user in message.mentions
+    mentioned = bot.user in message.mentions  # <--- Properly indented
     replied_to_bot = False
-    if message.reference and isinstance(message.reference.resolved, discord.Message):
-        replied_to_bot = message.reference.resolved.author == bot.user
+    if message.reference:
+        if isinstance(message.reference.resolved, discord.Message):
+            replied_to_bot = message.reference.resolved.author == bot.user
+        elif message.reference.message_id:
+            try:
+                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                replied_to_bot = ref_msg.author == bot.user
+            except Exception:
+                pass
     named = any(k in content_lower for k in ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall"))
 
     if mentioned or replied_to_bot or named:
