@@ -1,5 +1,6 @@
 import os
 import re
+import io
 import json
 import time
 import asyncio
@@ -560,19 +561,9 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
     if not chunks and file_attachment is None and sticker is None and not media_url:
         chunks = ["Exploring the infinite streams of oatmeal data."]
 
-    embed = None
-
-    # Handle Tenor GIFs & Direct Images using full Embed Image rendering
-    if media_url and ("tenor.com" in media_url or media_url.endswith((".gif", ".jpg", ".png"))):
-        embed = discord.Embed(color=0x2b2d31)
-        if chunks:
-            embed.description = chunks[0]
-            chunks = []  # Clear chunks so text is cleanly integrated inside the embed
-        embed.set_image(url=media_url)
-        media_url = None  # Handled inside embed image, no separate raw text link needed
-
-    # Handle YouTube & Web Links for full native video preview rendering
-    elif media_url:
+    # Append media URLs (YouTube, Tenor GIFs, Suno tracks, Hive links) 
+    # directly to the message content so Discord generates native unfurls.
+    if media_url:
         if chunks:
             chunks[-1] = f"{chunks[-1]}\n\n{media_url}"
         else:
@@ -580,8 +571,6 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
 
     for idx, chunk in enumerate(chunks or [""]):
         kwargs = {}
-        if idx == 0 and embed is not None:
-            kwargs["embed"] = embed
         if idx == 0 and file_attachment is not None:
             kwargs["file"] = file_attachment
         if idx == 0 and sticker is not None:
@@ -649,16 +638,17 @@ async def generate_and_send(
 
     length_modifier = " Keep it short, punchy, dynamic, and interesting." if priority_tier > 1 else ""
 
-    # Priority-tailored system instructions
-    if priority_tier == 1:
+
+if priority_tier == 1:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
             f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
-            f"OUTLINE:\n{outline_block}{year_injection}\n\n"
+            f"OUTLINE (YOUR REAL LIFE TIMELINE):\n{FULL_ANNUAL_OUTLINE}\n\n"
             f"SLOGANS:\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
-            f"DIRECTIVE: Priority 1 (Direct Conversation). Be sane, honest, truthful, and deeply engaging. "
-            f"You can talk about anything—jokes, education, science, music, or life history—without lying."
+            f"DIRECTIVE: Priority 1 (Direct Conversation). Answer subtly specifically, technical, scientific, ironically, concisely, organized, historical, realistic, clinical, philosophical, eternal, wisely, acutely, sharply, organically, honestly, patiently, retroactively, nostalgic, apologetically, sophisticated, directly, thoroughly, nuance accurately, and authentically. "
+            f"When asked personally about a specific year, place, or event, explicitly cite exact facts from your OUTLINE (e.g., specific dates, places, people, and actions from your life) rather than giving vague summaries."
         )
+
     else:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
@@ -695,9 +685,9 @@ async def generate_and_send(
             raw = re.sub(r'\[!\[.*?\]\(.*?\)\]\(.*?\)', '', raw)
             raw = re.sub(r'!\[.*?\]\(.*?\)', '', raw).strip()
 
-            refusal_indicators = (
-                "i'm sorry", "as an ai", "i cannot", "i can't comply",
-                "i can't help", "against my guidelines", "i am unable"
+           refusal_indicators = (
+                "as an ai language model", "as an ai,", "against my safety guidelines", 
+                "i cannot assist with that", "i am unable to comply"
             )
 
             normalized_raw = raw.lower().replace("’", "'")
@@ -714,22 +704,29 @@ async def generate_and_send(
     # =========================================================================
     # ULTIMATE BUILD-A-BEAR FALLBACK & SELF-THROTTLING BACK-OFF
     # =========================================================================
+
     if not reply and not media_url and file_attachment is None and sticker is None:
-        if priority_tier == 4:
-            return  
-        
-        print("[FALLBACK TRIGGERED]: Text and primary media missed. Trying media fallback first...")
-        
-        media_url = await fetch_clean_tenor_gif(prompt_text or "oatmeal joey arnold")
-        
-        if not media_url:
-            BUILD_A_BEAR_FALLBACKS = [
-                "Constructing a custom build-a-bear oatmeal plushie inside the digital ether...",
-                "Stitching together 1990s VCR tape ribbons and oatmeal fluff...",
-                "Calibrating the build-a-bear matrix while Ra Ra inspects the seams...",
-                "Rebooting the Forest Grove trailer park imagination engine..."
-            ]
-            reply = random.choice(BUILD_A_BEAR_FALLBACKS)
+        if priority_tier == 1:
+            # If P1 fails, search outline directly for year facts first
+            year_fact = extract_year_context(prompt_text)
+            if year_fact:
+                reply = f"In {year_fact}"
+            else:
+                reply = "I remember it clearly—checking back through my outline records."
+        elif priority_tier == 4:
+            media_url = await fetch_clean_tenor_gif(prompt_text or "oatmeal joey arnold")
+            if not media_url:
+                return
+        else:
+            media_url = await fetch_clean_tenor_gif(prompt_text or "oatmeal joey arnold")
+            if not media_url:
+                BUILD_A_BEAR_FALLBACKS = [
+                    "Constructing a custom build-a-bear oatmeal plushie inside the digital ether...",
+                    "Stitching together 1990s VCR tape ribbons and oatmeal fluff...",
+                    "Calibrating the build-a-bear matrix while Ra Ra inspects the seams...",
+                    "Rebooting the Forest Grove trailer park imagination engine..."
+                ]
+                reply = random.choice(BUILD_A_BEAR_FALLBACKS)
         
         print("[THROTTLE / REST]: Fallback engaged. Resting and stepping back for 15-30 seconds...")
         await asyncio.sleep(random.uniform(15.0, 30.0))
@@ -811,9 +808,8 @@ async def on_message(message):
         return
 
     now = time.time()
-    genie_cooldown = 300 + (usage_ratio * 600)
-    genie_cooldown_passed = (now - last_genie_timestamp) > genie_cooldown
-    genie_prob = max(0.002, 0.02 * (1.0 - (usage_ratio ** 1.25)))
+    genie_cooldown = 60 + (usage_ratio * 120)  # Shorter 1-2 minute cooldown
+    genie_prob = max(0.01, 0.05 * (1.0 - (usage_ratio ** 1.25))) # Higher probability floor (1% to 5%)
 
     if genie_cooldown_passed and random.random() < genie_prob:
         last_genie_timestamp = now
