@@ -395,12 +395,10 @@ async def fetch_clean_tenor_gif(query):
     return await asyncio.to_thread(_search)
 
 async def fetch_hive_article_link(query):
-    """Dynamically scrapes live article URLs from Hive/PeakD search results based on cleaned keywords."""
     def _search():
         try:
-            # Clean up the query: strip mentions, punctuation, and long sentences down to core keywords
             clean = re.sub(r"^(link to your|find my|search for|post your|show me your|article about|blog about|article|blog|link|read)\s*", "", query or "", flags=re.I).strip()
-            clean = re.sub(r"[^\w\s]", "", clean)  # Remove punctuation like periods/commas
+            clean = re.sub(r"[^\w\s]", "", clean)
             words = [w for w in clean.split() if len(w) > 3]
             short_query = " ".join(words[:3]) if words else "joeyarnoldvn"
             
@@ -426,9 +424,7 @@ async def fetch_hive_article_link(query):
         return "https://hive.blog/@joeyarnoldvn"
     return await asyncio.to_thread(_search)
 
-
 async def fetch_suno_track_link(query):
-    """Dynamically queries Suno's search endpoint/pages on the fly for live track links."""
     def _search():
         try:
             clean = re.sub(r"https?://[^\s]+", "", query or "")
@@ -437,7 +433,6 @@ async def fetch_suno_track_link(query):
             words = [w for w in clean.split() if len(w) > 3]
             short_query = " ".join(words[:2]) if words else "joey arnold"
 
-            # Query Suno's search interface directly
             q = urllib.parse.quote(short_query)
             url = f"https://suno.com/search?q={q}"
             
@@ -450,7 +445,6 @@ async def fetch_suno_track_link(query):
             )
             html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
             
-            # Extract unique song UUIDs straight from the live HTML response
             song_ids = list(set(re.findall(r'/song/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})', html)))
             if song_ids:
                 chosen_id = random.choice(song_ids)
@@ -459,7 +453,6 @@ async def fetch_suno_track_link(query):
         except Exception as e:
             print(f"suno live search error: {e}")
             
-        # If a live scrape attempt fails due to network/parsing bounds, fall back to a dynamic query string search URL instead of a broken ID
         return f"https://suno.com/search?q={urllib.parse.quote(query or 'joey arnold')}"
         
     return await asyncio.to_thread(_search)
@@ -476,7 +469,6 @@ async def fetch_guild_sticker(channel):
     return standard_sticker()
 
 async def fetch_image_file_bytes(prompt):
-    """Downloads Pollinations image bytes and returns a discord.File attachment to hide raw text URLs."""
     def _download():
         try:
             clean = re.sub(r"^(draw|sketch|paint|picture of|image of|art)\s*", "", prompt or "", flags=re.I).strip()[:120]
@@ -504,28 +496,13 @@ async def choose_media(prompt_text, priority_tier, channel):
     wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written", "read"))
 
     explicit_request = wants_link or wants_draw or wants_audio or wants_video or wants_gif or wants_sticker
-async def choose_media(prompt_text, priority_tier, channel):
-    text = (prompt_text or "").lower()
-    url = ""
-    file_attachment = None
-    sticker = None
-
-    wants_draw = any(k in text for k in ("draw", "sketch", "paint", "illustrat", "picture of", "image of", "art")) and not any(k in text for k in ("link", "article", "website", "page"))
-    wants_audio = any(k in text for k in ("song", "music", "suno", "soundtrack", "track", "spotify", "soundcloud", "reverbnation", "podcast", "audio", "fm bot"))
-    wants_video = any(k in text for k in ("youtube", "video", "clip", "watch"))
-    wants_gif = any(k in text for k in ("gif", "meme", "reaction"))
-    wants_sticker = "sticker" in text
-    wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written", "read"))
-
-    explicit_request = wants_link or wants_draw or wants_audio or wants_video or wants_gif or wants_sticker
 
     if not explicit_request:
-        # Target media probability: Priority 1 = 80%, Priority 2 = 85%, Priority 3 = 90%, Priority 4 = 95%
         media_probabilities = {1: 0.80, 2: 0.85, 3: 0.90, 4: 0.95}
         target_prob = media_probabilities.get(priority_tier, 0.85)
 
         if random.random() >= target_prob:
-            return "", None, None  # Text-only message
+            return "", None, None
 
     if wants_link:
         url = await fetch_hive_article_link(prompt_text)
@@ -540,7 +517,6 @@ async def choose_media(prompt_text, priority_tier, channel):
     elif wants_sticker:
         sticker = await fetch_guild_sticker(channel)
     else:
-        # Unprompted roll: Rare web links (~1%), mostly GIFs, YouTube, Art, or Stickers
         roll = random.random()
         if roll < 0.35:
             file_attachment = await fetch_image_file_bytes(prompt_text)
@@ -551,7 +527,6 @@ async def choose_media(prompt_text, priority_tier, channel):
         elif roll < 0.99:
             sticker = await fetch_guild_sticker(channel)
         else:
-            # ~1% chance to drop a unique live web article link organically
             url = await fetch_hive_article_link(prompt_text)
 
     return url, file_attachment, sticker
@@ -561,8 +536,6 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
     if not chunks and file_attachment is None and sticker is None and not media_url:
         chunks = ["Exploring the infinite streams of oatmeal data."]
 
-    # Append media URLs (YouTube, Tenor GIFs, Suno tracks, Hive links) 
-    # directly to the message content so Discord generates native unfurls.
     if media_url:
         if chunks:
             chunks[-1] = f"{chunks[-1]}\n\n{media_url}"
@@ -588,9 +561,8 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
             print(f"send error: {e}")
 
 # ============================================================
-# 6. CORE GENERATION & PRIORITY 4 SAFETY FIX
+# 6. CORE GENERATION & PRIORITY SAFETY
 # ============================================================
-
 async def generate_and_send(
     destination_channel,
     prompt_text,
@@ -638,17 +610,15 @@ async def generate_and_send(
 
     length_modifier = " Keep it short, punchy, dynamic, and interesting." if priority_tier > 1 else ""
 
-
-if priority_tier == 1:
+    if priority_tier == 1:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
             f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
             f"OUTLINE (YOUR REAL LIFE TIMELINE):\n{FULL_ANNUAL_OUTLINE}\n\n"
             f"SLOGANS:\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
-            f"DIRECTIVE: Priority 1 (Direct Conversation). Answer subtly specifically, technical, scientific, ironically, concisely, organized, historical, realistic, clinical, philosophical, eternal, wisely, acutely, sharply, organically, honestly, patiently, retroactively, nostalgic, apologetically, sophisticated, directly, thoroughly, nuance accurately, and authentically. "
-            f"When asked personally about a specific year, place, or event, explicitly cite exact facts from your OUTLINE (e.g., specific dates, places, people, and actions from your life) rather than giving vague summaries."
+            f"DIRECTIVE: Priority 1 (Direct Conversation). Answer accurately, authentically, and thoroughly using exact facts. "
+            f"When asked about a specific year, place, or event, explicitly cite exact facts from your OUTLINE (e.g., specific dates, places, people, and actions) rather than giving vague summaries."
         )
-
     else:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
@@ -656,8 +626,7 @@ if priority_tier == 1:
             f"Motto: I don't know, how could I possibly know.{length_modifier}\n"
             f"DIRECTIVE: Priority {priority_tier} (Background/Unprompted Stream). You are the living Internet as Oatmeal Joey. "
             f"Be wild, outrageous, insane, and completely unpredictable! Draw from a massive variety of topics: "
-            f"science, philosophy, poetry, rap, tech, jokes, trivia, history, music, and strange pop culture. "
-            f"DO NOT repeat the same canned lines or focus on just one biography point. Broaden your range infinitely!"
+            f"science, philosophy, poetry, rap, tech, jokes, trivia, history, music, and strange pop culture."
         )
 
     token_limit = calculate_dynamic_max_tokens(prompt_text, priority_tier)
@@ -685,7 +654,7 @@ if priority_tier == 1:
             raw = re.sub(r'\[!\[.*?\]\(.*?\)\]\(.*?\)', '', raw)
             raw = re.sub(r'!\[.*?\]\(.*?\)', '', raw).strip()
 
-           refusal_indicators = (
+            refusal_indicators = (
                 "as an ai language model", "as an ai,", "against my safety guidelines", 
                 "i cannot assist with that", "i am unable to comply"
             )
@@ -694,7 +663,7 @@ if priority_tier == 1:
 
             if not raw or any(bad in normalized_raw for bad in refusal_indicators):
                 print(f"[REFUSAL / EMPTY PURGED]: {raw}")
-                raw = ""  # Discard text
+                raw = ""
 
             reply = clean_sentence_truncation(raw) if raw else ""
 
@@ -702,12 +671,10 @@ if priority_tier == 1:
         print(f"API generation error: {e}")
 
     # =========================================================================
-    # ULTIMATE BUILD-A-BEAR FALLBACK & SELF-THROTTLING BACK-OFF
+    # ROBUST FALLBACK HANDLING PER PRIORITY
     # =========================================================================
-
     if not reply and not media_url and file_attachment is None and sticker is None:
         if priority_tier == 1:
-            # If P1 fails, search outline directly for year facts first
             year_fact = extract_year_context(prompt_text)
             if year_fact:
                 reply = f"In {year_fact}"
@@ -727,9 +694,6 @@ if priority_tier == 1:
                     "Rebooting the Forest Grove trailer park imagination engine..."
                 ]
                 reply = random.choice(BUILD_A_BEAR_FALLBACKS)
-        
-        print("[THROTTLE / REST]: Fallback engaged. Resting and stepping back for 15-30 seconds...")
-        await asyncio.sleep(random.uniform(15.0, 30.0))
 
     if not media_url:
         media_url = None
@@ -797,7 +761,6 @@ async def on_message(message):
         clean = re.sub(r"<@!?\d+>", "", message.content)
         clean = re.sub(r"<@&?\d+>", "", clean).strip()
         
-        # Passes the full, rich message text straight to the LLM so it can spend tokens and respond fully
         await generate_and_send(
             message.channel,
             clean or "Hello Oatmeal.",
@@ -808,8 +771,9 @@ async def on_message(message):
         return
 
     now = time.time()
-    genie_cooldown = 60 + (usage_ratio * 120)  # Shorter 1-2 minute cooldown
-    genie_prob = max(0.01, 0.05 * (1.0 - (usage_ratio ** 1.25))) # Higher probability floor (1% to 5%)
+    genie_cooldown = 60 + (usage_ratio * 120)
+    genie_cooldown_passed = (now - last_genie_timestamp) > genie_cooldown
+    genie_prob = max(0.01, 0.05 * (1.0 - (usage_ratio ** 1.25)))
 
     if genie_cooldown_passed and random.random() < genie_prob:
         last_genie_timestamp = now
