@@ -428,33 +428,16 @@ async def fetch_suno_track_link(query):
     def _search():
         try:
             clean = re.sub(r"https?://[^\s]+", "", query or "")
-            clean = re.sub(r"^(play|song|music|suno|track|audio)\s*", "", clean, flags=re.I).strip()
-            clean = re.sub(r"[^\w\s]", "", clean)
-            words = [w for w in clean.split() if len(w) > 3]
-            short_query = " ".join(words[:2]) if words else "joey arnold"
-
-            q = urllib.parse.quote(short_query)
-            url = f"https://suno.com/search?q={q}"
+            clean = re.sub(r"^(play|song|music|suno|track|audio|post|give me|show me)\s*", "", clean, flags=re.I).strip()
             
-            req = urllib.request.Request(
-                url, 
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                }
-            )
-            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            if not clean or len(clean) < 2:
+                clean = "oatmeal joey arnold"
             
-            song_ids = list(set(re.findall(r'/song/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})', html)))
-            if song_ids:
-                chosen_id = random.choice(song_ids)
-                return f"https://suno.com/song/{chosen_id}"
-                
+            q = urllib.parse.quote(f"joey arnold {clean}")
+            return f"https://suno.com/search?q={q}"
         except Exception as e:
-            print(f"suno live search error: {e}")
-            
-        return f"https://suno.com/search?q={urllib.parse.quote(query or 'joey arnold')}"
-        
+            print(f"suno link generation error: {e}")
+            return "https://suno.com/search?q=joey%20arnold"
     return await asyncio.to_thread(_search)
 
 def standard_sticker():
@@ -504,18 +487,18 @@ async def choose_media(prompt_text, priority_tier, channel):
         if random.random() >= target_prob:
             return "", None, None
 
-    if wants_link:
-        url = await fetch_hive_article_link(prompt_text)
-    elif wants_draw:
-        file_attachment = await fetch_image_file_bytes(prompt_text)
-    elif wants_audio:
+    if wants_audio:
         url = await fetch_suno_track_link(prompt_text)
     elif wants_video:
         url = await fetch_direct_youtube_video(prompt_text)
     elif wants_gif:
         url = await fetch_clean_tenor_gif(prompt_text)
+    elif wants_draw:
+        file_attachment = await fetch_image_file_bytes(prompt_text)
     elif wants_sticker:
         sticker = await fetch_guild_sticker(channel)
+    elif wants_link:
+        url = await fetch_hive_article_link(prompt_text)
     else:
         roll = random.random()
         if roll < 0.35:
