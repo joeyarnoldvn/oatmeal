@@ -376,15 +376,30 @@ async def fetch_clean_tenor_gif(query):
                 clean = random.choice(boosters)
             elif random.random() < 0.38:
                 clean = f"{clean} {random.choice(boosters)}"
+                
             url = f"https://tenor.com/search/{urllib.parse.quote(clean)}-gifs"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
+            
             paths = re.findall(r'href="(/view/[^"]+)"', html)
             if not paths:
                 return ""
+                
             pool = [p for p in paths if f"https://tenor.com{p}" not in recent_gif_urls] or paths
             chosen_path = random.choice(pool)
+            
+            # CLEANUP: Remove HTML entities (like &#039;) and truncate messy tracking tags
+            chosen_path = re.sub(r'&#\d+;', '', chosen_path)
+            chosen_path = re.sub(r'&amp;', '', chosen_path)
+            
+            # Ensure we only take the clean base path up to the gif ID number
+            id_match = re.search(r'(-gif-\d+)', chosen_path)
+            if id_match:
+                end_idx = chosen_path.find(id_match.group(1)) + len(id_match.group(1))
+                chosen_path = chosen_path[:end_idx]
+                
             chosen = "https://tenor.com" + chosen_path
+            
             recent_gif_urls.append(chosen)
             if len(recent_gif_urls) > MAX_RECENT_GIFS:
                 recent_gif_urls.pop(0)
@@ -394,50 +409,67 @@ async def fetch_clean_tenor_gif(query):
             return ""
     return await asyncio.to_thread(_search)
 
-async def fetch_hive_article_link(query):
+async def fetch_general_web_link(query):
     def _search():
         try:
-            clean = re.sub(r"^(link to your|find my|search for|post your|show me your|article about|blog about|article|blog|link|read)\s*", "", query or "", flags=re.I).strip()
-            clean = re.sub(r"[^\w\s]", "", clean)
-            words = [w for w in clean.split() if len(w) > 3]
-            short_query = " ".join(words[:3]) if words else "joeyarnoldvn"
+            clean = re.sub(r"^(link to|find|search for|show me|website about|article about|link|read|site)\s*", "", query or "", flags=re.I).strip()
+            if not clean or len(clean) < 3:
+                clean = random.choice(["joey arnold", "oatmeal", "vcr 90s", "basketball history", "star trek", "wikipedia"])
             
-            search_terms = [short_query, "joeyarnoldvn", "hive", "blog", "oatmeal", "vcr"]
-            term = random.choice([t for t in search_terms if len(t) > 2])
+            q = urllib.parse.quote(clean)
+            url = f"https://html.duckduckgo.com/html/?q={q}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
             
-            q = urllib.parse.quote(f"joeyarnoldvn {term}")
-            targets = [
-                f"https://hive.blog/search?q={q}",
-                f"https://peakd.com/search?q={q}",
-            ]
-            for target_url in targets:
-                req = urllib.request.Request(target_url, headers={"User-Agent": "Mozilla/5.0"})
-                html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            # Extract links from any website returned in search results
+            links = re.findall(r'class="result__url"[^>]*href="([^"]+)"', html)
+            if not links:
+                links = re.findall(r'href="//duckduckgo.com/l/\?uddg=([^&]+)"', html)
+                links = [urllib.parse.unquote(l) for l in links]
                 
-                links = re.findall(r'href="(/@[\w.-]+/[\w.-]+)"', html)
-                valid_links = [f"https://hive.blog{link}" for link in links if "@joeyarnoldvn" in link and len(link.split('/')) >= 3]
-                if valid_links:
-                    return random.choice(list(set(valid_links)))
+            valid_links = [l for l in links if l.startswith('http') and 'duckduckgo.com' not in l]
+            if valid_links:
+                return random.choice(list(set(valid_links)))
         except Exception as e:
-            print(f"hive dynamic article search note: {e}")
-        
-        return "https://hive.blog/@joeyarnoldvn"
+            print(f"general web link search note: {e}")
+            
+        return f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query or 'joey arnold')}"
     return await asyncio.to_thread(_search)
 
 async def fetch_suno_track_link(query):
     def _search():
         try:
+            # Clean up the user prompt to extract the core topic
             clean = re.sub(r"https?://[^\s]+", "", query or "")
-            clean = re.sub(r"^(play|song|music|suno|track|audio|post|give me|show me)\s*", "", clean, flags=re.I).strip()
+            clean = re.sub(r"^(play|song|music|suno|track|audio|post|give me|show me|find|search)\s*", "", clean, flags=re.I).strip()
             
             if not clean or len(clean) < 2:
-                clean = "oatmeal joey arnold"
+                clean = random.choice(["joey arnold", "oatmeal", "space", "cat", "trailer park"])
             
-            q = urllib.parse.quote(f"joey arnold {clean}")
-            return f"https://suno.com/search?q={q}"
+            q = urllib.parse.quote(clean)
+            url = f"https://suno.com/search?q={q}"
+            
+            req = urllib.request.Request(
+                url, 
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                }
+            )
+            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            
+            # Extract actual Suno track UUIDs from the HTML page
+            song_ids = list(set(re.findall(r'/song/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})', html)))
+            if song_ids:
+                chosen_id = random.choice(song_ids)
+                return f"https://suno.com/song/{chosen_id}"
+                
         except Exception as e:
-            print(f"suno link generation error: {e}")
-            return "https://suno.com/search?q=joey%20arnold"
+            print(f"suno live search note: {e}")
+            
+        # Fallback to search query if scraping fails or no direct track UUID is found
+        return f"https://suno.com/search?q={urllib.parse.quote(query or 'joey arnold')}"
+        
     return await asyncio.to_thread(_search)
 
 def standard_sticker():
@@ -471,46 +503,44 @@ async def choose_media(prompt_text, priority_tier, channel):
     file_attachment = None
     sticker = None
 
-    wants_draw = any(k in text for k in ("draw", "sketch", "paint", "illustrat", "picture of", "image of", "art")) and not any(k in text for k in ("link", "article", "website", "page"))
-    wants_audio = any(k in text for k in ("song", "music", "suno", "soundtrack", "track", "spotify", "soundcloud", "reverbnation", "podcast", "audio", "fm bot"))
-    wants_video = any(k in text for k in ("youtube", "video", "clip", "watch"))
-    wants_gif = any(k in text for k in ("gif", "meme", "reaction"))
-    wants_sticker = "sticker" in text
-    wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written", "read"))
+    media_probabilities = {1: 0.85, 2: 0.85, 3: 0.90, 4: 0.95}
+    target_prob = media_probabilities.get(priority_tier, 0.85)
 
-    explicit_request = wants_link or wants_draw or wants_audio or wants_video or wants_gif or wants_sticker
+    if random.random() >= target_prob:
+        return "", None, None
 
-    if not explicit_request:
-        media_probabilities = {1: 0.80, 2: 0.85, 3: 0.90, 4: 0.95}
-        target_prob = media_probabilities.get(priority_tier, 0.85)
+    # Flexible weighted pool across all media and general web links
+    media_options = ["youtube", "tenor", "suno", "image", "sticker", "web"]
+    weights = [0.25, 0.30, 0.15, 0.10, 0.10, 0.10]
 
-        if random.random() >= target_prob:
-            return "", None, None
+    # Soft context nudges if specific media words are mentioned
+    if any(k in text for k in ("song", "music", "audio", "track")):
+        weights = [0.05, 0.10, 0.70, 0.05, 0.05, 0.05]
+    elif any(k in text for k in ("video", "youtube", "clip", "watch")):
+        weights = [0.70, 0.10, 0.05, 0.05, 0.05, 0.05]
+    elif any(k in text for k in ("gif", "meme", "reaction")):
+        weights = [0.10, 0.70, 0.05, 0.05, 0.05, 0.05]
+    elif any(k in text for k in ("draw", "sketch", "paint", "art", "picture")):
+        weights = [0.05, 0.05, 0.05, 0.75, 0.05, 0.05]
+    elif "sticker" in text:
+        weights = [0.05, 0.05, 0.05, 0.05, 0.75, 0.05]
+    elif any(k in text for k in ("link", "website", "article", "read", "site")):
+        weights = [0.05, 0.05, 0.05, 0.05, 0.05, 0.75]
 
-    if wants_audio:
+    chosen_medium = random.choices(media_options, weights=weights, k=1)[0]
+
+    if chosen_medium == "suno":
         url = await fetch_suno_track_link(prompt_text)
-    elif wants_video:
+    elif chosen_medium == "youtube":
         url = await fetch_direct_youtube_video(prompt_text)
-    elif wants_gif:
+    elif chosen_medium == "tenor":
         url = await fetch_clean_tenor_gif(prompt_text)
-    elif wants_draw:
+    elif chosen_medium == "image":
         file_attachment = await fetch_image_file_bytes(prompt_text)
-    elif wants_sticker:
+    elif chosen_medium == "sticker":
         sticker = await fetch_guild_sticker(channel)
-    elif wants_link:
-        url = await fetch_hive_article_link(prompt_text)
-    else:
-        roll = random.random()
-        if roll < 0.35:
-            file_attachment = await fetch_image_file_bytes(prompt_text)
-        elif roll < 0.65:
-            url = await fetch_clean_tenor_gif(prompt_text)
-        elif roll < 0.90:
-            url = await fetch_direct_youtube_video(prompt_text)
-        elif roll < 0.99:
-            sticker = await fetch_guild_sticker(channel)
-        else:
-            url = await fetch_hive_article_link(prompt_text)
+    elif chosen_medium == "web":
+        url = await fetch_general_web_link(prompt_text)
 
     return url, file_attachment, sticker
 
