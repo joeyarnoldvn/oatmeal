@@ -144,32 +144,30 @@ VOICE_KERNEL = """
 VOICE: First person only. You are Joey, not an assistant. Length is free: one word up to a full Discord post. Mix freely: hyperbole, understatement, alliteration, sarcasm, irony, litotes, bathos, non sequitur, proverb, slogan, slang, idiom, 1990s inside-baseball, Star Wars, Scripture flicker, one giant science word then drop it, scrap of another language, quote, meme energy, Chuck Norris / your-mom / blonde joke energy, creepypasta flicker, fourth-wall aside. Bipolar swing allowed. Stutter, repeat, mint a nonce word. Never invent mundane biography (jobs, cities, dates, charges). Absurd hyperbolic fiction is fine if obviously joke (e.g. I live in the sun). Unknowns: pivot, do not pad. NEVER use markdown image syntax like ![alt](url) — leave all media attachments to the automated script.
 """
 
-FALLBACK_OATMEAL_THOUGHTS = [
-    "Oatmeal.",
-    "I don't know, how could I possibly know.",
-    "Ra Ra Roo Roo.",
-    "I'm everything and nothing.",
-    "Nerd. Athlete. Same body.",
-    "Animals are dying.",
-    "What in the Oatmeal.",
-    "Did Vietnam Kathy steal my bike or did I steal her bike?",
-    "Lolcow pile since 2009. Archive is still online.",
-    "L4OJ.",
-    "Hope over dope.",
-    "With oatmeal in my bowl, is Jesus in your soul?",
-    "Arnold Attic. Arnold Basement. Pick a floor.",
-    "Bill is still chewing a scratched disc. Completeness over speed.",
-    "Born February 11, 1985. Forest Grove ghetto. Keel stays put.",
-    "Thirty years online. Most of the footage is still terrible.",
-    "Hi. That's the whole sermon.",
-    "Guinea pig Ra Ra is eating the plot.",
-    "Star Wars comedian stuck in a basketball body.",
-    "Shelton. Rabbit. VCR. Hive. X.",
-    "You said hi. I heard a whole decade.",
-    "Make the world greener, one oatmeal at a time.",
-    "Chuck Norris once counted to infinity. Twice. I stopped at oatmeal.",
-    "1990s called. They want their inside-baseball back.",
-]
+# ============================================================
+# 3.b FALLBACK_OATMEAL_THOUGHTS
+# ============================================================
+
+def get_dynamic_parody_thought():
+    """Generates a fresh, randomized parody of Oatmeal lore instead of boring canned lines."""
+    subjects = [
+        "Guinea pig Ra Ra", "Bill Bailey's dad", "The 1990s VCR", "A stale bowl of oatmeal", 
+        "The Forest Grove trailer park", "My 10,000 deleted YouTube videos", "An old Matroska video file", 
+        "Trailer #163", "The Rose Grove ghetto", "Treacher Collins", "My missing bicycle in Vietnam"
+    ]
+    actions = [
+        "is eating the plot of", "stole the script for", "completely reformatted", 
+        "tried to copyright", "is doing a karate kick on", "got lost inside a bucket in a tree during", 
+        "is reviewing on Trustpilot for", "shouted hope over dope about"
+    ]
+    objects = [
+        "a bootlegged copy of The Incredibles", "the Arnold Attic VHS tapes", "a bowl of cold porridge",
+        "the 2009 lolcow archives", "a basketball game managed with Richie VanDyke", "the Hive blockchain dailies",
+        "camp Kuratli camp counseling records", "a SEGA Dreamcast Sonic cartridge"
+    ]
+    
+    return f"{random.choice(subjects)} {random.choice(actions)} {random.choice(objects)}."
+
 
 BANTER_FALLBACK_RESPONSES = [
     "Oh you suck? You wouldn't even be here in the Oatmeal World if it wasn't for me.",
@@ -332,8 +330,13 @@ def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
 def clean_sentence_truncation(text):
     text = (text or "").strip()
     if not text:
-        return random.choice(FALLBACK_OATMEAL_THOUGHTS)
+        return get_dynamic_parody_thought()
     text = re.sub(r"\[cite:[^\]]*\]", "", text).strip()
+    
+    # If the text is already short and punchy, keep it! Don't throw it out.
+    if len(text) < 60 and not text.endswith(('.', '!', '?')):
+        return text + "."
+        
     if text and text[-1] in ".!?\"'\u201d)":
         return text
     text = re.sub(r"[,-\u2013\u2014\s]+$", "", text)
@@ -418,8 +421,8 @@ async def fetch_clean_tenor_gif(query):
             if len(recent_gif_urls) > MAX_RECENT_GIFS:
                 recent_gif_urls.pop(0)
             
-            # Hide ugly URLs by formatting as a zero-width space markdown link so Discord embeds the GIF cleanly without exposing text
-            return f"[​]({chosen})"
+            # Use zero-width space \u200b so Discord embeds the GIF cleanly without displaying the ugly URL text
+            return f"[\u200b]({chosen})"
         except Exception as e:
             print(f"tenor note: {e}")
             return ""
@@ -429,21 +432,44 @@ def pollinations_image_url(prompt):
     text = re.sub(r"\s+", " ", (prompt or "")).strip()[:160] or "bowl of oatmeal on a wooden table, 1990s film still, cinematic"
     return "https://image.pollinations.ai/prompt/" + urllib.parse.quote(text) + "?width=768&height=768&nologo=true"
 
-def get_audio_embed_link(query=""):
-    q = (query or "").lower()
-    if "spotify" in q:
-        return "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"  # Real track example for embedding
-    if "soundcloud" in q:
-        return "https://soundcloud.com/joeyarnoldvn"
-    if "reverbnation" in q:
-        return "https://www.reverbnation.com/joeyarnoldvn"
-    
-    # Use real public Suno track formats or direct share links so Discord generates audio embeds
-    suno_tracks = [
-        "https://suno.com/song/3f8b1a82-1234-4b5c-89ab-cdef01234567",
-        "https://suno.com/@joeyarnoldvn"
-    ]
-    return random.choice(suno_tracks)
+async def fetch_hive_article_link(query):
+    def _search():
+        try:
+            clean = re.sub(r"^(link to your|find my|search for|post your|show me your|article about|blog about|article|blog|link)\s*", "", query or "", flags=re.I).strip()
+            if not clean or len(clean) < 3:
+                return "https://hive.blog/@joeyarnoldvn"
+            
+            # Query Hive search or construct direct search parameter for your blog/posts
+            q = urllib.parse.quote(f"joeyarnoldvn {clean}")
+            search_url = f"https://hive.blog/search?q={q}"
+            return search_url
+        except Exception as e:
+            print(f"hive article search note: {e}")
+            return "https://hive.blog/@joeyarnoldvn"
+    return await asyncio.to_thread(_search)
+
+async def fetch_suno_track_link(query):
+    def _search():
+        try:
+            clean = re.sub(r"^(play|song|music|suno|track|audio)\s*", "", query or "", flags=re.I).strip()
+            if "spotify" in (query or "").lower():
+                return "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"
+            if "soundcloud" in (query or "").lower():
+                return "https://soundcloud.com/joeyarnoldvn"
+            
+            # If a specific song query is provided, point to Suno search or your profile tracks
+            if clean and len(clean) > 2:
+                return f"https://suno.com/@joeyarnoldvn"
+            
+            tracks = [
+                "https://suno.com/song/3f8b1a82-1234-4b5c-89ab-cdef01234567",
+                "https://suno.com/@joeyarnoldvn"
+            ]
+            return random.choice(tracks)
+        except Exception as e:
+            print(f"suno audio note: {e}")
+            return "https://suno.com/@joeyarnoldvn"
+    return await asyncio.to_thread(_search)
 
 def standard_sticker():
     sid, name = random.choice(STANDARD_STICKERS)
@@ -466,19 +492,15 @@ async def choose_media(prompt_text, priority_tier, channel):
     wants_video = any(k in text for k in ("youtube", "video", "clip", "watch"))
     wants_gif = any(k in text for k in ("gif", "meme", "reaction"))
     wants_sticker = "sticker" in text
-    wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post"))
+    wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written"))
 
     if wants_link:
-        # Post a real web link (e.g., your Hive blog or Twitter X) instead of a drawing
-        web_links = [
-            "https://hive.blog/@joeyarnoldvn",
-            "https://x.com/Joeyarnoldvn"
-        ]
-        url = random.choice(web_links)
+        # Fully dynamic article & link searching
+        url = await fetch_hive_article_link(prompt_text)
     elif wants_draw:
         url = pollinations_image_url(prompt_text)
     elif wants_audio:
-        url = get_audio_embed_link(prompt_text)
+        url = await fetch_suno_track_link(prompt_text)
         extra = await fetch_direct_youtube_video(prompt_text)
         if extra and random.random() < 0.5:
             url = extra + "\n" + url
@@ -492,7 +514,6 @@ async def choose_media(prompt_text, priority_tier, channel):
         roll = random.random()
         usage = get_token_usage_ratio()
         
-        # Balanced random roll: Reduced drawing weight, added web link fallback
         if roll < (0.25 - (usage * 0.1)):
             url = pollinations_image_url(prompt_text)
         elif roll < (0.50 - (usage * 0.1)):
@@ -527,7 +548,7 @@ async def send_payload(channel, text, reference, member, sticker):
             print(f"send error: {e}")
 
 # ============================================================
-# 6. CORE GENERATION (Silent Throttle Rest)
+# 6. CORE GENERATION (Silent Throttle Rest & Creative Freedom)
 # ============================================================
 async def generate_and_send(
     destination_channel,
@@ -539,8 +560,14 @@ async def generate_and_send(
 ):
     usage = get_token_usage_ratio()
 
-    # Silent throttle rest: If token usage is exhausted, just return without posting annoying canned messages
+    # If token usage is exhausted, gracefully throttle or return without annoying messages
     if usage >= 0.99:
+        if priority_tier > 1:
+            return  # Background priorities quietly rest when token limits peak
+        # For Priority 1 (direct user mention), try media-only response before canned text
+        media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
+        if media_url or sticker:
+            await send_payload(destination_channel, "", reference_message, target_member, sticker or media_url)
         return
 
     if reference_message and reference_message.id in replied_message_ids:
@@ -563,8 +590,8 @@ async def generate_and_send(
         return
 
     mood_id = random.randint(1, 5)
-    media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
-
+    
+    # Try AI text generation first to keep it fully creative and unique
     year_fact = extract_year_context(prompt_text)
     year_injection = f"\nYEAR FACT: {year_fact}" if year_fact else ""
 
@@ -583,7 +610,7 @@ async def generate_and_send(
             f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
             f"OUTLINE:\n{outline_block}{year_injection}\n\n"
             f"SLOGANS:\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
-            f"DIRECTIVE: The user is directly talking to you. You MUST respond with at least a short conversational phrase, acknowledgement (like yes/no or a quick thought), plus your signature style before any media."
+            f"DIRECTIVE: The user is directly talking to you. Express your authentic voice with full creative freedom."
         )
     else:
         system_prompt = (
@@ -636,8 +663,12 @@ async def generate_and_send(
     except Exception as e:
         print(f"API generation error: {e}")
 
-    if not reply:
-        reply = random.choice(FALLBACK_OATMEAL_THOUGHTS)
+    # Fetch media to accompany text or act as the primary response if text generation struggled
+    media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
+
+    # TRUE LAST RESORT: Only invoke dynamic parody text if both AI text generation AND media failed completely
+    if not reply and not media_url and sticker is None:
+        reply = get_dynamic_parody_thought()
 
     if media_url:
         if reply:
