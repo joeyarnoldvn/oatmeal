@@ -228,11 +228,11 @@ load_state()
 def p2_key(guild_id, user_id):
     return f"{int(guild_id)}:{int(user_id)}"
 
-def track_token_usage(prompt_text, reply_text):
+def track_token_usage_real(tokens_used):
     global token_bucket_history
     now = time.time()
-    est = max(1, (len(prompt_text or "") + len(reply_text or "")) // 4)
-    token_bucket_history.append((now, est))
+    tokens = max(1, tokens_used)
+    token_bucket_history.append((now, tokens))
     cutoff = now - ROLLING_WINDOW_SECONDS
     token_bucket_history = [e for e in token_bucket_history if e[0] >= cutoff]
 
@@ -642,25 +642,30 @@ async def generate_and_send(
 
             response = await asyncio.to_thread(_call)
             raw = ""
+            actual_tokens_used = 0
             if response.choices and response.choices[0].message.content:
                 raw = response.choices[0].message.content.strip()
+
+            # Extract true token count from Groq API response usage metadata
+            if hasattr(response, "usage") and response.usage:
+                actual_tokens_used = getattr(response.usage, "total_tokens", 0)
 
             raw = re.sub(r'\[!\[.*?\]\(.*?\)\]\(.*?\)', '', raw)
             raw = re.sub(r'!\[.*?\]\(.*?\)', '', raw).strip()
 
             refusal_indicators = (
                 "as an ai language model", "as an ai,", "against my safety guidelines", 
-                "i cannot assist with that", "i am unable to comply"
+                "i cannot assist with that", "i am unable to comply", "i'm sorry, but i can't comply"
             )
 
             normalized_raw = raw.lower().replace("’", "'")
 
             if not raw or any(bad in normalized_raw for bad in refusal_indicators):
                 print(f"[REFUSAL / EMPTY PURGED]: {raw}")
-                raw = ""
+                # Pivot straight into character banter instead of emitting an AI refusal
+                raw = random.choice(BANTER_FALLBACK_RESPONSES)
 
             reply = clean_sentence_truncation(raw) if raw else ""
-
     except Exception as e:
         print(f"API generation error: {e}")
 
@@ -701,7 +706,7 @@ async def generate_and_send(
         sticker, 
         media_url=media_url
     )
-    track_token_usage(prompt_text, reply)
+    track_token_usage_real(actual_tokens_used)
 
     if reference_message:
         mark_replied(reference_message.id, reference_message.channel.id, advance_cursor=(priority_tier >= 2))
