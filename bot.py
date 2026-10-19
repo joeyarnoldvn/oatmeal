@@ -144,12 +144,7 @@ VOICE_KERNEL = """
 VOICE: First person only. You are Joey, not an assistant. Length is free: one word up to a full Discord post. Mix freely: hyperbole, understatement, alliteration, sarcasm, irony, litotes, bathos, non sequitur, proverb, slogan, slang, idiom, 1990s inside-baseball, Star Wars, Scripture flicker, one giant science word then drop it, scrap of another language, quote, meme energy, Chuck Norris / your-mom / blonde joke energy, creepypasta flicker, fourth-wall aside. Bipolar swing allowed. Stutter, repeat, mint a nonce word. Never invent mundane biography (jobs, cities, dates, charges). Absurd hyperbolic fiction is fine if obviously joke (e.g. I live in the sun). Unknowns: pivot, do not pad. NEVER use markdown image syntax like ![alt](url) — leave all media attachments to the automated script.
 """
 
-# ============================================================
-# 3.b FALLBACK_OATMEAL_THOUGHTS
-# ============================================================
-
 def get_dynamic_parody_thought():
-    """Generates a fresh, randomized parody of Oatmeal lore instead of boring canned lines."""
     subjects = [
         "Guinea pig Ra Ra", "Bill Bailey's dad", "The 1990s VCR", "A stale bowl of oatmeal", 
         "The Forest Grove trailer park", "My 10,000 deleted YouTube videos", "An old Matroska video file", 
@@ -165,9 +160,7 @@ def get_dynamic_parody_thought():
         "the 2009 lolcow archives", "a basketball game managed with Richie VanDyke", "the Hive blockchain dailies",
         "camp Kuratli camp counseling records", "a SEGA Dreamcast Sonic cartridge"
     ]
-    
     return f"{random.choice(subjects)} {random.choice(actions)} {random.choice(objects)}."
-
 
 BANTER_FALLBACK_RESPONSES = [
     "Oh you suck? You wouldn't even be here in the Oatmeal World if it wasn't for me.",
@@ -176,13 +169,6 @@ BANTER_FALLBACK_RESPONSES = [
     "Go practice clown tryouts with the lolcow pile. Since 2009.",
     "Stfu received. Volume stays up.",
     "Nobody cares? Then why is the message still in my face.",
-]
-
-NO_TOKEN_FALLBACK_MESSAGES = [
-    "Eating oatmeal for lunch, be back soon.",
-    "Oatmeal in the bowl, brain offline for a sec.",
-    "Quick oatmeal break, catch you on the flip side.",
-    "Stoking the oatmeal stove, back in a bit.",
 ]
 
 STANDARD_STICKERS = [
@@ -233,7 +219,6 @@ def load_state():
 def save_state():
     def _write():
         try:
-            # Ensure directory exists (e.g., /tmp or local path)
             dir_name = os.path.dirname(STATE_PATH)
             if dir_name and not os.path.exists(dir_name):
                 os.makedirs(dir_name, exist_ok=True)
@@ -330,11 +315,10 @@ def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
 def clean_sentence_truncation(text):
     text = (text or "").strip()
     if not text:
-        return get_dynamic_parody_thought()
+        return ""
     text = re.sub(r"\[cite:[^\]]*\]", "", text).strip()
     
-    # If the text is already short and punchy, keep it! Don't throw it out.
-    if len(text) < 60 and not text.endswith(('.', '!', '?')):
+    if len(text) < 80 and not text.endswith(('.', '!', '?')):
         return text + "."
         
     if text and text[-1] in ".!?\"'\u201d)":
@@ -375,7 +359,7 @@ def extract_year_context(query):
     return None
 
 # ============================================================
-# 5. EXPANDED AUDIO, MUSIC & HIDDEN-URL MEDIA SYSTEM
+# 5. FULLY DYNAMIC LIVE SEARCH MEDIA SYSTEM (NO CANNED LINKS)
 # ============================================================
 async def fetch_direct_youtube_video(query):
     def _search():
@@ -384,7 +368,8 @@ async def fetch_direct_youtube_video(query):
             if not clean or len(clean) < 3:
                 clean = random.choice([
                     "oatmeal joey arnold", "joeyarnoldvn", "ojawall joey arnold",
-                    "oatmeal joey arnold vietnam", "joey arnold power rangers"
+                    "oatmeal joey arnold vietnam", "joey arnold power rangers",
+                    "arnold attic", "seven drums joey arnold"
                 ])
             q = urllib.parse.quote(clean)
             url = f"https://www.youtube.com/results?search_query={q}"
@@ -392,10 +377,10 @@ async def fetch_direct_youtube_video(query):
             html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
             ids = re.findall(r"watch\?v=([\w-]{11})", html)
             if ids:
-                return f"https://www.youtube.com/watch?v={ids[0]}"
+                return f"https://www.youtube.com/watch?v={random.choice(list(set(ids)))}"
         except Exception as e:
             print(f"youtube note: {e}")
-        return ""
+        return f"https://www.youtube.com/results?search_query={urllib.parse.quote(query or 'joeyarnoldvn' )}"
     return await asyncio.to_thread(_search)
 
 async def fetch_clean_tenor_gif(query):
@@ -403,7 +388,7 @@ async def fetch_clean_tenor_gif(query):
         try:
             context = extract_year_context(query)
             clean = context or re.sub(r"^(post|find|gif|meme|pic|image|show me|give me)\s*", "", query or "", flags=re.I).strip()
-            boosters = ["funny", "dance", "reaction", "cat", "dog", "fail", "win", "confused", "oatmeal", "basketball", "90s", "shocked", "laugh"]
+            boosters = ["funny", "dance", "reaction", "cat", "dog", "fail", "win", "confused", "oatmeal", "basketball", "90s", "shocked", "laugh", "running", "ninja turtles"]
             if not clean or len(clean) < 4:
                 clean = random.choice(boosters)
             elif random.random() < 0.38:
@@ -420,9 +405,7 @@ async def fetch_clean_tenor_gif(query):
             recent_gif_urls.append(chosen)
             if len(recent_gif_urls) > MAX_RECENT_GIFS:
                 recent_gif_urls.pop(0)
-            
-            # Use zero-width space \u200b so Discord embeds the GIF cleanly without displaying the ugly URL text
-            return f"[\u200b]({chosen})"
+            return chosen
         except Exception as e:
             print(f"tenor note: {e}")
             return ""
@@ -430,45 +413,59 @@ async def fetch_clean_tenor_gif(query):
 
 def pollinations_image_url(prompt):
     text = re.sub(r"\s+", " ", (prompt or "")).strip()[:160] or "bowl of oatmeal on a wooden table, 1990s film still, cinematic"
-    return "https://image.pollinations.ai/prompt/" + urllib.parse.quote(text) + "?width=768&height=768&nologo=true"
+    seed = random.randint(1, 999999)
+    return f"https://image.pollinations.ai/prompt/{urllib.parse.quote(text)}?width=768&height=768&nologo=true&seed={seed}"
 
 async def fetch_hive_article_link(query):
+    """Dynamically scrapes live article URLs from Hive/PeakD search results based on the user's specific query."""
     def _search():
         try:
-            clean = re.sub(r"^(link to your|find my|search for|post your|show me your|article about|blog about|article|blog|link)\s*", "", query or "", flags=re.I).strip()
-            if not clean or len(clean) < 3:
-                return "https://hive.blog/@joeyarnoldvn"
+            clean = re.sub(r"^(link to your|find my|search for|post your|show me your|article about|blog about|article|blog|link|read)\s*", "", query or "", flags=re.I).strip()
+            search_terms = [clean, "joeyarnoldvn", "hive", "blog", "oatmeal", "vcr", "vietnam", "trailer"]
+            term = random.choice([t for t in search_terms if len(t) > 2])
             
-            # Query Hive search or construct direct search parameter for your blog/posts
-            q = urllib.parse.quote(f"joeyarnoldvn {clean}")
-            search_url = f"https://hive.blog/search?q={q}"
-            return search_url
+            q = urllib.parse.quote(f"joeyarnoldvn {term}")
+            targets = [
+                f"https://hive.blog/search?q={q}",
+                f"https://peakd.com/search?q={q}",
+            ]
+            for target_url in targets:
+                req = urllib.request.Request(target_url, headers={"User-Agent": "Mozilla/5.0"})
+                html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+                
+                links = re.findall(r'href="(/@[\w.-]+/[\w.-]+)"', html)
+                valid_links = [f"https://hive.blog{link}" for link in links if "@joeyarnoldvn" in link and len(link.split('/')) >= 3]
+                if valid_links:
+                    return random.choice(list(set(valid_links)))
         except Exception as e:
-            print(f"hive article search note: {e}")
-            return "https://hive.blog/@joeyarnoldvn"
+            print(f"hive dynamic article search note: {e}")
+        
+        rand_query = urllib.parse.quote(query or "joeyarnoldvn post")
+        return f"https://hive.blog/search?q={rand_query}"
     return await asyncio.to_thread(_search)
 
 async def fetch_suno_track_link(query):
+    """Dynamically queries music search engines on the fly for audio links."""
     def _search():
         try:
             clean = re.sub(r"^(play|song|music|suno|track|audio)\s*", "", query or "", flags=re.I).strip()
-            if "spotify" in (query or "").lower():
-                return "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"
             if "soundcloud" in (query or "").lower():
-                return "https://soundcloud.com/joeyarnoldvn"
+                return f"https://soundcloud.com/search/sounds?q={urllib.parse.quote(clean or 'joeyarnoldvn' )}"
+            if "spotify" in (query or "").lower():
+                return f"https://open.spotify.com/search/{urllib.parse.quote(clean or 'joeyarnoldvn')}"
             
-            # If a specific song query is provided, point to Suno search or your profile tracks
-            if clean and len(clean) > 2:
-                return f"https://suno.com/@joeyarnoldvn"
-            
-            tracks = [
-                "https://suno.com/song/3f8b1a82-1234-4b5c-89ab-cdef01234567",
-                "https://suno.com/@joeyarnoldvn"
-            ]
-            return random.choice(tracks)
+            search_term = clean if len(clean) > 2 else random.choice(["joeyarnoldvn", "oatmeal", "suno track", "trailer park"])
+            q = urllib.parse.quote(search_term)
+            url = f"https://suno.com/search?q={q}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
+            song_ids = re.findall(r'/song/([\w-]+)', html)
+            if song_ids:
+                return f"https://suno.com/song/{random.choice(list(set(song_ids)))}"
         except Exception as e:
-            print(f"suno audio note: {e}")
-            return "https://suno.com/@joeyarnoldvn"
+            print(f"suno dynamic search note: {e}")
+        
+        return f"https://suno.com/search?q={urllib.parse.quote(query or 'joeyarnoldvn')}"
     return await asyncio.to_thread(_search)
 
 def standard_sticker():
@@ -492,18 +489,14 @@ async def choose_media(prompt_text, priority_tier, channel):
     wants_video = any(k in text for k in ("youtube", "video", "clip", "watch"))
     wants_gif = any(k in text for k in ("gif", "meme", "reaction"))
     wants_sticker = "sticker" in text
-    wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written"))
+    wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written", "read"))
 
     if wants_link:
-        # Fully dynamic article & link searching
         url = await fetch_hive_article_link(prompt_text)
     elif wants_draw:
         url = pollinations_image_url(prompt_text)
     elif wants_audio:
         url = await fetch_suno_track_link(prompt_text)
-        extra = await fetch_direct_youtube_video(prompt_text)
-        if extra and random.random() < 0.5:
-            url = extra + "\n" + url
     elif wants_video:
         url = await fetch_direct_youtube_video(prompt_text)
     elif wants_gif:
@@ -511,17 +504,19 @@ async def choose_media(prompt_text, priority_tier, channel):
     elif wants_sticker:
         sticker = await fetch_guild_sticker(channel)
     else:
+        if priority_tier in (2, 3):
+            if random.random() > 0.01:
+                return "", None  # 1% unprompted media rule
+
         roll = random.random()
-        usage = get_token_usage_ratio()
-        
-        if roll < (0.25 - (usage * 0.1)):
+        if roll < 0.30:
             url = pollinations_image_url(prompt_text)
-        elif roll < (0.50 - (usage * 0.1)):
+        elif roll < 0.60:
             url = await fetch_clean_tenor_gif(prompt_text)
-        elif roll < (0.75):
+        elif roll < 0.85:
             url = await fetch_direct_youtube_video(prompt_text)
-        elif roll < (0.90):
-            url = "https://hive.blog/@joeyarnoldvn"
+        elif roll < 0.95:
+            url = await fetch_hive_article_link(prompt_text)
         else:
             sticker = await fetch_guild_sticker(channel)
 
@@ -530,7 +525,7 @@ async def choose_media(prompt_text, priority_tier, channel):
 async def send_payload(channel, text, reference, member, sticker):
     chunks = split_message_for_discord(text or "")
     if not chunks and sticker is None:
-        chunks = [random.choice(FALLBACK_OATMEAL_THOUGHTS)]
+        chunks = [get_dynamic_parody_thought()]
 
     for idx, chunk in enumerate(chunks or [""]):
         kwargs = {}
@@ -548,7 +543,7 @@ async def send_payload(channel, text, reference, member, sticker):
             print(f"send error: {e}")
 
 # ============================================================
-# 6. CORE GENERATION (Silent Throttle Rest & Creative Freedom)
+# 6. CORE GENERATION & PRIORITY 4 SAFETY FIX
 # ============================================================
 async def generate_and_send(
     destination_channel,
@@ -560,14 +555,7 @@ async def generate_and_send(
 ):
     usage = get_token_usage_ratio()
 
-    # If token usage is exhausted, gracefully throttle or return without annoying messages
-    if usage >= 0.99:
-        if priority_tier > 1:
-            return  # Background priorities quietly rest when token limits peak
-        # For Priority 1 (direct user mention), try media-only response before canned text
-        media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
-        if media_url or sticker:
-            await send_payload(destination_channel, "", reference_message, target_member, sticker or media_url)
+    if usage >= 0.98 and priority_tier > 1:
         return
 
     if reference_message and reference_message.id in replied_message_ids:
@@ -590,8 +578,8 @@ async def generate_and_send(
         return
 
     mood_id = random.randint(1, 5)
-    
-    # Try AI text generation first to keep it fully creative and unique
+    media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
+
     year_fact = extract_year_context(prompt_text)
     year_injection = f"\nYEAR FACT: {year_fact}" if year_fact else ""
 
@@ -610,7 +598,7 @@ async def generate_and_send(
             f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
             f"OUTLINE:\n{outline_block}{year_injection}\n\n"
             f"SLOGANS:\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
-            f"DIRECTIVE: The user is directly talking to you. Express your authentic voice with full creative freedom."
+            f"DIRECTIVE: The user is directly talking to you. Express your authentic voice with creative freedom."
         )
     else:
         system_prompt = (
@@ -663,11 +651,9 @@ async def generate_and_send(
     except Exception as e:
         print(f"API generation error: {e}")
 
-    # Fetch media to accompany text or act as the primary response if text generation struggled
-    media_url, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
-
-    # TRUE LAST RESORT: Only invoke dynamic parody text if both AI text generation AND media failed completely
     if not reply and not media_url and sticker is None:
+        if priority_tier == 4:
+            return  
         reply = get_dynamic_parody_thought()
 
     if media_url:
@@ -710,7 +696,6 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     global last_genie_timestamp
-    # CRITICAL FIX: Ignore bot's own messages to prevent feedback loops/talking to itself
     if message.author.bot or message.guild is None or message.is_system() or message.author == bot.user:
         return
 
@@ -744,10 +729,9 @@ async def on_message(message):
         return
 
     now = time.time()
-    # Stricter cooldown and probability to prevent Priority 4 spam during quiet hours
-    genie_cooldown = 180 + (usage_ratio * 500)
+    genie_cooldown = 300 + (usage_ratio * 600)
     genie_cooldown_passed = (now - last_genie_timestamp) > genie_cooldown
-    genie_prob = max(0.005, 0.05 * (1.0 - (usage_ratio ** 1.25)))
+    genie_prob = max(0.002, 0.02 * (1.0 - (usage_ratio ** 1.25)))
 
     if genie_cooldown_passed and random.random() < genie_prob:
         last_genie_timestamp = now
@@ -779,7 +763,6 @@ async def next_historical_message(channel):
     target = None
     async for msg in channel.history(**kwargs):
         last_seen = msg.id
-        # Ignore bot messages in history cursor check
         if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
             continue
         key = p2_key(channel.guild.id, msg.author.id)
