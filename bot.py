@@ -427,36 +427,40 @@ async def fetch_hive_article_link(query):
 
 
 async def fetch_suno_track_link(query):
-    """Dynamically scrapes or pulls a direct individual Suno song link that embeds a playable track card."""
+    """Dynamically queries Suno's search endpoint/pages on the fly for live track links."""
     def _search():
         try:
-            # Clean up the query and get rid of any stray URLs or prefixes
             clean = re.sub(r"https?://[^\s]+", "", query or "")
             clean = re.sub(r"^(play|song|music|suno|track|audio)\s*", "", clean, flags=re.I).strip()
             clean = re.sub(r"[^\w\s]", "", clean)
             words = [w for w in clean.split() if len(w) > 3]
-            short_query = " ".join(words[:2]) if words else "joeyarnoldvn"
+            short_query = " ".join(words[:2]) if words else "joey arnold"
 
-            q = urllib.parse.quote(f"joeyarnoldvn {short_query}")
+            # Query Suno's search interface directly
+            q = urllib.parse.quote(short_query)
             url = f"https://suno.com/search?q={q}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
             
-            # Find all unique direct song IDs
-            song_ids = list(set(re.findall(r'/song/([\w-]+)', html)))
+            req = urllib.request.Request(
+                url, 
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                }
+            )
+            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            
+            # Extract unique song UUIDs straight from the live HTML response
+            song_ids = list(set(re.findall(r'/song/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})', html)))
             if song_ids:
-                return f"https://suno.com/song/{random.choice(song_ids)}"
+                chosen_id = random.choice(song_ids)
+                return f"https://suno.com/song/{chosen_id}"
+                
         except Exception as e:
-            print(f"suno dynamic search note: {e}")
+            print(f"suno live search error: {e}")
+            
+        # If a live scrape attempt fails due to network/parsing bounds, fall back to a dynamic query string search URL instead of a broken ID
+        return f"https://suno.com/search?q={urllib.parse.quote(query or 'joey arnold')}"
         
-        # Fallback pool of verified direct Suno song links so it NEVER posts a generic search page
-        fallback_songs = [
-            "https://suno.com/song/b19a16f2-70b5-4b07-a36c-941864195156",
-            "https://suno.com/song/a518338f-51d0-4dcd-98a9-4cf88ae211aa",
-            "https://suno.com/song/032906b3-e29f-4318-9366-231a310b14ef",
-            "https://suno.com/song/89a508f7-7278-4389-9ea2-20c78a0b0805"
-        ]
-        return random.choice(fallback_songs)
     return await asyncio.to_thread(_search)
 
 def standard_sticker():
@@ -557,44 +561,37 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
         chunks = ["Exploring the infinite streams of oatmeal data."]
 
     embed = None
-    if media_url:
+
+    # Handle Tenor GIFs & Direct Images using full Embed Image rendering
+    if media_url and ("tenor.com" in media_url or media_url.endswith((".gif", ".jpg", ".png"))):
         embed = discord.Embed(color=0x2b2d31)
-        if "youtube.com" in media_url or "youtu.be" in media_url:
-            embed.title = "📺 Watch YouTube Video"
-            embed.url = media_url
-        elif "suno.com" in media_url:
-            embed.title = "🎵 Play Suno Track"
-            embed.url = media_url
-        elif "hive.blog" in media_url or "peakd.com" in media_url:
-            embed.title = "📖 Read Hive Article"
-            embed.url = media_url
-        elif "tenor.com" in media_url:
-            embed.title = "🎞️ View GIF Reaction"
-            embed.url = media_url
+        if chunks:
+            embed.description = chunks[0]
+            chunks = []  # Clear chunks so text is cleanly integrated inside the embed
+        embed.set_image(url=media_url)
+        media_url = None  # Handled inside embed image, no separate raw text link needed
+
+    # Handle YouTube & Web Links for full native video preview rendering
+    elif media_url:
+        if chunks:
+            chunks[-1] = f"{chunks[-1]}\n\n{media_url}"
         else:
-            embed.title = "🔗 Open Media Link"
-            embed.url = media_url
+            chunks = [media_url]
 
     for idx, chunk in enumerate(chunks or [""]):
         kwargs = {}
         if idx == 0 and embed is not None:
-            if chunk:
-                embed.description = chunk
-                kwargs["embed"] = embed
-                chunk = None
-            else:
-                kwargs["embed"] = embed
-
+            kwargs["embed"] = embed
         if idx == 0 and file_attachment is not None:
             kwargs["file"] = file_attachment
         if idx == 0 and sticker is not None:
             kwargs["stickers"] = [sticker]
-            
+
         try:
             if idx == 0 and reference is not None:
                 await reference.reply(chunk or None, mention_author=True, **kwargs)
             elif idx == 0 and member is not None:
-                content = f"{member.mention}" if kwargs.get("embed") else f"{member.mention} {chunk or ''}".strip()
+                content = f"{member.mention} {chunk or ''}".strip()
                 await channel.send(content, **kwargs)
             elif chunk or kwargs:
                 await channel.send(chunk or None, **kwargs)
