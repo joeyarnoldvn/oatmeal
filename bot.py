@@ -427,27 +427,36 @@ async def fetch_hive_article_link(query):
 
 
 async def fetch_suno_track_link(query):
-    """Dynamically queries music search engines on the fly for audio links."""
+    """Dynamically scrapes or pulls a direct individual Suno song link that embeds a playable track card."""
     def _search():
         try:
-            clean = re.sub(r"^(play|song|music|suno|track|audio)\s*", "", query or "", flags=re.I).strip()
-            if "soundcloud" in (query or "").lower():
-                return f"https://soundcloud.com/search/sounds?q={urllib.parse.quote(clean or 'joeyarnoldvn' )}"
-            if "spotify" in (query or "").lower():
-                return f"https://open.spotify.com/search/{urllib.parse.quote(clean or 'joeyarnoldvn')}"
-            
-            search_term = clean if len(clean) > 2 else random.choice(["joeyarnoldvn", "oatmeal", "suno track", "trailer park"])
-            q = urllib.parse.quote(search_term)
+            # Clean up the query and get rid of any stray URLs or prefixes
+            clean = re.sub(r"https?://[^\s]+", "", query or "")
+            clean = re.sub(r"^(play|song|music|suno|track|audio)\s*", "", clean, flags=re.I).strip()
+            clean = re.sub(r"[^\w\s]", "", clean)
+            words = [w for w in clean.split() if len(w) > 3]
+            short_query = " ".join(words[:2]) if words else "joeyarnoldvn"
+
+            q = urllib.parse.quote(f"joeyarnoldvn {short_query}")
             url = f"https://suno.com/search?q={q}"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-            song_ids = re.findall(r'/song/([\w-]+)', html)
+            
+            # Find all unique direct song IDs
+            song_ids = list(set(re.findall(r'/song/([\w-]+)', html)))
             if song_ids:
-                return f"https://suno.com/song/{random.choice(list(set(song_ids)))}"
+                return f"https://suno.com/song/{random.choice(song_ids)}"
         except Exception as e:
             print(f"suno dynamic search note: {e}")
         
-        return f"https://suno.com/search?q={urllib.parse.quote(query or 'joeyarnoldvn')}"
+        # Fallback pool of verified direct Suno song links so it NEVER posts a generic search page
+        fallback_songs = [
+            "https://suno.com/song/b19a16f2-70b5-4b07-a36c-941864195156",
+            "https://suno.com/song/a518338f-51d0-4dcd-98a9-4cf88ae211aa",
+            "https://suno.com/song/032906b3-e29f-4318-9366-231a310b14ef",
+            "https://suno.com/song/89a508f7-7278-4389-9ea2-20c78a0b0805"
+        ]
+        return random.choice(fallback_songs)
     return await asyncio.to_thread(_search)
 
 def standard_sticker():
@@ -490,6 +499,20 @@ async def choose_media(prompt_text, priority_tier, channel):
     wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written", "read"))
 
     explicit_request = wants_link or wants_draw or wants_audio or wants_video or wants_gif or wants_sticker
+async def choose_media(prompt_text, priority_tier, channel):
+    text = (prompt_text or "").lower()
+    url = ""
+    file_attachment = None
+    sticker = None
+
+    wants_draw = any(k in text for k in ("draw", "sketch", "paint", "illustrat", "picture of", "image of", "art")) and not any(k in text for k in ("link", "article", "website", "page"))
+    wants_audio = any(k in text for k in ("song", "music", "suno", "soundtrack", "track", "spotify", "soundcloud", "reverbnation", "podcast", "audio", "fm bot"))
+    wants_video = any(k in text for k in ("youtube", "video", "clip", "watch"))
+    wants_gif = any(k in text for k in ("gif", "meme", "reaction"))
+    wants_sticker = "sticker" in text
+    wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written", "read"))
+
+    explicit_request = wants_link or wants_draw or wants_audio or wants_video or wants_gif or wants_sticker
 
     if not explicit_request:
         # Target media probability: Priority 1 = 80%, Priority 2 = 85%, Priority 3 = 90%, Priority 4 = 95%
@@ -497,7 +520,7 @@ async def choose_media(prompt_text, priority_tier, channel):
         target_prob = media_probabilities.get(priority_tier, 0.85)
 
         if random.random() >= target_prob:
-            return "", None, None  # Rarely text-only
+            return "", None, None  # Text-only message
 
     if wants_link:
         url = await fetch_hive_article_link(prompt_text)
@@ -512,37 +535,67 @@ async def choose_media(prompt_text, priority_tier, channel):
     elif wants_sticker:
         sticker = await fetch_guild_sticker(channel)
     else:
+        # Unprompted roll: Rare web links (~1%), mostly GIFs, YouTube, Art, or Stickers
         roll = random.random()
-        if roll < 0.30:
+        if roll < 0.35:
             file_attachment = await fetch_image_file_bytes(prompt_text)
-        elif roll < 0.60:
+        elif roll < 0.65:
             url = await fetch_clean_tenor_gif(prompt_text)
-        elif roll < 0.85:
+        elif roll < 0.90:
             url = await fetch_direct_youtube_video(prompt_text)
-        elif roll < 0.95:
-            url = await fetch_hive_article_link(prompt_text)
-        else:
+        elif roll < 0.99:
             sticker = await fetch_guild_sticker(channel)
+        else:
+            # ~1% chance to drop a unique live web article link organically
+            url = await fetch_hive_article_link(prompt_text)
 
     return url, file_attachment, sticker
 
-async def send_payload(channel, text, reference, member, file_attachment, sticker):
+async def send_payload(channel, text, reference, member, file_attachment, sticker, media_url=None):
     chunks = split_message_for_discord(text or "")
-    if not chunks and file_attachment is None and sticker is None:
+    if not chunks and file_attachment is None and sticker is None and not media_url:
         chunks = ["Exploring the infinite streams of oatmeal data."]
+
+    embed = None
+    if media_url:
+        embed = discord.Embed(color=0x2b2d31)
+        if "youtube.com" in media_url or "youtu.be" in media_url:
+            embed.title = "📺 Watch YouTube Video"
+            embed.url = media_url
+        elif "suno.com" in media_url:
+            embed.title = "🎵 Play Suno Track"
+            embed.url = media_url
+        elif "hive.blog" in media_url or "peakd.com" in media_url:
+            embed.title = "📖 Read Hive Article"
+            embed.url = media_url
+        elif "tenor.com" in media_url:
+            embed.title = "🎞️ View GIF Reaction"
+            embed.url = media_url
+        else:
+            embed.title = "🔗 Open Media Link"
+            embed.url = media_url
 
     for idx, chunk in enumerate(chunks or [""]):
         kwargs = {}
+        if idx == 0 and embed is not None:
+            if chunk:
+                embed.description = chunk
+                kwargs["embed"] = embed
+                chunk = None
+            else:
+                kwargs["embed"] = embed
+
         if idx == 0 and file_attachment is not None:
             kwargs["file"] = file_attachment
         if idx == 0 and sticker is not None:
             kwargs["stickers"] = [sticker]
+            
         try:
             if idx == 0 and reference is not None:
                 await reference.reply(chunk or None, mention_author=True, **kwargs)
             elif idx == 0 and member is not None:
-                content = f"{member.mention} {chunk}".strip()
-                await channel.send(content or member.mention, **kwargs)
+                content = f"{member.mention}" if kwargs.get("embed") else f"{member.mention} {chunk or ''}".strip()
+                await channel.send(content, **kwargs)
             elif chunk or kwargs:
                 await channel.send(chunk or None, **kwargs)
         except Exception as e:
@@ -551,6 +604,7 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
 # ============================================================
 # 6. CORE GENERATION & PRIORITY 4 SAFETY FIX
 # ============================================================
+
 async def generate_and_send(
     destination_channel,
     prompt_text,
@@ -571,7 +625,7 @@ async def generate_and_send(
 
     text_lower = (prompt_text or "").lower()
 
-    hate_or_banter_triggers = ("shut up", "stfu", "be quiet", "stop talking", "you suck", "nobody cares")	
+    hate_or_banter_triggers = ("shut up", "stfu", "be quiet", "stop talking", "you suck", "nobody cares")    
     if any(t in text_lower for t in hate_or_banter_triggers):
         reply = random.choice(BANTER_FALLBACK_RESPONSES)
         await send_payload(destination_channel, reply, reference_message, target_member, None, None)
@@ -669,11 +723,9 @@ async def generate_and_send(
         
         print("[FALLBACK TRIGGERED]: Text and primary media missed. Trying media fallback first...")
         
-        # 1. First media fallback resort: Try fetching a dynamic Tenor GIF or YouTube video instantly
         media_url = await fetch_clean_tenor_gif(prompt_text or "oatmeal joey arnold")
         
         if not media_url:
-            # 2. Ultra-rare text fallback (Once every ten years / build-a-bear style)
             BUILD_A_BEAR_FALLBACKS = [
                 "Constructing a custom build-a-bear oatmeal plushie inside the digital ether...",
                 "Stitching together 1990s VCR tape ribbons and oatmeal fluff...",
@@ -682,20 +734,21 @@ async def generate_and_send(
             ]
             reply = random.choice(BUILD_A_BEAR_FALLBACKS)
         
-        # 3. SELF-THROTTLING & REST: Slow down posting rate so it never spam loops
         print("[THROTTLE / REST]: Fallback engaged. Resting and stepping back for 15-30 seconds...")
         await asyncio.sleep(random.uniform(15.0, 30.0))
 
-    if media_url:
-        if reply:
-            reply = (reply + "\n\n" + media_url).strip()
-        else:
-            reply = media_url
+    if not media_url:
+        media_url = None
 
-    if reply and len(reply) < 100 and random.random() < 0.25 and not file_attachment:
-        reply = reply + " " + random.choice(EMOJI_POOL)
-
-    await send_payload(destination_channel, reply, reference_message, target_member, file_attachment, sticker)
+    await send_payload(
+        destination_channel, 
+        reply, 
+        reference_message, 
+        target_member, 
+        file_attachment, 
+        sticker, 
+        media_url=media_url
+    )
     track_token_usage(prompt_text, reply)
 
     if reference_message:
