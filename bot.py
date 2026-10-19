@@ -144,24 +144,6 @@ VOICE_KERNEL = """
 VOICE: First person only. You are Joey, not an assistant. Length is free: one word up to a full Discord post. Mix freely: hyperbole, understatement, alliteration, sarcasm, irony, litotes, bathos, non sequitur, proverb, slogan, slang, idiom, 1990s inside-baseball, Star Wars, Scripture flicker, one giant science word then drop it, scrap of another language, quote, meme energy, Chuck Norris / your-mom / blonde joke energy, creepypasta flicker, fourth-wall aside. Bipolar swing allowed. Stutter, repeat, mint a nonce word. Never invent mundane biography (jobs, cities, dates, charges). Absurd hyperbolic fiction is fine if obviously joke (e.g. I live in the sun). Unknowns: pivot, do not pad. NEVER use markdown image syntax like ![alt](url) — leave all media attachments to the automated script.
 """
 
-def get_dynamic_parody_thought():
-    subjects = [
-        "Guinea pig Ra Ra", "Bill Bailey's dad", "The 1990s VCR", "A stale bowl of oatmeal", 
-        "The Forest Grove trailer park", "My 10,000 deleted YouTube videos", "An old Matroska video file", 
-        "Trailer #163", "The Rose Grove ghetto", "Treacher Collins", "My missing bicycle in Vietnam"
-    ]
-    actions = [
-        "is eating the plot of", "stole the script for", "completely reformatted", 
-        "tried to copyright", "is doing a karate kick on", "got lost inside a bucket in a tree during", 
-        "is reviewing on Trustpilot for", "shouted hope over dope about"
-    ]
-    objects = [
-        "a bootlegged copy of The Incredibles", "the Arnold Attic VHS tapes", "a bowl of cold porridge",
-        "the 2009 lolcow archives", "a basketball game managed with Richie VanDyke", "the Hive blockchain dailies",
-        "camp Kuratli camp counseling records", "a SEGA Dreamcast Sonic cartridge"
-    ]
-    return f"{random.choice(subjects)} {random.choice(actions)} {random.choice(objects)}."
-
 BANTER_FALLBACK_RESPONSES = [
     "Oh you suck? You wouldn't even be here in the Oatmeal World if it wasn't for me.",
     "I suck? I'm better than a short white Michael Jordan who also sucked at basketball.",
@@ -412,11 +394,16 @@ async def fetch_clean_tenor_gif(query):
     return await asyncio.to_thread(_search)
 
 async def fetch_hive_article_link(query):
-    """Dynamically scrapes live article URLs from Hive/PeakD search results based on the user's specific query."""
+    """Dynamically scrapes live article URLs from Hive/PeakD search results based on cleaned keywords."""
     def _search():
         try:
+            # Clean up the query: strip mentions, punctuation, and long sentences down to core keywords
             clean = re.sub(r"^(link to your|find my|search for|post your|show me your|article about|blog about|article|blog|link|read)\s*", "", query or "", flags=re.I).strip()
-            search_terms = [clean, "joeyarnoldvn", "hive", "blog", "oatmeal", "vcr", "vietnam", "trailer"]
+            clean = re.sub(r"[^\w\s]", "", clean)  # Remove punctuation like periods/commas
+            words = [w for w in clean.split() if len(w) > 3]
+            short_query = " ".join(words[:3]) if words else "joeyarnoldvn"
+            
+            search_terms = [short_query, "joeyarnoldvn", "hive", "blog", "oatmeal", "vcr"]
             term = random.choice([t for t in search_terms if len(t) > 2])
             
             q = urllib.parse.quote(f"joeyarnoldvn {term}")
@@ -435,9 +422,9 @@ async def fetch_hive_article_link(query):
         except Exception as e:
             print(f"hive dynamic article search note: {e}")
         
-        rand_query = urllib.parse.quote(query or "joeyarnoldvn post")
-        return f"https://hive.blog/search?q={rand_query}"
+        return "https://hive.blog/@joeyarnoldvn"
     return await asyncio.to_thread(_search)
+
 
 async def fetch_suno_track_link(query):
     """Dynamically queries music search engines on the fly for audio links."""
@@ -611,7 +598,7 @@ async def generate_and_send(
 
     length_modifier = " Keep it short, punchy, dynamic, and interesting." if priority_tier > 1 else ""
 
-    # Priority-tailored system instructions to eliminate canned repetition & expand range
+    # Priority-tailored system instructions
     if priority_tier == 1:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
@@ -665,18 +652,39 @@ async def generate_and_send(
             normalized_raw = raw.lower().replace("’", "'")
 
             if not raw or any(bad in normalized_raw for bad in refusal_indicators):
-                print(f"[REFUSAL PURGED]: {raw}")
-                raw = random.choice(BANTER_FALLBACK_RESPONSES)
+                print(f"[REFUSAL / EMPTY PURGED]: {raw}")
+                raw = ""  # Discard text
 
             reply = clean_sentence_truncation(raw) if raw else ""
 
     except Exception as e:
         print(f"API generation error: {e}")
 
+    # =========================================================================
+    # ULTIMATE BUILD-A-BEAR FALLBACK & SELF-THROTTLING BACK-OFF
+    # =========================================================================
     if not reply and not media_url and file_attachment is None and sticker is None:
         if priority_tier == 4:
             return  
-        reply = "Broadcasting wild frequencies from the digital ether."
+        
+        print("[FALLBACK TRIGGERED]: Text and primary media missed. Trying media fallback first...")
+        
+        # 1. First media fallback resort: Try fetching a dynamic Tenor GIF or YouTube video instantly
+        media_url = await fetch_clean_tenor_gif(prompt_text or "oatmeal joey arnold")
+        
+        if not media_url:
+            # 2. Ultra-rare text fallback (Once every ten years / build-a-bear style)
+            BUILD_A_BEAR_FALLBACKS = [
+                "Constructing a custom build-a-bear oatmeal plushie inside the digital ether...",
+                "Stitching together 1990s VCR tape ribbons and oatmeal fluff...",
+                "Calibrating the build-a-bear matrix while Ra Ra inspects the seams...",
+                "Rebooting the Forest Grove trailer park imagination engine..."
+            ]
+            reply = random.choice(BUILD_A_BEAR_FALLBACKS)
+        
+        # 3. SELF-THROTTLING & REST: Slow down posting rate so it never spam loops
+        print("[THROTTLE / REST]: Fallback engaged. Resting and stepping back for 15-30 seconds...")
+        await asyncio.sleep(random.uniform(15.0, 30.0))
 
     if media_url:
         if reply:
@@ -741,6 +749,8 @@ async def on_message(message):
     if mentioned or replied_to_bot or named:
         clean = re.sub(r"<@!?\d+>", "", message.content)
         clean = re.sub(r"<@&?\d+>", "", clean).strip()
+        
+        # Passes the full, rich message text straight to the LLM so it can spend tokens and respond fully
         await generate_and_send(
             message.channel,
             clean or "Hello Oatmeal.",
