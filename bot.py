@@ -502,6 +502,16 @@ async def choose_media(prompt_text, priority_tier, channel):
     wants_sticker = "sticker" in text
     wants_link = any(k in text for k in ("link", "article", "website", "blog", "hive", "post", "written", "read"))
 
+    explicit_request = wants_link or wants_draw or wants_audio or wants_video or wants_gif or wants_sticker
+
+    if not explicit_request:
+        # Target media probability: Priority 1 = 80%, Priority 2 = 85%, Priority 3 = 90%, Priority 4 = 95%
+        media_probabilities = {1: 0.80, 2: 0.85, 3: 0.90, 4: 0.95}
+        target_prob = media_probabilities.get(priority_tier, 0.85)
+
+        if random.random() >= target_prob:
+            return "", None, None  # Rarely text-only
+
     if wants_link:
         url = await fetch_hive_article_link(prompt_text)
     elif wants_draw:
@@ -515,10 +525,6 @@ async def choose_media(prompt_text, priority_tier, channel):
     elif wants_sticker:
         sticker = await fetch_guild_sticker(channel)
     else:
-        if priority_tier in (2, 3):
-            if random.random() > 0.01:
-                return "", None, None  # 1% unprompted media rule
-
         roll = random.random()
         if roll < 0.30:
             file_attachment = await fetch_image_file_bytes(prompt_text)
@@ -536,7 +542,7 @@ async def choose_media(prompt_text, priority_tier, channel):
 async def send_payload(channel, text, reference, member, file_attachment, sticker):
     chunks = split_message_for_discord(text or "")
     if not chunks and file_attachment is None and sticker is None:
-        chunks = [get_dynamic_parody_thought()]
+        chunks = ["Exploring the infinite streams of oatmeal data."]
 
     for idx, chunk in enumerate(chunks or [""]):
         kwargs = {}
@@ -605,25 +611,29 @@ async def generate_and_send(
 
     length_modifier = " Keep it short, punchy, dynamic, and interesting." if priority_tier > 1 else ""
 
+    # Priority-tailored system instructions to eliminate canned repetition & expand range
     if priority_tier == 1:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
             f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
             f"OUTLINE:\n{outline_block}{year_injection}\n\n"
             f"SLOGANS:\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
-            f"DIRECTIVE: The user is directly talking to you. Express your authentic voice with creative freedom."
+            f"DIRECTIVE: Priority 1 (Direct Conversation). Be sane, honest, truthful, and deeply engaging. "
+            f"You can talk about anything—jokes, education, science, music, or life history—without lying."
         )
     else:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
             f"{MOOD_DESCRIPTIONS[mood_id]}\n"
             f"Motto: I don't know, how could I possibly know.{length_modifier}\n"
-            f"Be dynamic, fresh, and concise. No fake biography."
+            f"DIRECTIVE: Priority {priority_tier} (Background/Unprompted Stream). You are the living Internet as Oatmeal Joey. "
+            f"Be wild, outrageous, insane, and completely unpredictable! Draw from a massive variety of topics: "
+            f"science, philosophy, poetry, rap, tech, jokes, trivia, history, music, and strange pop culture. "
+            f"DO NOT repeat the same canned lines or focus on just one biography point. Broaden your range infinitely!"
         )
 
     token_limit = calculate_dynamic_max_tokens(prompt_text, priority_tier)
     temperature = calculate_dynamic_temperature(prompt_text, priority_tier, mood_id)
-
 
     reply = ""
     try:
@@ -633,7 +643,7 @@ async def generate_and_send(
                     model=MODEL_NAME,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt_text or "Say something oatmeal."},
+                        {"role": "user", "content": prompt_text or "Share a wild piece of internet trivia, poetry, or music thought."},
                     ],
                     temperature=temperature,
                     max_tokens=token_limit,
@@ -652,7 +662,9 @@ async def generate_and_send(
                 "i can't help", "against my guidelines", "i am unable"
             )
 
-            if not raw or any(bad in raw.lower() for bad in refusal_indicators):
+            normalized_raw = raw.lower().replace("’", "'")
+
+            if not raw or any(bad in normalized_raw for bad in refusal_indicators):
                 print(f"[REFUSAL PURGED]: {raw}")
                 raw = random.choice(BANTER_FALLBACK_RESPONSES)
 
@@ -664,7 +676,7 @@ async def generate_and_send(
     if not reply and not media_url and file_attachment is None and sticker is None:
         if priority_tier == 4:
             return  
-        reply = get_dynamic_parody_thought()
+        reply = "Broadcasting wild frequencies from the digital ether."
 
     if media_url:
         if reply:
