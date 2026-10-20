@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot
-Clean production version with hybrid token trajectory control,
+Production-ready version with hybrid token trajectory control,
 full four-priority system, rich first-person persona, and media pipeline.
 """
 
@@ -91,7 +91,9 @@ def load_state():
 def save_state():
     def _write():
         try:
-            os.makedirs(os.path.dirname(STATE_PATH) or ".", exist_ok=True)
+            dir_name = os.path.dirname(STATE_PATH)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
             replied = list(replied_message_ids)[-50000:]
             tmp = STATE_PATH + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -101,13 +103,15 @@ def save_state():
                     "p2_done_members": list(priority2_replied_member_ids),
                     "p2_complete": p2_complete,
                 }, f)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, STATE_PATH)
         except Exception as e:
             print(f"[STATE] Save failed: {e}")
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. HYBRID TOKEN CONTROL PLANE (PLANE ALPHA + PLANE BETA)
+# 4. HYBRID TOKEN CONTROL PLANE
 # ============================================================
 GROQ_REMAINING_TOKENS = 200000
 GROQ_REMAINING_REQUESTS = 1000
@@ -173,9 +177,9 @@ def get_trajectory_metrics():
         cutoff = now - WINDOW_SECONDS[w]
         return sum(t for ts, t in token_windows[w] if ts >= cutoff)
 
-    W5  = window_sum(5)
+    W5 = window_sum(5)
     W15 = window_sum(15)
-    rho5  = W5  / 300.0
+    rho5 = W5 / 300.0
     rho15 = W15 / 900.0
     alpha = (rho5 - rho15) / 300.0
 
@@ -377,7 +381,7 @@ STANDARD_STICKERS = [
 # ============================================================
 def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
     text = (prompt_text or "").lower()
-    if any(k in text for k in ("when", "where", "year", "born", "outline", "history", "timeline", "vietnam", "jail")):
+    if any(k in text for k in ("when", "where", "year", "born", "outline", "history", "timeline", "vietnam", "jail", "treacher")):
         return 0.35
     base = 0.90 if priority_tier == 1 else 1.15
     mood_mod = {1: 0.05, 2: 0.15, 3: 0.10, 4: 0.20, 5: 0.0}.get(mood_id, 0)
@@ -425,7 +429,7 @@ async def fetch_direct_youtube_video(query):
         try:
             clean = re.sub(r"^(play|post|find|search|give me|show me|a |an |the |video|song|music|youtube)\s*", "", query or "", flags=re.I).strip()
             if not clean or len(clean) < 3:
-                clean = random.choice(["oatmeal joey arnold", "joeyarnoldvn", "arnold attic", "seven drums joey arnold"])
+                clean = random.choice(["oatmeal joey arnold", "joeyarnoldvn", "arnold attic"])
             q = urllib.parse.quote(clean)
             url = f"https://www.youtube.com/results?search_query={q}"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -516,7 +520,7 @@ async def fetch_guild_sticker(channel):
 
 async def choose_media(prompt_text, priority_tier, channel):
     text = (prompt_text or "").lower()
-    if priority_tier == 1 and any(k in text for k in ("life", "2012", "2013", "2015", "history", "outline", "when", "born", "jail", "vietnam", "bio", "timeline")):
+    if priority_tier == 1 and any(k in text for k in ("life", "2012", "2013", "2015", "history", "outline", "when", "born", "jail", "vietnam", "bio", "timeline", "treacher")):
         return "", None, None
 
     media_prob = {1: 0.82, 2: 0.88, 3: 0.92, 4: 0.95}.get(priority_tier, 0.85)
