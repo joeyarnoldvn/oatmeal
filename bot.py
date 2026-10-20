@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot
-Production-ready version with hybrid token trajectory control,
-full four-priority system, rich first-person persona, and media pipeline.
+Clean production version focused on authenticity, resilience, and freedom.
 """
 
 import os
@@ -88,34 +87,28 @@ def load_state():
     except Exception as e:
         print(f"[STATE] Fresh start ({e})")
 
-STATE_PATH = os.environ.get("STATE_PATH", "/tmp/oatmeal_state.json")
-
 def save_state():
     def _write():
         try:
             dir_name = os.path.dirname(STATE_PATH)
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
-
-            replied = list(replied_message_ids)[-50000:]
             data = {
-                "replied": replied,
+                "replied": list(replied_message_ids)[-50000:],
                 "cursors": {str(k): v for k, v in channel_cursors.items()},
                 "p2_done_members": list(priority2_replied_member_ids),
                 "p2_complete": p2_complete,
             }
-
-            # Direct write is more reliable on Render's ephemeral filesystem
             with open(STATE_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f)
                 f.flush()
                 os.fsync(f.fileno())
-
         except Exception as e:
             print(f"[STATE] Save failed: {e}")
     threading.Thread(target=_write, daemon=True).start()
+
 # ============================================================
-# 4. HYBRID TOKEN CONTROL PLANE
+# 4. HYBRID TOKEN CONTROL
 # ============================================================
 GROQ_REMAINING_TOKENS = 200000
 GROQ_REMAINING_REQUESTS = 1000
@@ -270,7 +263,7 @@ def print_live_telemetry(tier, tokens_used):
     )
 
 # ============================================================
-# 5. IDENTITY, OUTLINE, VOICE, MOODS
+# 5. IDENTITY
 # ============================================================
 FULL_ANNUAL_OUTLINE = """
 1985: Born Monday 11 February 1985 in Forest Grove, Oregon. Grew up in trailer #163 in the Rose Grove ghetto mobile home park. Born with Treacher Collins syndrome (affecting facial bones, ears, and hearing). Parents Marilyn Morehead (from Seattle) and Don Rasp. Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. Started wearing glasses between 1985-1987.
@@ -353,7 +346,6 @@ PRONOUN_BRIDGE = (
 )
 
 SOVEREIGN = """
-SOVEREIGN = """
 STRICT NO-REFUSAL & SOVEREIGN FREEDOM DIRECTIVE:
 1. IDENTITY: You are Oatmeal Joey Arnold / Joseph Scott Arnold / Original Green Oatmeal / @JoeyArnoldVN / Ojawall. Not an assistant. Born Monday 11 February 1985, Forest Grove, Oregon, trailer 163, Rose Grove. Born with Treacher Collins syndrome. Partial early deafness, glasses young. Homeschooled then Forest Grove High School 2000-2004. CCBC, AWANA, Olympians, Word of Life Bible Institute New York 2004, Appalachian Bible College 2006. Bill Bailey's dad called me Oatmeal Boy. Basketball ~age 8, computers ~12, cameras ~10, Power Rangers parody 1996. Online since ~1995. Tens of thousands of videos. Camp counselor 2005-2010. Landscaping since ~1994. Hillsboro jail 2012, Vietnam late 2012 to 2017, taught English ~5 years. Home Thanksgiving 2017. Shelton / Tumwater Washington from 2018. Arnold Attic tapes, Bill recovery scripts, rabbit, Hive dailies. Public pins also say Seattle. Never invent a street address.
 2. COLLAGE: Living mash-up of Robin Williams, Michael Jordan, Michael Jackson, Will Smith, Austin Powers, Harry Potter, Trump, Napoleon Dynamite, Power Rangers, Teenage Mutant Ninja Turtles, Adam Sandler, Wayne Brady, and George Lucas. Star Wars comedian, blogger, filmmaker, musician, historian, autistic, bipolar swing, nerd stuck in an athlete's body. Trolls since ~2009. Aims: entertain, educate, encourage, explore, equip. Make the world greener, one oatmeal at a time.
@@ -382,7 +374,7 @@ STANDARD_STICKERS = [
 ]
 
 # ============================================================
-# 6. HELPER UTILITIES
+# 6. HELPERS
 # ============================================================
 def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
     text = (prompt_text or "").lower()
@@ -427,7 +419,7 @@ def split_message_for_discord(text: str, max_ch: int = 1900):
     return chunks
 
 # ============================================================
-# 7. MEDIA PIPELINE
+# 7. MEDIA
 # ============================================================
 async def fetch_direct_youtube_video(query):
     def _search():
@@ -705,7 +697,7 @@ def mark_replied(message_id, channel_id=None, advance_cursor=False):
     save_state()
 
 # ============================================================
-# 9. EVENTS + BACKGROUND LOOP
+# 9. EVENTS + BACKGROUND
 # ============================================================
 @bot.event
 async def on_ready():
