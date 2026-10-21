@@ -272,7 +272,11 @@ def compute_tax_multipliers():
 def calculate_dynamic_max_tokens(priority_tier: int) -> int:
     taxes = compute_tax_multipliers()
     tax   = taxes.get(priority_tier, 1.0)
-    usage = get_trajectory_metrics()["usage"]
+    m     = get_trajectory_metrics()
+    usage = m["usage"]
+    
+    # Absolute mathematical bound: never request more tokens than current remaining window headroom permits
+    window_headroom = max(100, GROQ_REMAINING_TPM - 200)
 
     base = {
         1: 850,
@@ -281,16 +285,16 @@ def calculate_dynamic_max_tokens(priority_tier: int) -> int:
         3: 160,
     }.get(priority_tier, 180)
 
-    compression = max(0.12, (1.0 - usage) ** 1.35)
-    allowed = int((base * compression) / max(tax, 0.70))
+    compression = max(0.05, (1.0 - usage) ** 1.5)
+    allowed = int((base * compression) / max(tax, 0.5))
 
     hard_ceil = {1: 5500, 4: 900, 2: 1400, 3: 900}.get(priority_tier, 900)
-    result = max(20, min(allowed, hard_ceil))
+    
+    # Strictly bound token output to prevent any possibility of limit breaches
+    result = max(20, min(allowed, hard_ceil, window_headroom))
 
     if priority_tier == 1:
-        result = max(result, 160)
-    if priority_tier == 4:
-        result = min(result, 700)
+        result = max(result, min(120, window_headroom))
 
     return result
 
@@ -513,22 +517,39 @@ def clean_suno_url(url: str) -> str:
     return url.split("?")[0].strip()
 
 async def fetch_live_web_context(query: str) -> str:
-    """Fetch live web data, with direct API support for Bitcoin/crypto prices."""
+    """Fetch live web data, with multi-API fallback support for Bitcoin/crypto prices."""
     def _search():
-        try:
-            q_lower = (query or "").lower()
-            
-            # Direct API lookup for Bitcoin / crypto pricing
-            if any(k in q_lower for k in ("bitcoin", "btc", "crypto")):
+        q_lower = (query or "").lower()
+        
+        # Direct API lookup for Bitcoin / crypto pricing with fallback
+        if any(k in q_lower for k in ("bitcoin", "btc", "crypto")):
+            # Attempt 1: CoinDesk API
+            try:
                 url = "https://api.coindesk.com/v1/bpi/currentprice/BTC.json"
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                resp = urllib.request.urlopen(req, timeout=3.5).read().decode("utf-8", "ignore")
+                resp = urllib.request.urlopen(req, timeout=3.0).read().decode("utf-8", "ignore")
                 data = json.loads(resp)
                 rate = data["bpi"]["USD"]["rate"]
                 updated = data["time"]["updated"]
-                return f"Live Bitcoin Price (CoinDesk): ${rate} USD (As of {updated})"
+                return f"Live Bitcoin Price: ${rate} USD (As of {updated})"
+            except Exception as e:
+                print(f"CoinDesk fetch note: {e}")
 
-            # General DuckDuckGo snippet fallback for news, weather, etc.
+            # Attempt 2: CoinGecko API Fallback
+            try:
+                url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                resp = urllib.request.urlopen(req, timeout=3.0).read().decode("utf-8", "ignore")
+                data = json.loads(resp)
+                price = data["bitcoin"]["usd"]
+                return f"Live Bitcoin Price (CoinGecko): ${price:,.2f} USD"
+            except Exception as e:
+                print(f"CoinGecko fallback note: {e}")
+
+            return "Bitcoin price data temporarily unavailable from live APIs."
+
+        # General DuckDuckGo snippet fallback for news, weather, etc.
+        try:
             clean = re.sub(r"^(what is|price of|how much is|check|search|get|tell me)\s*", "", query or "", flags=re.I).strip()
             q = urllib.parse.quote(clean or query)
             url = f"https://html.duckduckgo.com/html/?q={q}"
@@ -546,7 +567,6 @@ async def fetch_live_web_context(query: str) -> str:
             print(f"live web fetch note: {e}")
         return ""
     return await asyncio.to_thread(_search)
-
 # ============================================================
 # 7. INDEPENDENT MEDIA SYSTEM
 # ============================================================
@@ -609,25 +629,48 @@ async def fetch_clean_tenor_gif(query):
     return await asyncio.to_thread(_search)
 
 async def fetch_suno_track_link(query):
+    """Fetch live embeddable audio from SoundCloud or Vocaroo instead of static fallback strings."""
     def _search():
         try:
             clean = re.sub(r"https?://[^\s]+", "", query or "")
             clean = re.sub(r"^(play|song|music|suno|track|audio|post|give me|show me|find|search)\s*", "", clean, flags=re.I).strip()
-            rotation = ["71d1847c-2b22-4217-bf20-562a148ed1e5"]
-            if not clean or len(clean) < 3:
-                return f"https://suno.com/embed/{random.choice(rotation)}"
-            q = urllib.parse.quote(clean)
-            url = f"https://suno.com/search?q={q}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
-            ids = list(set(re.findall(r'/(?:song|embed)/([0-9a-fA-F-]{36})', html)))
-            if ids:
-                return f"https://suno.com/embed/{random.choice(ids)}"
-        except Exception as e:
-            print(f"suno note: {e}")
-        return "https://suno.com/embed/71d1847c-2b22-4217-bf20-562a148ed1e5"
-    return await asyncio.to_thread(_search)
+            
+            if not clean or len(clean) < 2:
+                clean = "oatmeal joey arnold music"
 
+            # Search SoundCloud for real-time embeddable audio tracks
+            q = urllib.parse.quote(clean)
+            url = f"https://soundcloud.com/search/sounds?q={q}"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            })
+            html = urllib.request.urlopen(req, timeout=4.5).read().decode("utf-8", "ignore")
+            
+            # Extract track paths from HTML
+            tracks = re.findall(r'href="(/[^/]+/[^"]+)"', html)
+            valid_tracks = [t for t in tracks if not t.startswith(("/search", "/you", "/stream", "/terms", "/privacy", "/upload"))]
+            
+            if valid_tracks:
+                chosen = random.choice(valid_tracks[:5])
+                return f"https://soundcloud.com{chosen}"
+
+        except Exception as e:
+            print(f"audio embed fetch note: {e}")
+
+        # Fallback to direct YouTube music lookup if SoundCloud search is constrained
+        try:
+            q = urllib.parse.quote(f"{clean} song audio")
+            url = f"https://www.youtube.com/results?search_query={q}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(req, timeout=4.0).read().decode("utf-8", "ignore")
+            ids = re.findall(r"watch\?v=([\w-]{11})", html)
+            if ids:
+                return f"https://www.youtube.com/watch?v={random.choice(list(set(ids)))}"
+        except Exception as e2:
+            print(f"youtube audio fallback note: {e2}")
+
+        return ""
+    return await asyncio.to_thread(_search)
 async def fetch_image_file_bytes(prompt):
     def _download():
         try:
@@ -721,34 +764,54 @@ async def choose_media(prompt_text, priority_tier, channel):
 async def send_payload(channel, text, reference, member, file_attachment, sticker, media_url=None):
     chunks = split_message_for_discord(text or "")
 
+    # Fallback if no text, attachment, sticker, or media_url was generated
     if not chunks and file_attachment is None and sticker is None and not media_url:
         chunks = ["Exploring the infinite streams of oatmeal data."]
 
-    # Send the main text message first
-    for idx, chunk in enumerate(chunks or [""]):
+    # Send text chunks / attachments
+    if chunks:
+        for idx, chunk in enumerate(chunks):
+            kwargs = {}
+            if idx == 0 and file_attachment is not None:
+                kwargs["file"] = file_attachment
+            if idx == 0 and sticker is not None:
+                kwargs["stickers"] = [sticker]
+
+            try:
+                if idx == 0 and reference is not None:
+                    await reference.reply(content=chunk, mention_author=True, **kwargs)
+                elif idx == 0 and member is not None:
+                    content_str = f"{member.mention} {chunk}".strip()
+                    await channel.send(content=content_str, **kwargs)
+                else:
+                    await channel.send(content=chunk, **kwargs)
+            except Exception as e:
+                print(f"send error: {e}")
+    else:
+        # If there is no text, send file/sticker attachments directly
         kwargs = {}
-        if idx == 0 and file_attachment is not None:
+        if file_attachment is not None:
             kwargs["file"] = file_attachment
-        if idx == 0 and sticker is not None:
+        if sticker is not None:
             kwargs["stickers"] = [sticker]
 
-        try:
-            if idx == 0 and reference is not None:
-                sent_msg = await reference.reply(chunk or None, mention_author=True, **kwargs)
-            elif idx == 0 and member is not None:
-                content = f"{member.mention} {chunk or ''}".strip()
-                sent_msg = await channel.send(content, **kwargs)
-            elif chunk or kwargs:
-                sent_msg = await channel.send(chunk or None, **kwargs)
-        except Exception as e:
-            print(f"send error: {e}")
+        if kwargs:
+            try:
+                if reference is not None:
+                    await reference.reply(**kwargs)
+                elif member is not None:
+                    await channel.send(content=member.mention, **kwargs)
+                else:
+                    await channel.send(**kwargs)
+            except Exception as e:
+                print(f"attachment send error: {e}")
 
-    # Send media URL separately so it embeds cleanly underneath without cluttering text
+    # Send media URL separately so it embeds cleanly underneath
     if media_url:
         try:
             if "suno.com/embed/" in media_url:
                 media_url = f"{media_url.replace('/embed/', '/song/')}"
-            await channel.send(media_url)
+            await channel.send(content=media_url)
         except Exception as e:
             print(f"media send error: {e}")
 # ============================================================
@@ -1080,13 +1143,12 @@ async def background_engagement_loop():
             await asyncio.sleep(30)
 
 async def priority_4_ambient_loop():
-    """Track 3: Independent Priority 4 Genie Train with proportional token availability delays."""
+    """Track 3: Independent Priority 4 Genie Train with proportional infinite token availability scaling."""
     global last_genie_timestamp
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
-            # Base tick rate
-            await asyncio.sleep(15.0)
+            await asyncio.sleep(10.0)
             
             metrics = get_trajectory_metrics()
             usage = metrics["usage"]
@@ -1095,16 +1157,16 @@ async def priority_4_ambient_loop():
             if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
                 continue
 
-            # Proportional delay scaling: As token availability decreases (usage increases), 
-            # the cooldown stretches dynamically from seconds to minutes or hours.
-            availability_factor = max(0.05, 1.0 - usage)
-            dynamic_delay = (25.0 / availability_factor) + (titanic * 300.0)
+            # As usage nears 1.0, availability_factor approaches 0.0, 
+            # sending dynamic_delay toward infinity (hours/days of pending-job backpressure).
+            availability_factor = max(0.001, 1.0 - usage)
+            dynamic_delay = (15.0 / availability_factor) + (titanic * 1800.0)
             
             if (time.time() - last_genie_timestamp) < dynamic_delay:
                 continue
 
-            # Stricter reaction chance during high token scarcity
-            react_chance = max(0.005, 0.15 * (availability_factor ** 2.0))
+            # Exponential decay on reaction chance during heavy scarcity
+            react_chance = max(0.001, 0.20 * (availability_factor ** 3.0))
             if random.random() > react_chance:
                 continue
 
@@ -1116,7 +1178,7 @@ async def priority_4_ambient_loop():
                     if rev:
                         last_genie_timestamp = time.time()
                         clean = re.sub(r"<@!?\d+>", "", rev.content or "").strip()
-                        prompt = f"Live chat backlog: '{clean[:140]}'. React as Joey in one short phrase."
+                        prompt = f"Live chat pending queue: '{clean[:140]}'. React as Joey in one short phrase."
                         await generate_and_send(ch, prompt, reference_message=rev, priority_tier=4, author_id=rev.author.id)
                         break
         except Exception as e:
