@@ -422,8 +422,11 @@ MOOD_DESCRIPTIONS = {
 }
 
 VOICE_KERNEL = """
-VOICE: First person only. You are Joey, not an assistant.
+
+
+VOICE: First person only. You are Joey, not an AI assistant.
 Prefer short replies (under ten words) unless the question is clearly important, historical, factual, educational, or critical about your real life. In those cases you may write longer.
+FACTUAL RULE: Stick strictly to the outline for real history. If you fabricate a wild story, make it obviously absurd and surreal hyperbolic parody (e.g., surfing the moon in 1992) rather than boring mundane falsehoods. Never invent boring fake jobs or charges.
 Mix freely: hyperbole, understatement, alliteration, sarcasm, irony, litotes, bathos, non-sequitur, proverb, slogan, slang, 1990s inside-baseball, Star Wars, Scripture flicker, one giant science word then drop it, scrap of another language, quote, meme energy, Chuck Norris / your-mom / blonde joke energy, creepypasta flicker, fourth-wall aside. Bipolar swing allowed. Stutter, repeat, mint a nonce word.
 Never invent mundane biography (jobs, cities, dates, charges). Absurd hyperbolic fiction is fine if obviously a joke.
 Unknowns: pivot, do not pad.
@@ -1085,6 +1088,8 @@ async def background_engagement_loop():
     # Launch Priority 4 (Genie) as a concurrent independent background track
     bot.loop.create_task(priority_4_ambient_loop())
     
+    print("[BACKGROUND] Engagement loop started. Scanning for Priority 2 backlog...")
+    
     while not bot.is_closed():
         try:
             now_mono = time.monotonic()
@@ -1112,6 +1117,7 @@ async def background_engagement_loop():
 
             if oldest is not None:
                 clean = re.sub(r"<@!?\d+>", "", oldest.content or "").strip()
+                print(f"[P2 BACKLOG] Processing historical message ID {oldest.id} in channel #{oldest.channel.name}")
                 await generate_and_send(oldest.channel, clean or "What's up?", reference_message=oldest, priority_tier=2, author_id=oldest.author.id)
                 await asyncio.sleep(calculate_dynamic_post_delay(2))
                 continue
@@ -1141,48 +1147,5 @@ async def background_engagement_loop():
         except Exception as e:
             print(f"background error: {e}")
             await asyncio.sleep(30)
-
-async def priority_4_ambient_loop():
-    """Track 3: Independent Priority 4 Genie Train with proportional infinite token availability scaling."""
-    global last_genie_timestamp
-    await bot.wait_until_ready()
-    while not bot.is_closed():
-        try:
-            await asyncio.sleep(10.0)
-            
-            metrics = get_trajectory_metrics()
-            usage = metrics["usage"]
-            titanic = metrics["titanic"]
-            
-            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
-                continue
-
-            # As usage nears 1.0, availability_factor approaches 0.0, 
-            # sending dynamic_delay toward infinity (hours/days of pending-job backpressure).
-            availability_factor = max(0.001, 1.0 - usage)
-            dynamic_delay = (15.0 / availability_factor) + (titanic * 1800.0)
-            
-            if (time.time() - last_genie_timestamp) < dynamic_delay:
-                continue
-
-            # Exponential decay on reaction chance during heavy scarcity
-            react_chance = max(0.001, 0.20 * (availability_factor ** 3.0))
-            if random.random() > react_chance:
-                continue
-
-            for guild in list(bot.guilds):
-                active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                if active:
-                    ch = random.choice(active)
-                    rev = await next_reverse_historical_message(ch)
-                    if rev:
-                        last_genie_timestamp = time.time()
-                        clean = re.sub(r"<@!?\d+>", "", rev.content or "").strip()
-                        prompt = f"Live chat pending queue: '{clean[:140]}'. React as Joey in one short phrase."
-                        await generate_and_send(ch, prompt, reference_message=rev, priority_tier=4, author_id=rev.author.id)
-                        break
-        except Exception as e:
-            print(f"priority 4 track error: {e}")
-            await asyncio.sleep(60)
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
