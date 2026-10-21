@@ -1027,10 +1027,8 @@ async def next_historical_message(channel):
         last_seen = msg.id
         if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
             continue
-        key = p2_key(channel.guild.id, msg.author.id)
-        if key in priority2_replied_member_ids or msg.id in replied_message_ids:
-            if msg.id in replied_message_ids:
-                priority2_replied_member_ids.add(key)
+        # Check strictly by message ID so backlog sweeps every unreplied message
+        if msg.id in replied_message_ids:
             continue
         target = msg
         break
@@ -1039,26 +1037,11 @@ async def next_historical_message(channel):
         save_state()
     return target
 
-async def next_reverse_historical_message(channel):
-    one_month_ago = time.time() - (30 * 86400)
-    try:
-        async for msg in channel.history(limit=200, oldest_first=False):
-            if msg.created_at.timestamp() < one_month_ago:
-                break
-            if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
-                continue
-            if msg.id in replied_message_ids:
-                continue
-            return msg
-    except Exception as e:
-        print(f"reverse scan error: {e}")
-    return None
-
-priority4_weekly_members = {}  # Tracks member_id -> timestamp for weekly unique limit
-
 # ============================================================
 # TRACK 1: Priority 2 Backlog Sweep (Runs as fast as possible)
 # ============================================================
+priority3_recent_recipients = set()
+
 async def priority_2_backlog_loop():
     global p2_complete
     await bot.wait_until_ready()
@@ -1088,34 +1071,39 @@ async def priority_2_backlog_loop():
                 clean = re.sub(r"<@!?\d+>", "", oldest.content or "").strip()
                 print(f"[P2 BACKLOG] Fast sweep message ID {oldest.id} in #{oldest.channel.name}")
                 await generate_and_send(oldest.channel, clean or "What's up?", reference_message=oldest, priority_tier=2, author_id=oldest.author.id)
-                await asyncio.sleep(calculate_dynamic_post_delay(2)) # Fast 2-5s delay
+                await asyncio.sleep(calculate_dynamic_post_delay(2))
                 continue
             elif not p2_complete:
+                print("[P2] Backlog check reached absolute end of scanned history.")
                 p2_complete = True
                 save_state()
-                print("[P2] COMPLETE — Backlog fully cleared. Unlocking Priority 3 proactive stream.")
 
-            # Priority 3 Proactive Stream (Runs when P2 is complete)
+            # Priority 3 Proactive Stream (Only runs when backlog is 100% finished)
             if p2_complete and usage < 0.88:
-                if random.random() < 0.15:
+                if random.random() < 0.10:
                     for guild in list(bot.guilds):
-                        members = sorted(
-                            [m for m in guild.members if not m.bot],
-                            key=lambda x: x.display_name.lower()
-                        )
+                        eligible_members = [m for m in guild.members if not m.bot and m.id not in priority3_recent_recipients]
+                        if not eligible_members:
+                            priority3_recent_recipients.clear()
+                            eligible_members = [m for m in guild.members if not m.bot]
+                        
                         active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                        if members and active:
-                            target_member = members[0]
+                        if eligible_members and active:
+                            target_member = random.choice(eligible_members)
+                            priority3_recent_recipients.add(target_member.id)
+                            if len(priority3_recent_recipients) > 25:
+                                priority3_recent_recipients.pop()
+                                
                             ch = random.choice(active)
+                            print(f"[P3 PROACTIVE] Reaching out to member {target_member.name}")
                             await generate_and_send(ch, "Drop a short proactive thought.", target_member=target_member, priority_tier=3)
                             await asyncio.sleep(calculate_dynamic_post_delay(3))
                             break
 
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
         except Exception as e:
             print(f"priority 2 loop error: {e}")
             await asyncio.sleep(15)
-
 # ============================================================
 # TRACK 2: Priority 4 Live Recent Drop-in (Regulated cadence)
 # ============================================================
