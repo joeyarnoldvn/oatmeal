@@ -304,10 +304,11 @@ def calculate_dynamic_post_delay(priority_tier: int) -> float:
     titanic = get_trajectory_metrics()["titanic"]
     base = {
         1: (0.4, 3.5),
-        2: (200, 1100),
-        3: (350, 1600),
-        4: (700, 2800),
-    }.get(priority_tier, (400, 1200))
+        2: (2.0, 5.0),     # Fast, brisk heartbeat for Priority 2 backlog
+        3: (30, 60),
+        4: (180, 300),     # Regulated cadence for Priority 4 live drop-in
+        5: (300, 600),     # Regulated cadence for Priority 5 recent-backwards sweep
+    }.get(priority_tier, (30, 60))
     delay = random.uniform(*base) * tax
     if titanic > 0.70:
         delay *= (1.0 + 4.2 * (titanic - 0.70))
@@ -955,13 +956,16 @@ def mark_replied(message_id, channel_id=None, advance_cursor=False):
     save_state()
 
 # ============================================================
-# 9. DISCORD EVENTS & BACKGROUND LOOPS (STRICT SEQUENCING)
+# 9. DISCORD EVENTS & BACKGROUND LOOPS (MULTI-TRACK HEARTBEAT)
 # ============================================================
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in as {bot.user}")
     load_state()
-    bot.loop.create_task(background_engagement_loop())
+    # Launch all independent background tracks concurrently
+    bot.loop.create_task(priority_2_backlog_loop())
+    bot.loop.create_task(priority_4_live_dropin_loop())
+    bot.loop.create_task(priority_5_recent_backwards_loop())
 
 @bot.event
 async def on_message(message):
@@ -999,14 +1003,13 @@ async def on_message(message):
         )
         return
 
-    # ---------- Priority 4: Live Chat Direct Message Trigger ----------
-    # Allows instantaneous live reactions if someone chats while bot is active
+    # ---------- Priority 4 Instant Live Reaction (Event-Driven) ----------
     now = time.time()
     usage = get_token_usage_ratio()
     metrics = get_trajectory_metrics()
 
     if not (time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.94):
-        if (now - last_genie_timestamp) >= 120.0 and random.random() < 0.08:
+        if (now - last_genie_timestamp) >= 120.0 and random.random() < 0.05:
             clean = re.sub(r"<@!?\d+>", "", message.content).strip()
             if len(clean) >= 2:
                 last_genie_timestamp = now
@@ -1051,56 +1054,25 @@ async def next_reverse_historical_message(channel):
         print(f"reverse scan error: {e}")
     return None
 
-p2_action_counter = 0
 priority4_weekly_members = {}  # Tracks member_id -> timestamp for weekly unique limit
 
-async def background_engagement_loop():
-    global p2_complete, p2_action_counter
+# ============================================================
+# TRACK 1: Priority 2 Backlog Sweep (Runs as fast as possible)
+# ============================================================
+async def priority_2_backlog_loop():
+    global p2_complete
     await bot.wait_until_ready()
-    
-    print("[BACKGROUND] Engagement loop started. Running Priority 2 backlog & Priority 4 live track concurrently (19:1 ratio)...")
+    print("[TRACK 2] Priority 2 fast backlog sweep started...")
     
     while not bot.is_closed():
         try:
             now_mono = time.monotonic()
             usage = get_token_usage_ratio()
 
-            if now_mono < DAILY_EXHAUSTED_UNTIL or now_mono < GROQ_RATE_LIMITED_UNTIL:
-                await asyncio.sleep(30)
+            if now_mono < DAILY_EXHAUSTED_UNTIL or now_mono < GROQ_RATE_LIMITED_UNTIL or usage >= 0.93:
+                await asyncio.sleep(15)
                 continue
 
-            if usage >= 0.93:
-                await asyncio.sleep(80 + (usage - 0.93) * 2200)
-                continue
-
-            # Clean up weekly member tracking (> 7 days / 168 hours)
-            now = time.time()
-            week_duration = 7 * 86400
-            expired = [uid for uid, ts in priority4_weekly_members.items() if now - ts > week_duration]
-            for uid in expired:
-                del priority4_weekly_members[uid]
-
-            action_taken = False
-
-            # ---------- Priority 4 Turn (Triggered every 19 Priority 2 messages, or continuously if P2 is complete) ----------
-            if (p2_action_counter > 0 and p2_action_counter % 19 == 0) or p2_complete:
-                for guild in list(bot.guilds):
-                    active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                    if active:
-                        ch = random.choice(active)
-                        rev = await next_reverse_historical_message(ch)
-                        if rev:
-                            # Strict Rule: Only reply to ONE unique member per week
-                            if rev.author.id not in priority4_weekly_members:
-                                priority4_weekly_members[rev.author.id] = now
-                                clean = re.sub(r"<@!?\d+>", "", rev.content or "").strip()
-                                prompt = f"Live chat recent message: '{clean[:140]}'. React as Joey in one short phrase."
-                                print(f"[P4 AMBIENT] 19:1 Ratio Turn — Engaging unique member {rev.author.name}")
-                                await generate_and_send(ch, prompt, reference_message=rev, priority_tier=4, author_id=rev.author.id)
-                                action_taken = True
-                                break
-
-            # ---------- Priority 2 Backlog Sweep ----------
             oldest = None
             if not p2_complete:
                 for guild in list(bot.guilds):
@@ -1114,20 +1086,18 @@ async def background_engagement_loop():
 
             if oldest is not None:
                 clean = re.sub(r"<@!?\d+>", "", oldest.content or "").strip()
-                print(f"[P2 BACKLOG] Processing historical message ID {oldest.id} in channel #{oldest.channel.name}")
+                print(f"[P2 BACKLOG] Fast sweep message ID {oldest.id} in #{oldest.channel.name}")
                 await generate_and_send(oldest.channel, clean or "What's up?", reference_message=oldest, priority_tier=2, author_id=oldest.author.id)
-                p2_action_counter += 1
-                action_taken = True
-                await asyncio.sleep(calculate_dynamic_post_delay(2))
+                await asyncio.sleep(calculate_dynamic_post_delay(2)) # Fast 2-5s delay
                 continue
             elif not p2_complete:
                 p2_complete = True
                 save_state()
                 print("[P2] COMPLETE — Backlog fully cleared. Unlocking Priority 3 proactive stream.")
 
-            # ---------- Priority 3 Proactive Stream (Runs when P2 is complete) ----------
-            if p2_complete and usage < 0.88 and not action_taken:
-                if random.random() < max(0.03, 0.13 * (1.0 - usage)):
+            # Priority 3 Proactive Stream (Runs when P2 is complete)
+            if p2_complete and usage < 0.88:
+                if random.random() < 0.15:
                     for guild in list(bot.guilds):
                         members = sorted(
                             [m for m in guild.members if not m.bot],
@@ -1137,16 +1107,95 @@ async def background_engagement_loop():
                         if members and active:
                             target_member = members[0]
                             ch = random.choice(active)
-                            prompt = "Drop a short proactive thought."
-                            await generate_and_send(ch, prompt, target_member=target_member, priority_tier=3)
-                            action_taken = True
+                            await generate_and_send(ch, "Drop a short proactive thought.", target_member=target_member, priority_tier=3)
                             await asyncio.sleep(calculate_dynamic_post_delay(3))
                             break
 
-            await asyncio.sleep(15)
+            await asyncio.sleep(5)
         except Exception as e:
-            print(f"background error: {e}")
-            await asyncio.sleep(30)
+            print(f"priority 2 loop error: {e}")
+            await asyncio.sleep(15)
+
+# ============================================================
+# TRACK 2: Priority 4 Live Recent Drop-in (Regulated cadence)
+# ============================================================
+async def priority_4_live_dropin_loop():
+    await bot.wait_until_ready()
+    print("[TRACK 4] Priority 4 live recent drop-in loop started...")
+    
+    while not bot.is_closed():
+        try:
+            # Check every 3 to 5 minutes
+            delay = random.uniform(180, 300)
+            await asyncio.sleep(delay)
+            
+            usage = get_token_usage_ratio()
+            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.90:
+                continue
+
+            # Clean up weekly member tracking (> 7 days)
+            now = time.time()
+            week_duration = 7 * 86400
+            expired = [uid for uid, ts in priority4_weekly_members.items() if now - ts > week_duration]
+            for uid in expired:
+                del priority4_weekly_members[uid]
+
+            for guild in list(bot.guilds):
+                active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if active:
+                    ch = random.choice(active)
+                    rev = await next_reverse_historical_message(ch)
+                    if rev:
+                        # Rule: Only reply to ONE unique member per week
+                        if rev.author.id in priority4_weekly_members:
+                            continue
+                        
+                        priority4_weekly_members[rev.author.id] = now
+                        clean = re.sub(r"<@!?\d+>", "", rev.content or "").strip()
+                        prompt = f"Live chat drop-in: '{clean[:140]}'. React as Joey in one short phrase."
+                        print(f"[P4 DROP-IN] Engaging unique member {rev.author.name} (Weekly slot claimed)")
+                        await generate_and_send(ch, prompt, reference_message=rev, priority_tier=4, author_id=rev.author.id)
+                        break
+        except Exception as e:
+            print(f"priority 4 loop error: {e}")
+            await asyncio.sleep(60)
+
+# ============================================================
+# TRACK 3: Priority 5 Recent-to-Backwards Sweep (Moderate pacing)
+# ============================================================
+async def priority_5_recent_backwards_loop():
+    await bot.wait_until_ready()
+    print("[TRACK 5] Priority 5 recent-to-backwards sweep started...")
+    
+    while not bot.is_closed():
+        try:
+            # Check every 8 to 15 minutes
+            delay = random.uniform(480, 900)
+            await asyncio.sleep(delay)
+            
+            usage = get_token_usage_ratio()
+            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.90:
+                continue
+
+            for guild in list(bot.guilds):
+                active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if active:
+                    ch = random.choice(active)
+                    # Walk backwards through recent history
+                    async for msg in ch.history(limit=50, oldest_first=False):
+                        if msg.author.bot or msg.author == bot.user or msg.id in replied_message_ids:
+                            continue
+                        clean = re.sub(r"<@!?\d+>", "", msg.content or "").strip()
+                        if len(clean) < 3:
+                            continue
+                        print(f"[P5 BACKWARDS] Catching recent thread ID {msg.id} in #{ch.name}")
+                        prompt = f"Recent thread rewind: '{clean[:140]}'. Drop a short Joey perspective."
+                        await generate_and_send(ch, prompt, reference_message=msg, priority_tier=4, author_id=msg.author.id)
+                        break
+                break
+        except Exception as e:
+            print(f"priority 5 loop error: {e}")
+            await asyncio.sleep(60)
 
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
