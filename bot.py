@@ -513,8 +513,22 @@ def clean_suno_url(url: str) -> str:
     return url.split("?")[0].strip()
 
 async def fetch_live_web_context(query: str) -> str:
+    """Fetch live web data, with direct API support for Bitcoin/crypto prices."""
     def _search():
         try:
+            q_lower = (query or "").lower()
+            
+            # Direct API lookup for Bitcoin / crypto pricing
+            if any(k in q_lower for k in ("bitcoin", "btc", "crypto")):
+                url = "https://api.coindesk.com/v1/bpi/currentprice/BTC.json"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                resp = urllib.request.urlopen(req, timeout=3.5).read().decode("utf-8", "ignore")
+                data = json.loads(resp)
+                rate = data["bpi"]["USD"]["rate"]
+                updated = data["time"]["updated"]
+                return f"Live Bitcoin Price (CoinDesk): ${rate} USD (As of {updated})"
+
+            # General DuckDuckGo snippet fallback for news, weather, etc.
             clean = re.sub(r"^(what is|price of|how much is|check|search|get|tell me)\s*", "", query or "", flags=re.I).strip()
             q = urllib.parse.quote(clean or query)
             url = f"https://html.duckduckgo.com/html/?q={q}"
@@ -529,7 +543,7 @@ async def fetch_live_web_context(query: str) -> str:
             if clean_snips:
                 return " ".join(clean_snips)[:350]
         except Exception as e:
-            print(f"web search note: {e}")
+            print(f"live web fetch note: {e}")
         return ""
     return await asyncio.to_thread(_search)
 
@@ -710,21 +724,7 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
     if not chunks and file_attachment is None and sticker is None and not media_url:
         chunks = ["Exploring the infinite streams of oatmeal data."]
 
-    if media_url:
-        if "suno.com/embed/" in media_url:
-            media_url = f"{media_url}\n{media_url.replace('/embed/', '/song/')}"
-        
-        if "tenor.com/view/" in media_url:
-            if chunks:
-                chunks[-1] = f"{chunks[-1]}\n{media_url}"
-            else:
-                chunks = [media_url]
-        else:
-            if chunks:
-                chunks[-1] = f"{chunks[-1]}\n\n{media_url}"
-            else:
-                chunks = [media_url]
-
+    # Send the main text message first
     for idx, chunk in enumerate(chunks or [""]):
         kwargs = {}
         if idx == 0 and file_attachment is not None:
@@ -734,23 +734,23 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
 
         try:
             if idx == 0 and reference is not None:
-                await reference.reply(chunk or None, mention_author=True, **kwargs)
+                sent_msg = await reference.reply(chunk or None, mention_author=True, **kwargs)
             elif idx == 0 and member is not None:
                 content = f"{member.mention} {chunk or ''}".strip()
-                await channel.send(content, **kwargs)
+                sent_msg = await channel.send(content, **kwargs)
             elif chunk or kwargs:
-                await channel.send(chunk or None, **kwargs)
+                sent_msg = await channel.send(chunk or None, **kwargs)
         except Exception as e:
             print(f"send error: {e}")
-            if kwargs:
-                try:
-                    if reference is not None:
-                        await reference.reply(chunk or "…", mention_author=True)
-                    else:
-                        await channel.send(chunk or "…")
-                except Exception as e2:
-                    print(f"final send fallback also failed: {e2}")
 
+    # Send media URL separately so it embeds cleanly underneath without cluttering text
+    if media_url:
+        try:
+            if "suno.com/embed/" in media_url:
+                media_url = f"{media_url.replace('/embed/', '/song/')}"
+            await channel.send(media_url)
+        except Exception as e:
+            print(f"media send error: {e}")
 # ============================================================
 # 8. CORE GENERATION ENGINE
 # ============================================================
@@ -797,7 +797,8 @@ async def generate_and_send(
 
     if priority_tier == 1:
         history_block = FULL_ANNUAL_OUTLINE if needs_full_history else SHORT_IDENTITY
-        live_block = f"\nLIVE WEB SEARCH CONTEXT: {live_context}\n" if live_context else ""
+        # FIX: Properly format and inject the live web search context into the prompt
+        live_block = f"\n[LIVE WEB SEARCH DATA — USE THIS TO ANSWER REAL-TIME QUESTIONS]: {live_context}\n" if live_context else ""
         
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
@@ -806,8 +807,8 @@ async def generate_and_send(
             f"{live_block}\n"
             f"SLOGANS (USE SPARINGLY, NEVER AS A COP-OUT FOR FACTS):\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
             f"DIRECTIVE: Priority 1 – Direct conversation. "
-            f"When asked a factual or real-time question (like Bitcoin price), use the live web search context provided above to answer intelligently. "
-            f"Do not cop out with slogans when given concrete facts. Stay in character as Oatmeal Joey Arnold."
+            f"When asked a factual or real-time question (like the price of Bitcoin), use the live web search data provided above to give the actual answer immediately. "
+            f"Never brush off a factual question with 'I don't know' when live data is provided. Stay in character as Oatmeal Joey Arnold."
         )
     else:
         system_prompt = (
@@ -1017,25 +1018,24 @@ async def next_reverse_historical_message(channel):
 async def background_engagement_loop():
     global p2_complete
     await bot.wait_until_ready()
+    
+    # Launch Priority 4 (Genie) as a concurrent independent background track
+    bot.loop.create_task(priority_4_ambient_loop())
+    
     while not bot.is_closed():
         try:
             now_mono = time.monotonic()
             usage = get_token_usage_ratio()
 
-            if now_mono < DAILY_EXHAUSTED_UNTIL:
-                await asyncio.sleep(300)
-                continue
-
-            if now_mono < GROQ_RATE_LIMITED_UNTIL:
-                await asyncio.sleep(20)
+            if now_mono < DAILY_EXHAUSTED_UNTIL or now_mono < GROQ_RATE_LIMITED_UNTIL:
+                await asyncio.sleep(30)
                 continue
 
             if usage >= 0.93:
-                sleep_time = 80 + (usage - 0.93) * 2200
-                await asyncio.sleep(sleep_time)
+                await asyncio.sleep(80 + (usage - 0.93) * 2200)
                 continue
 
-            # STEP 1: PRIORITY 2 (Historical Backlog Sweep)
+            # Track 2: Priorities 2 & 3 (Sequential Backlog & Proactive Sweep)
             oldest = None
             if not p2_complete:
                 for guild in list(bot.guilds):
@@ -1055,23 +1055,10 @@ async def background_engagement_loop():
             elif not p2_complete:
                 p2_complete = True
                 save_state()
-                print("[P2] COMPLETE — Backlog fully cleared. Unlocking Priority 3 & Priority 4.")
+                print("[P2] COMPLETE — Backlog fully cleared. Unlocking Priority 3 proactive stream.")
 
-            # STEP 2: PRIORITY 3 & 4 (Unlocked ONLY after P2)
+            # Once P2 is complete, Track 2 transitions to Priority 3 (Alphabetical single-mention)
             if p2_complete and usage < 0.88:
-                if random.random() < max(0.03, 0.24 * (1.0 - usage)):
-                    for guild in list(bot.guilds):
-                        active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                        if active:
-                            ch = random.choice(active)
-                            rev = await next_reverse_historical_message(ch)
-                            if rev:
-                                clean = re.sub(r"<@!?\d+>", "", rev.content or "").strip()
-                                prompt = f"Someone said: '{clean}'. React with one punchy word or short phrase."
-                                await generate_and_send(ch, prompt, reference_message=rev, priority_tier=4, author_id=rev.author.id)
-                                await asyncio.sleep(calculate_dynamic_post_delay(4))
-                                break
-
                 if random.random() < max(0.03, 0.13 * (1.0 - usage)):
                     for guild in list(bot.guilds):
                         members = sorted(
@@ -1090,6 +1077,44 @@ async def background_engagement_loop():
             await asyncio.sleep(20)
         except Exception as e:
             print(f"background error: {e}")
+            await asyncio.sleep(30)
+
+async def priority_4_ambient_loop():
+    """Track 3: Independent Priority 4 Genie Train running in parallel at its own rate."""
+    global last_genie_timestamp
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            await asyncio.sleep(12)
+            usage = get_token_usage_ratio()
+            
+            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.94:
+                continue
+
+            # Dynamic train speed (cooldown) based on differential tax and pressure
+            metrics = get_trajectory_metrics()
+            base_cooldown = 15.0 + (usage * 55.0) + (metrics["titanic"] * 90.0)
+            if (time.time() - last_genie_timestamp) < base_cooldown:
+                continue
+
+            react_chance = max(0.015, 0.19 * (1.0 - usage)**1.6)
+            if random.random() > react_chance:
+                continue
+
+            # Find an active channel to drop an ambient reaction
+            for guild in list(bot.guilds):
+                active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if active:
+                    ch = random.choice(active)
+                    rev = await next_reverse_historical_message(ch)
+                    if rev:
+                        last_genie_timestamp = time.time()
+                        clean = re.sub(r"<@!?\d+>", "", rev.content or "").strip()
+                        prompt = f"Live chat: '{clean[:140]}'. React as Joey in one short phrase or word."
+                        await generate_and_send(ch, prompt, reference_message=rev, priority_tier=4, author_id=rev.author.id)
+                        break
+        except Exception as e:
+            print(f"priority 4 track error: {e}")
             await asyncio.sleep(30)
 
 if __name__ == "__main__":
