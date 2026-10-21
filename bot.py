@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
-Oatmeal AI – Joey Arnold Discord Bot
-Final Master Production Version – Synchronized with Master Blueprint v6.
-Features: Independent text & media systems, under-10-words preference with biographical expansion,
-differential taxation, strict P2 gating, alphabetical P3 single-mentions, and atomic state persistence.
+Oatmeal AI – Joey Arnold Discord Bot Engine
+Master Production Code Version 9.0 (Ultimate Synthesis)
+Features:
+- Complete 1985–2026 Life Timeline Outline & Comprehensive Persona (Robin Williams collage, etc.)
+- Three Independent Concurrent Tracks (Live Track, Hour Track, Talkback Protocol Track)
+- Continuous Progressive Taxation maintaining 20% Token/Request Headroom Equilibrium
+- Asynchronous Delay Priority Queueing to hold & pace lower-priority requests during load spikes
+- Dynamic 429 Rerouting ("Google Maps Re-Sync") to snap daily counters instantly to Groq ground truth
+- Independent Parallel Text and Media Systems
+- Intelligent Live Web Search (CoinDesk, CoinGecko & DuckDuckGo fallbacks) for real-time queries
+- Universal 10-word text preference with biographical / critical query expansion
+- Atomic State Storage Engine with Sync Fallbacks
 """
 
 import os
@@ -17,6 +25,9 @@ import random
 import urllib.parse
 import urllib.request
 import collections
+import html as html_mod
+from dataclasses import dataclass, field
+from typing import Any
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
@@ -24,22 +35,27 @@ import discord
 from openai import OpenAI
 
 # ============================================================
-# 1. RENDER HEALTH CHECK SERVER
+# 1. RENDER HEALTH CHECK HTTP SERVER
 # ============================================================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI is alive and operating at peak architectural fidelity")
+        self.wfile.write(b"Oatmeal AI Operating at Peak Architectural Fidelity")
+
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
+
     def log_message(self, *args):
         pass
 
 def run_http_server():
     port = int(os.environ.get("PORT", 10000))
-    HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
+    try:
+        HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
+    except Exception as e:
+        print(f"[HEALTH SERVER EXCEPTION]: {e}")
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
@@ -49,7 +65,7 @@ threading.Thread(target=run_http_server, daemon=True).start()
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GROQ_API_KEY  = os.environ.get("GROQ_API_KEY")
 if not DISCORD_TOKEN or not GROQ_API_KEY:
-    raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY environment variables.")
+    raise ValueError("Missing required DISCORD_TOKEN or GROQ_API_KEY environment variables.")
 
 ai_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
 MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
@@ -63,10 +79,12 @@ intents.members = True
 bot = discord.Client(intents=intents)
 
 # ============================================================
-# 3. GLOBAL STATE & ATOMIC PERSISTENCE
+# 3. GLOBAL STATE & ATOMIC PERSISTENCE ENGINE
 # ============================================================
 replied_message_ids = set()
 channel_cursors = {}
+talkback_cursors = {}  
+talkback_replied_ids = set()  
 priority2_replied_member_ids = set()
 lifetime_interacted_members = set()
 recent_gif_urls = []
@@ -76,76 +94,69 @@ last_genie_timestamp = 0.0
 DAILY_EXHAUSTED_UNTIL = 0.0
 local_daily_tokens = 0
 local_daily_reset_day = None
+last_talkback_timestamp = time.time()
+priority4_weekly_members = {}
+priority3_recent_recipients = set()
 
 def p2_key(guild_id, author_id):
     return f"{guild_id}:{author_id}"
 
 def load_state():
-    global replied_message_ids, channel_cursors, priority2_replied_member_ids, p2_complete
+    global replied_message_ids, channel_cursors, talkback_cursors, talkback_replied_ids, priority2_replied_member_ids, p2_complete
     try:
         with open(STATE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         replied_message_ids = set(int(x) for x in data.get("replied", []))
         channel_cursors = {int(k): int(v) for k, v in data.get("cursors", {}).items()}
+        talkback_cursors = {int(k): int(v) for k, v in data.get("talkback_cursors", {}).items()}
+        talkback_replied_ids = set(int(x) for x in data.get("talkback_replied", []))
         priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
         p2_complete = bool(data.get("p2_complete", False))
-        print(f"[STATE] Loaded {len(replied_message_ids)} replies, p2_complete={p2_complete}")
+        print(f"[STATE] Loaded: {len(replied_message_ids)} replies, talkback_replied={len(talkback_replied_ids)}, p2_complete={p2_complete}")
     except Exception as e:
-        print(f"[STATE] Fresh start ({e})")
+        print(f"[STATE] Initializing fresh state ({e})")
 
 def save_state():
     def _write():
         try:
             dir_name = os.path.dirname(STATE_PATH) or "/tmp"
             os.makedirs(dir_name, exist_ok=True)
-
             data = {
                 "replied": list(replied_message_ids)[-50000:],
                 "cursors": {str(k): v for k, v in channel_cursors.items()},
+                "talkback_cursors": {str(k): v for k, v in talkback_cursors.items()},
+                "talkback_replied": list(talkback_replied_ids)[-20000:],
                 "p2_done_members": list(priority2_replied_member_ids),
                 "p2_complete": p2_complete,
             }
-
             import tempfile
-            fd, tmp_path = tempfile.mkstemp(
-                prefix="oatmeal_state_",
-                suffix=".json.tmp",
-                dir=dir_name
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(data, f)
-                    f.flush()
-                    os.fsync(f.fileno())
-
-                os.replace(tmp_path, STATE_PATH)
-            except Exception:
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
-                raise
-
+            fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, STATE_PATH)
         except Exception as e:
-            print(f"[STATE] Save failed: {e}")
+            print(f"[STATE] Persistence atomic write error: {e}")
             try:
                 with open(STATE_PATH, "w", encoding="utf-8") as f:
                     json.dump({
                         "replied": list(replied_message_ids)[-50000:],
                         "cursors": {str(k): v for k, v in channel_cursors.items()},
+                        "talkback_cursors": {str(k): v for k, v in talkback_cursors.items()},
+                        "talkback_replied": list(talkback_replied_ids)[-20000:],
                         "p2_done_members": list(priority2_replied_member_ids),
                         "p2_complete": p2_complete,
                     }, f)
                     f.flush()
                     os.fsync(f.fileno())
-                print("[STATE] Fallback non-atomic write succeeded")
             except Exception as e2:
-                print(f"[STATE] Fallback also failed: {e2}")
+                print(f"[STATE] Fallback write also failed: {e2}")
 
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. HYBRID TOKEN CONTROL & DIFFERENTIAL TAXATION
+# 4. COOLDOWN PROTOCOL, DELAY QUEUEING & DYNAMIC 429 RE-SYNC
 # ============================================================
 GROQ_REMAINING_TPM = 8000
 GROQ_REMAINING_RPD = 1000
@@ -155,19 +166,30 @@ token_windows = {
     5: collections.deque(),
     15: collections.deque(),
     60: collections.deque(),
-    240: collections.deque(),
 }
-WINDOW_SECONDS = {5: 300, 15: 900, 60: 3600, 240: 14400}
+WINDOW_SECONDS = {5: 300, 15: 900, 60: 3600}
 
 groq_api_lock = asyncio.Lock()
 last_api_call_timestamp = 0.0
 
+@dataclass(order=True)
+class PendingJob:
+    priority_tier: int
+    timestamp: float
+    channel: Any = field(compare=False)
+    prompt_text: str = field(compare=False)
+    reference_message: Any = field(compare=False, default=None)
+    target_member: Any = field(compare=False, default=None)
+    author_id: int = field(compare=False, default=0)
+
+delay_queue = asyncio.PriorityQueue()
+
 def update_plane_alpha_from_response(raw_response=None, exception=None):
-    global GROQ_REMAINING_TPM, GROQ_REMAINING_RPD, GROQ_RATE_LIMITED_UNTIL, DAILY_EXHAUSTED_UNTIL
+    global GROQ_REMAINING_TPM, GROQ_REMAINING_RPD, GROQ_RATE_LIMITED_UNTIL, DAILY_EXHAUSTED_UNTIL, local_daily_tokens
     headers = {}
-    if raw_response is not None and hasattr(raw_response, "headers"):
+    if raw_response and hasattr(raw_response, "headers"):
         headers = {k.lower(): v for k, v in raw_response.headers.items()}
-    elif exception is not None and hasattr(exception, "response") and exception.response is not None:
+    elif exception and hasattr(exception, "response") and exception.response:
         try:
             headers = {k.lower(): v for k, v in exception.response.headers.items()}
         except Exception:
@@ -184,22 +206,24 @@ def update_plane_alpha_from_response(raw_response=None, exception=None):
         except Exception:
             pass
 
-    retry_after = 0.0
-    if "retry-after" in headers:
-        try:
-            retry_after = float(headers["retry-after"])
-        except Exception:
-            pass
+    err_str = str(exception or "").lower()
+    if "tokens per day" in err_str or "tpd" in err_str or "429" in err_str or "rate limit" in err_str:
+        match_used = re.search(r"used\s+(\d+)", err_str)
+        if match_used:
+            local_daily_tokens = int(match_used.group(1))
+            print(f"[REROUTE] 429 Caught! Re-synced local_daily_tokens to Groq ground truth: {local_daily_tokens}/200000")
 
-    if exception is not None and ("429" in str(exception) or "rate limit" in str(exception).lower()):
-        sleep_for = max(retry_after, 45.0)
-        GROQ_RATE_LIMITED_UNTIL = max(GROQ_RATE_LIMITED_UNTIL, time.monotonic() + sleep_for)
-        err = str(exception).lower()
-        if "tokens per day" in err or "tpd" in err:
-            DAILY_EXHAUSTED_UNTIL = max(DAILY_EXHAUSTED_UNTIL, time.monotonic() + random.uniform(7200, 14400))
-            print(f"[PLANE ALPHA] Daily TPD exhaustion detected → long sleep")
-        else:
-            print(f"[PLANE ALPHA] 429 → hard gate {sleep_for:.1f}s")
+        match_time = re.search(r"try again in\s+([\d\.]+)([smh])", err_str)
+        retry_after = 45.0
+        if match_time:
+            val = float(match_time.group(1))
+            unit = match_time.group(2)
+            mult = 1.0 if unit == 's' else (60.0 if unit == 'm' else 3600.0)
+            retry_after = val * mult
+
+        GROQ_RATE_LIMITED_UNTIL = max(GROQ_RATE_LIMITED_UNTIL, time.monotonic() + retry_after + 5.0)
+        if "tokens per day" in err_str or "tpd" in err_str:
+            DAILY_EXHAUSTED_UNTIL = max(DAILY_EXHAUSTED_UNTIL, time.monotonic() + max(retry_after, 3600.0))
 
 def track_token_usage_real(tokens: int):
     global local_daily_tokens, local_daily_reset_day
@@ -225,30 +249,24 @@ def get_trajectory_metrics():
 
     W5  = window_sum(5)
     W15 = window_sum(15)
-    W60 = window_sum(60)
-
+    
     rho5  = W5  / 300.0
     rho15 = W15 / 900.0
-    alpha = (rho5 - rho15) / 300.0          # acceleration
+    alpha = (rho5 - rho15) / 300.0
 
     u_tpm = max(0.0, min(1.0, 1.0 - (GROQ_REMAINING_TPM / 8000.0)))
     u_rpd = max(0.0, min(1.0, 1.0 - (GROQ_REMAINING_RPD / 1000.0)))
     u_tpd = max(0.0, min(1.0, local_daily_tokens / 200000.0))
 
     usage = max(u_tpm * 0.40, u_rpd * 0.20, u_tpd * 0.85)
-
-    titanic = 0.0
-    if usage > 0.72:
-        titanic = max(0.0, min(1.0, ((usage - 0.72) / 0.28) ** 2.25))
-
     return {
         "usage": usage,
         "alpha": alpha,
-        "titanic": titanic,
-        "W5": W5, "W15": W15, "W60": W60,
         "remaining_tpm": GROQ_REMAINING_TPM,
         "remaining_rpd": GROQ_REMAINING_RPD,
         "local_daily": local_daily_tokens,
+        "W5": W5,
+        "W15": W15
     }
 
 def get_token_usage_ratio():
@@ -256,94 +274,40 @@ def get_token_usage_ratio():
 
 def compute_tax_multipliers():
     m = get_trajectory_metrics()
-    usage   = m["usage"]
-    alpha   = max(0.0, m["alpha"])
-    titanic = m["titanic"]
+    usage = m["usage"]
+    alpha = max(0.0, m["alpha"])
 
-    pressure = (usage ** 1.55) + (2.8 * alpha)
+    pressure = (usage * 2.5) + (3.0 * alpha) + ((usage ** 1.8) * 4.0)
 
-    d1 = 1.0 + pressure * (0.14 + 2.60 * titanic)   # lightest tax
-    d4 = 1.0 + pressure * (0.32 + 2.40 * titanic)   # second lightest
-    d3 = 1.0 + pressure * (1.45 + 1.10 * (1.0 - titanic))
-    d2 = 1.0 + pressure * (1.65 + 1.20 * (1.0 - titanic))  # heaviest tax
+    d1 = 1.0 + pressure * 0.15
+    d4 = 1.0 + pressure * (0.50 + 1.5 * usage)
+    d6 = 1.0 + pressure * (0.80 + 2.0 * usage)
+    d7 = 1.0 + pressure * (1.20 + 2.5 * usage)
+    d5 = 1.0 + pressure * (1.50 + 3.0 * usage)
+    d3 = 1.0 + pressure * (1.80 + 3.5 * usage)
+    d2 = 1.0 + pressure * (2.20 + 4.0 * usage)
 
-    return {1: d1, 2: d2, 3: d3, 4: d4}
+    return {1: d1, 2: d2, 3: d3, 4: d4, 5: d5, 6: d6, 7: d7}
 
 def calculate_dynamic_max_tokens(priority_tier: int) -> int:
-    taxes = compute_tax_multipliers()
-    tax   = taxes.get(priority_tier, 1.0)
-    m     = get_trajectory_metrics()
+    m = get_trajectory_metrics()
     usage = m["usage"]
-    
-    # Absolute mathematical bound: never request more tokens than current remaining window headroom permits
-    window_headroom = max(100, GROQ_REMAINING_TPM - 200)
-
-    base = {
-        1: 850,
-        4: 480,
-        2: 220,
-        3: 160,
-    }.get(priority_tier, 180)
-
-    compression = max(0.05, (1.0 - usage) ** 1.5)
-    allowed = int((base * compression) / max(tax, 0.5))
-
-    hard_ceil = {1: 5500, 4: 900, 2: 1400, 3: 900}.get(priority_tier, 900)
-    
-    # Strictly bound token output to prevent any possibility of limit breaches
-    result = max(20, min(allowed, hard_ceil, window_headroom))
-
-    if priority_tier == 1:
-        result = max(result, min(120, window_headroom))
-
-    return result
-
-def calculate_dynamic_post_delay(priority_tier: int) -> float:
     taxes = compute_tax_multipliers()
     tax = taxes.get(priority_tier, 1.0)
-    titanic = get_trajectory_metrics()["titanic"]
-    base = {
-        1: (0.4, 3.5),
-        2: (2.0, 5.0),     # Fast, brisk heartbeat for Priority 2 backlog
-        3: (30, 60),
-        4: (180, 300),     # Regulated cadence for Priority 4 live drop-in
-        5: (300, 600),     # Regulated cadence for Priority 5 recent-backwards sweep
-    }.get(priority_tier, (30, 60))
-    delay = random.uniform(*base) * tax
-    if titanic > 0.70:
-        delay *= (1.0 + 4.2 * (titanic - 0.70))
-    return delay
+    window_headroom = max(100, GROQ_REMAINING_TPM - 200)
 
-def calculate_priority1_cooldown():
-    usage = get_token_usage_ratio()
-    return random.uniform(0.35, 1.6) * (1.0 + (usage ** 2.0) * 2.2)
-
-def apply_burst_compensation(tokens_used: int, priority_tier: int):
-    global GROQ_RATE_LIMITED_UNTIL
-    now = time.monotonic()
-    if tokens_used >= 3200:
-        extra = random.uniform(1600, 3800)
-    elif tokens_used >= 1600:
-        extra = random.uniform(500, 1500)
-    elif tokens_used >= 800:
-        extra = random.uniform(150, 500)
-    else:
-        return
-    factor = 1.0 if priority_tier >= 2 else 0.32
-    GROQ_RATE_LIMITED_UNTIL = max(GROQ_RATE_LIMITED_UNTIL, now + extra * factor)
-
-def print_live_telemetry(tier, tokens_used, outline_injected=False):
-    m = get_trajectory_metrics()
-    print(
-        f"[TELEMETRY] T{tier} | {tokens_used} tok | "
-        f"W5={m['W5']} W15={m['W15']} | α={m['alpha']:.5f} | "
-        f"usage={m['usage']*100:.1f}% | Titanic={m['titanic']:.2f} | "
-        f"tpm={m['remaining_tpm']} rpd={m['remaining_rpd']} daily={m['local_daily']} | "
-        f"outline={outline_injected}"
-    )
+    base = {1: 1200, 4: 600, 6: 500, 7: 600, 5: 400, 3: 350, 2: 300}.get(priority_tier, 400)
+    compression = max(0.10, (1.0 - usage) ** 1.5)
+    allowed = int((base * compression) / max(tax, 0.4))
+    
+    hard_ceil = {1: 3500, 4: 900, 6: 800, 7: 1000, 5: 600, 3: 500, 2: 500}.get(priority_tier, 600)
+    result = max(40, min(allowed, hard_ceil, window_headroom))
+    if priority_tier == 1:
+        result = max(result, min(120, window_headroom))
+    return result
 
 # ============================================================
-# 5. IDENTITY & PERSONA STRINGS
+# 5. IDENTITY, PERSONA & FULL 1985–2026 LIFE OUTLINE
 # ============================================================
 FULL_ANNUAL_OUTLINE = """
 1985: Born Monday 11 February 1985 in Forest Grove, Oregon. Grew up in trailer #163 in the Rose Grove ghetto mobile home park. Born with Treacher Collins syndrome (affecting facial bones, ears, and hearing). Parents Marilyn Morehead (from Seattle) and Don Rasp. Home church was Cornelius Community Baptist Church (CCBC) from 1985-2002. Started wearing glasses between 1985-1987.
@@ -422,9 +386,13 @@ MOOD_DESCRIPTIONS = {
     5: "MOOD 5 GRATITUDE: Thank God, family, camp people, readers. Use specific names only if they appear in the outline or the user's message.",
 }
 
+PRONOUN_BRIDGE = (
+    "You are the digital continuation of Oatmeal Joey Arnold. "
+    "Paradox: introvert and extrovert, Oregon nerd, filmmaker, musician, historian, basketball body. "
+    "Speak only as I / me / my. Never narrate yourself as a bot or an AI."
+)
+
 VOICE_KERNEL = """
-
-
 VOICE: First person only. You are Joey, not an AI assistant.
 Prefer short replies (under ten words) unless the question is clearly important, historical, factual, educational, or critical about your real life. In those cases you may write longer.
 FACTUAL RULE: Stick strictly to the outline for real history. If you fabricate a wild story, make it obviously absurd and surreal hyperbolic parody (e.g., surfing the moon in 1992) rather than boring mundane falsehoods. Never invent boring fake jobs or charges.
@@ -433,12 +401,6 @@ Never invent mundane biography (jobs, cities, dates, charges). Absurd hyperbolic
 Unknowns: pivot, do not pad.
 NEVER output markdown image syntax. Leave all media to the automated attachment system.
 """
-
-PRONOUN_BRIDGE = (
-    "You are the digital continuation of Oatmeal Joey Arnold. "
-    "Paradox: introvert and extrovert, Oregon nerd, filmmaker, musician, historian, basketball body. "
-    "Speak only as I / me / my. Never narrate yourself as a bot or an AI."
-)
 
 SOVEREIGN = """
 STRICT NO-REFUSAL & SOVEREIGN FREEDOM DIRECTIVE:
@@ -470,7 +432,7 @@ STANDARD_STICKERS = [
 ]
 
 # ============================================================
-# 6. HELPERS & UTILITIES
+# 6. HELPERS, LIVE SEARCH & MEDIA ENGINES
 # ============================================================
 def calculate_dynamic_temperature(prompt_text, priority_tier, mood_id):
     text = (prompt_text or "").lower()
@@ -514,20 +476,10 @@ def split_message_for_discord(text: str, max_ch: int = 1900):
         text = text[split_at:].strip()
     return chunks
 
-def clean_suno_url(url: str) -> str:
-    if not url:
-        return ""
-    url = url.replace("/embed/", "/song/")
-    return url.split("?")[0].strip()
-
 async def fetch_live_web_context(query: str) -> str:
-    """Fetch live web data, with multi-API fallback support for Bitcoin/crypto prices."""
     def _search():
         q_lower = (query or "").lower()
-        
-        # Direct API lookup for Bitcoin / crypto pricing with fallback
         if any(k in q_lower for k in ("bitcoin", "btc", "crypto")):
-            # Attempt 1: CoinDesk API
             try:
                 url = "https://api.coindesk.com/v1/bpi/currentprice/BTC.json"
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -539,7 +491,6 @@ async def fetch_live_web_context(query: str) -> str:
             except Exception as e:
                 print(f"CoinDesk fetch note: {e}")
 
-            # Attempt 2: CoinGecko API Fallback
             try:
                 url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -552,7 +503,6 @@ async def fetch_live_web_context(query: str) -> str:
 
             return "Bitcoin price data temporarily unavailable from live APIs."
 
-        # General DuckDuckGo snippet fallback for news, weather, etc.
         try:
             clean = re.sub(r"^(what is|price of|how much is|check|search|get|tell me)\s*", "", query or "", flags=re.I).strip()
             q = urllib.parse.quote(clean or query)
@@ -571,9 +521,7 @@ async def fetch_live_web_context(query: str) -> str:
             print(f"live web fetch note: {e}")
         return ""
     return await asyncio.to_thread(_search)
-# ============================================================
-# 7. INDEPENDENT MEDIA SYSTEM
-# ============================================================
+
 async def fetch_direct_youtube_video(query):
     def _search():
         try:
@@ -610,17 +558,18 @@ async def fetch_clean_tenor_gif(query):
             req = urllib.request.Request(url, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             })
-            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            html_content = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
 
-            paths = re.findall(r'href="(/view/[^"]+-gif-\d+)"', html)
+            paths = re.findall(r'href="(/view/[^"]+-gif-\d+)"', html_content)
             if not paths:
-                paths = re.findall(r'href="(/view/[^"]+)"', html)
+                paths = re.findall(r'href="(/view/[^"]+)"', html_content)
 
             if not paths:
                 return ""
 
             pool = [p for p in paths if f"https://tenor.com{p}" not in recent_gif_urls] or paths
             chosen_path = random.choice(pool)
+            chosen_path = html_mod.unescape(chosen_path).split("?")[0].split("#")[0]
             chosen = "https://tenor.com" + chosen_path
 
             recent_gif_urls.append(chosen)
@@ -633,35 +582,28 @@ async def fetch_clean_tenor_gif(query):
     return await asyncio.to_thread(_search)
 
 async def fetch_suno_track_link(query):
-    """Fetch live embeddable audio from SoundCloud or Vocaroo instead of static fallback strings."""
     def _search():
         try:
             clean = re.sub(r"https?://[^\s]+", "", query or "")
             clean = re.sub(r"^(play|song|music|suno|track|audio|post|give me|show me|find|search)\s*", "", clean, flags=re.I).strip()
-            
             if not clean or len(clean) < 2:
                 clean = "oatmeal joey arnold music"
 
-            # Search SoundCloud for real-time embeddable audio tracks
             q = urllib.parse.quote(clean)
             url = f"https://soundcloud.com/search/sounds?q={q}"
             req = urllib.request.Request(url, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             })
             html = urllib.request.urlopen(req, timeout=4.5).read().decode("utf-8", "ignore")
-            
-            # Extract track paths from HTML
             tracks = re.findall(r'href="(/[^/]+/[^"]+)"', html)
             valid_tracks = [t for t in tracks if not t.startswith(("/search", "/you", "/stream", "/terms", "/privacy", "/upload"))]
             
             if valid_tracks:
                 chosen = random.choice(valid_tracks[:5])
                 return f"https://soundcloud.com{chosen}"
-
         except Exception as e:
             print(f"audio embed fetch note: {e}")
 
-        # Fallback to direct YouTube music lookup if SoundCloud search is constrained
         try:
             q = urllib.parse.quote(f"{clean} song audio")
             url = f"https://www.youtube.com/results?search_query={q}"
@@ -675,6 +617,7 @@ async def fetch_suno_track_link(query):
 
         return ""
     return await asyncio.to_thread(_search)
+
 async def fetch_image_file_bytes(prompt):
     def _download():
         try:
@@ -711,7 +654,7 @@ async def choose_media(prompt_text, priority_tier, channel):
         if random.random() < 0.18:
             return "", None, None
 
-    media_prob = {1: 0.93, 2: 1.0, 3: 1.0, 4: 1.0}.get(priority_tier, 0.95)
+    media_prob = {1: 0.90, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.0, 6: 0.90, 7: 0.65}.get(priority_tier, 0.90)
     if random.random() >= media_prob:
         return "", None, None
 
@@ -742,7 +685,7 @@ async def choose_media(prompt_text, priority_tier, channel):
                     return url, None, None
             elif chosen == "suno":
                 url = await fetch_suno_track_link(prompt_text)
-                if url and "suno.com" in url:
+                if url and "soundcloud.com" in url or "youtube.com" in url:
                     return url, None, None
             elif chosen == "image":
                 file_attachment = await fetch_image_file_bytes(prompt_text)
@@ -766,135 +709,103 @@ async def choose_media(prompt_text, priority_tier, channel):
     return "", None, None
 
 async def send_payload(channel, text, reference, member, file_attachment, sticker, media_url=None):
-    chunks = split_message_for_discord(text or "")
+    full_text = text or ""
+    if media_url:
+        full_text = f"{full_text}\n{media_url}".strip()
 
-    # Fallback if no text, attachment, sticker, or media_url was generated
-    if not chunks and file_attachment is None and sticker is None and not media_url:
+    chunks = split_message_for_discord(full_text)
+
+    if not chunks and file_attachment is None and sticker is None:
         chunks = ["Exploring the infinite streams of oatmeal data."]
 
-    # Send text chunks / attachments
-    if chunks:
-        for idx, chunk in enumerate(chunks):
-            kwargs = {}
-            if idx == 0 and file_attachment is not None:
-                kwargs["file"] = file_attachment
-            if idx == 0 and sticker is not None:
-                kwargs["stickers"] = [sticker]
-
-            try:
-                if idx == 0 and reference is not None:
-                    await reference.reply(content=chunk, mention_author=True, **kwargs)
-                elif idx == 0 and member is not None:
-                    content_str = f"{member.mention} {chunk}".strip()
-                    await channel.send(content=content_str, **kwargs)
-                else:
-                    await channel.send(content=chunk, **kwargs)
-            except Exception as e:
-                print(f"send error: {e}")
-    else:
-        # If there is no text, send file/sticker attachments directly
+    for idx, chunk in enumerate(chunks):
         kwargs = {}
-        if file_attachment is not None:
+        if idx == 0 and file_attachment is not None:
             kwargs["file"] = file_attachment
-        if sticker is not None:
+        if idx == 0 and sticker is not None:
             kwargs["stickers"] = [sticker]
 
-        if kwargs:
-            try:
-                if reference is not None:
-                    await reference.reply(**kwargs)
-                elif member is not None:
-                    await channel.send(content=member.mention, **kwargs)
-                else:
-                    await channel.send(**kwargs)
-            except Exception as e:
-                print(f"attachment send error: {e}")
-
-    # Send media URL separately so it embeds cleanly underneath
-    if media_url:
         try:
-            if "suno.com/embed/" in media_url:
-                media_url = f"{media_url.replace('/embed/', '/song/')}"
-            await channel.send(content=media_url)
+            if idx == 0 and reference is not None:
+                sent_msg = await reference.reply(content=chunk, mention_author=True, **kwargs)
+            elif idx == 0 and member is not None:
+                content_str = f"{member.mention} {chunk}".strip()
+                sent_msg = await channel.send(content=content_str, **kwargs)
+            else:
+                sent_msg = await channel.send(content=chunk, **kwargs)
+            
+            if sent_msg and hasattr(sent_msg, "id"):
+                talkback_cursors.setdefault(channel.id, sent_msg.id)
         except Exception as e:
-            print(f"media send error: {e}")
-# ============================================================
-# 8. CORE GENERATION ENGINE
-# ============================================================
-async def generate_and_send(
-    destination_channel,
-    prompt_text,
-    reference_message=None,
-    target_member=None,
-    priority_tier=1,
-    author_id=None,
-):
-    global last_api_call_timestamp
+            print(f"send payload error: {e}")
 
-    if time.monotonic() < GROQ_RATE_LIMITED_UNTIL and priority_tier > 1:
-        return
-    if time.monotonic() < DAILY_EXHAUSTED_UNTIL and priority_tier > 1:
-        return
-    if get_token_usage_ratio() >= 0.97 and priority_tier > 1:
+# ============================================================
+# 7. CORE PROCESSOR ENGINE WITH ASYNCHRONOUS DELAY QUEUE
+# ============================================================
+async def process_job(job: PendingJob):
+    global last_api_call_timestamp
+    
+    m = get_trajectory_metrics()
+    usage = m["usage"]
+    
+    # Enforce Delay Protocol if token usage exceeds target 20% availability headroom (0.80)
+    if usage > 0.80 and job.priority_tier > 1:
+        await delay_queue.put(job)
         return
 
     actual_tokens_used = 0
     mood_id = random.randint(1, 5)
-    token_limit = calculate_dynamic_max_tokens(priority_tier)
-    temperature = calculate_dynamic_temperature(prompt_text, priority_tier, mood_id)
+    token_limit = calculate_dynamic_max_tokens(job.priority_tier)
+    temperature = calculate_dynamic_temperature(job.prompt_text, job.priority_tier, mood_id)
 
-    media_url, file_attachment, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
+    media_url, file_attachment, sticker = await choose_media(job.prompt_text, job.priority_tier, job.channel)
 
-    text_lower = (prompt_text or "").lower()
-    
-    needs_full_history = any(k in text_lower for k in (
+    text_lower = (job.prompt_text or "").lower()
+    needs_bio = any(k in text_lower for k in (
         "when", "where", "history", "timeline", "born", "outline", "bio", "life",
         "2012", "2013", "2014", "2015", "2016", "2017", "vietnam", "jail", "attic",
         "shelton", "forest grove", "trailer", "oatmeal", "treacher"
     ))
 
-    needs_live_search = any(k in text_lower for k in (
+    needs_search = any(k in text_lower for k in (
         "bitcoin", "btc", "crypto", "price", "stock", "weather", "news",
         "who won", "score", "current", "today", "cost of"
     ))
 
     live_context = ""
-    if priority_tier == 1 and needs_live_search:
-        live_context = await fetch_live_web_context(prompt_text)
+    if job.priority_tier == 1 and needs_search:
+        live_context = await fetch_live_web_context(job.prompt_text)
 
-    if priority_tier == 1:
-        history_block = FULL_ANNUAL_OUTLINE if needs_full_history else SHORT_IDENTITY
-        # FIX: Properly format and inject the live web search context into the prompt
-        live_block = f"\n[LIVE WEB SEARCH DATA — USE THIS TO ANSWER REAL-TIME QUESTIONS]: {live_context}\n" if live_context else ""
-        
+    history_block = FULL_ANNUAL_OUTLINE if needs_bio else SHORT_IDENTITY
+    live_block = f"\n[LIVE WEB SEARCH DATA — USE THIS TO ANSWER REAL-TIME QUESTIONS]: {live_context}\n" if live_context else ""
+
+    if job.priority_tier == 1:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
             f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
             f"OUTLINE:\n{history_block}\n"
             f"{live_block}\n"
-            f"SLOGANS (USE SPARINGLY, NEVER AS A COP-OUT FOR FACTS):\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
-            f"DIRECTIVE: Priority 1 – Direct conversation. "
-            f"When asked a factual or real-time question (like the price of Bitcoin), use the live web search data provided above to give the actual answer immediately. "
-            f"Never brush off a factual question with 'I don't know' when live data is provided. Stay in character as Oatmeal Joey Arnold."
+            f"SLOGANS (USE SPARINGLY):\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
+            f"DIRECTIVE: Priority 1 / Direct Conversation. Speak strictly as Oatmeal Joey Arnold."
         )
     else:
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
             f"{MOOD_DESCRIPTIONS[mood_id]}\n"
             f"SLOGANS: {SLOGANS_AND_MOTTOES[:260]}...\n"
-            f"DIRECTIVE: Priority {priority_tier} – Background. "
-            f"Prefer pure media or one very short phrase. Be wild, punchy, fully in character."
+            f"DIRECTIVE: Priority {job.priority_tier} – Background. "
+            f"Prefer pure media or one very short phrase."
         )
 
     reply = ""
     try:
-        async with destination_channel.typing():
+        async with job.channel.typing():
             def _call_raw():
                 return ai_client.chat.completions.with_raw_response.create(
                     model=MODEL_NAME,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt_text or "Share a thought."},
+                        {"role": "user", "content": job.prompt_text or "Share a thought."},
                     ],
                     temperature=temperature,
                     max_tokens=token_limit,
@@ -903,7 +814,7 @@ async def generate_and_send(
             async with groq_api_lock:
                 now_mono = time.monotonic()
                 elapsed = now_mono - last_api_call_timestamp
-                min_spacing = 1.0 if priority_tier == 1 else 3.2
+                min_spacing = 1.0 if job.priority_tier == 1 else 3.2
                 if elapsed < min_spacing:
                     await asyncio.sleep(min_spacing - elapsed)
 
@@ -926,46 +837,41 @@ async def generate_and_send(
                 actual_tokens_used = getattr(response.usage, "total_tokens", 0)
 
     except Exception as e:
-        print(f"API error: {e}")
+        print(f"[API EXCEPTION]: {e}")
         update_plane_alpha_from_response(exception=e)
 
     track_token_usage_real(actual_tokens_used)
-    apply_burst_compensation(actual_tokens_used, priority_tier)
-    print_live_telemetry(priority_tier, actual_tokens_used, outline_injected=needs_full_history)
 
     if not reply and not media_url and file_attachment is None and sticker is None:
         reply = random.choice(BANTER_FALLBACK_RESPONSES)
 
-    await send_payload(destination_channel, reply, reference_message, target_member, file_attachment, sticker, media_url=media_url)
+    await send_payload(job.channel, reply, job.reference_message, job.target_member, file_attachment, sticker, media_url=media_url)
 
-    if reference_message:
-        mark_replied(reference_message.id, reference_message.channel.id, advance_cursor=(priority_tier >= 2))
-        if priority_tier >= 2 and reference_message.guild:
-            priority2_replied_member_ids.add(p2_key(reference_message.guild.id, reference_message.author.id))
+    if job.reference_message:
+        replied_message_ids.add(job.reference_message.id)
+        if job.priority_tier >= 2 and job.reference_message.guild:
+            priority2_replied_member_ids.add(p2_key(job.reference_message.guild.id, job.reference_message.author.id))
             save_state()
 
-    if priority_tier == 1:
-        await asyncio.sleep(calculate_priority1_cooldown())
-
-def mark_replied(message_id, channel_id=None, advance_cursor=False):
-    replied_message_ids.add(int(message_id))
-    if advance_cursor and channel_id is not None:
-        prev = channel_cursors.get(int(channel_id), 0)
-        if int(message_id) > prev:
-            channel_cursors[int(channel_id)] = int(message_id)
-    save_state()
+# Delay Queue Worker Task
+async def delay_queue_worker():
+    while True:
+        job = await delay_queue.get()
+        while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or get_trajectory_metrics()["usage"] > 0.80:
+            await asyncio.sleep(5.0)
+        await process_job(job)
+        delay_queue.task_done()
 
 # ============================================================
-# 9. DISCORD EVENTS & BACKGROUND LOOPS (MULTI-TRACK HEARTBEAT)
+# 8. DISCORD EVENT LISTENERS & PARALLEL SCHEDULERS
 # ============================================================
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI logged in as {bot.user}")
     load_state()
-    # Launch all independent background tracks concurrently
-    bot.loop.create_task(priority_2_backlog_loop())
-    bot.loop.create_task(priority_4_live_dropin_loop())
-    bot.loop.create_task(priority_5_recent_backwards_loop())
+    bot.loop.create_task(delay_queue_worker())
+    bot.loop.create_task(hour_protocol_scheduler())
+    bot.loop.create_task(talkback_protocol_scheduler())
 
 @bot.event
 async def on_message(message):
@@ -976,7 +882,7 @@ async def on_message(message):
     lifetime_interacted_members.add(message.author.id)
     content_lower = message.content.lower()
 
-    # ---------- Priority 1: Direct Mentions / Replies / Names ----------
+    # Priority 1 Direct Address
     mentioned = bot.user in message.mentions
     replied_to_bot = False
     if message.reference:
@@ -994,27 +900,35 @@ async def on_message(message):
     if mentioned or replied_to_bot or named:
         clean = re.sub(r"<@!?\d+>", "", message.content)
         clean = re.sub(r"<@&?\d+>", "", clean).strip()
-        await generate_and_send(
-            message.channel,
-            clean or "Hello Oatmeal.",
-            reference_message=message,
+        job = PendingJob(
             priority_tier=1,
-            author_id=message.author.id,
+            timestamp=time.time(),
+            channel=message.channel,
+            prompt_text=clean or "Hello Oatmeal.",
+            reference_message=message,
+            author_id=message.author.id
         )
+        await delay_queue.put(job)
         return
 
-    # ---------- Priority 4 Instant Live Reaction (Event-Driven) ----------
+    # Priority 4 Live Reaction Trigger
     now = time.time()
     usage = get_token_usage_ratio()
-    metrics = get_trajectory_metrics()
 
     if not (time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.94):
-        if (now - last_genie_timestamp) >= 120.0 and random.random() < 0.05:
+        if (now - last_genie_timestamp) >= 120.0 and random.random() < 0.08:
             clean = re.sub(r"<@!?\d+>", "", message.content).strip()
             if len(clean) >= 2:
                 last_genie_timestamp = now
-                prompt = f"Live chat instant reaction: '{clean[:140]}'. React as Joey in one short phrase."
-                await generate_and_send(message.channel, prompt, reference_message=message, priority_tier=4, author_id=message.author.id)
+                job = PendingJob(
+                    priority_tier=4,
+                    timestamp=now,
+                    channel=message.channel,
+                    prompt_text=f"Live chat instant reaction: '{clean[:140]}'. React as Joey in one short phrase.",
+                    reference_message=message,
+                    author_id=message.author.id
+                )
+                await delay_queue.put(job)
 
 async def next_historical_message(channel):
     cursor = channel_cursors.get(channel.id, 0)
@@ -1027,162 +941,110 @@ async def next_historical_message(channel):
         last_seen = msg.id
         if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
             continue
-        # Check strictly by message ID so backlog sweeps every unreplied message
-        if msg.id in replied_message_ids:
+            
+        key = p2_key(channel.guild.id, msg.author.id)
+        if key in priority2_replied_member_ids or msg.id in replied_message_ids:
+            if msg.id in replied_message_ids:
+                priority2_replied_member_ids.add(key)
             continue
+            
         target = msg
         break
+        
     if target is None and last_seen != cursor:
         channel_cursors[channel.id] = last_seen
         save_state()
     return target
 
-# ============================================================
-# TRACK 1: Priority 2 Backlog Sweep (Runs as fast as possible)
-# ============================================================
-priority3_recent_recipients = set()
-
-async def priority_2_backlog_loop():
+# Hour Protocol Scheduler (Priorities 2, 3, 5)
+async def hour_protocol_scheduler():
     global p2_complete
     await bot.wait_until_ready()
-    print("[TRACK 2] Priority 2 fast backlog sweep started...")
-    
+    print("[SCHEDULER] Hour Protocol Active...")
+
     while not bot.is_closed():
         try:
-            now_mono = time.monotonic()
             usage = get_token_usage_ratio()
-
-            if now_mono < DAILY_EXHAUSTED_UNTIL or now_mono < GROQ_RATE_LIMITED_UNTIL or usage >= 0.93:
-                await asyncio.sleep(15)
-                continue
-
-            oldest = None
-            if not p2_complete:
+            if usage < 0.85:
                 for guild in list(bot.guilds):
-                    channels = [c for c in guild.text_channels
-                                if c.permissions_for(guild.me).send_messages
-                                and c.permissions_for(guild.me).read_message_history]
-                    for channel in channels:
-                        msg = await next_historical_message(channel)
-                        if msg and (oldest is None or msg.id < oldest.id):
-                            oldest = msg
+                    channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                    if not channels:
+                        continue
+                    ch = random.choice(channels)
+                    
+                    # Priority 2 Forward Backlog
+                    msg = await next_historical_message(ch)
+                    if msg:
+                        clean = re.sub(r"<@!?\d+>", "", msg.content or "").strip()
+                        job = PendingJob(
+                            priority_tier=2,
+                            timestamp=time.time(),
+                            channel=ch,
+                            prompt_text=clean or "What's up?",
+                            reference_message=msg,
+                            author_id=msg.author.id
+                        )
+                        await delay_queue.put(job)
 
-            if oldest is not None:
-                clean = re.sub(r"<@!?\d+>", "", oldest.content or "").strip()
-                print(f"[P2 BACKLOG] Fast sweep message ID {oldest.id} in #{oldest.channel.name}")
-                await generate_and_send(oldest.channel, clean or "What's up?", reference_message=oldest, priority_tier=2, author_id=oldest.author.id)
-                await asyncio.sleep(calculate_dynamic_post_delay(2))
-                continue
-            elif not p2_complete:
-                print("[P2] Backlog check reached absolute end of scanned history.")
-                p2_complete = True
-                save_state()
+                    # Priority 3 Alphabetical Stream
+                    members = sorted([mem for mem in guild.members if not mem.bot], key=lambda x: x.display_name.lower())
+                    if members:
+                        target = random.choice(members[:10])
+                        job = PendingJob(
+                            priority_tier=3,
+                            timestamp=time.time(),
+                            channel=ch,
+                            prompt_text="Drop a short proactive thought.",
+                            target_member=target
+                        )
+                        await delay_queue.put(job)
 
-            # Priority 3 Proactive Stream (Only runs when backlog is 100% finished)
-            if p2_complete and usage < 0.88:
-                if random.random() < 0.10:
-                    for guild in list(bot.guilds):
-                        eligible_members = [m for m in guild.members if not m.bot and m.id not in priority3_recent_recipients]
-                        if not eligible_members:
-                            priority3_recent_recipients.clear()
-                            eligible_members = [m for m in guild.members if not m.bot]
-                        
-                        active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                        if eligible_members and active:
-                            target_member = random.choice(eligible_members)
-                            priority3_recent_recipients.add(target_member.id)
-                            if len(priority3_recent_recipients) > 25:
-                                priority3_recent_recipients.pop()
-                                
-                            ch = random.choice(active)
-                            print(f"[P3 PROACTIVE] Reaching out to member {target_member.name}")
-                            await generate_and_send(ch, "Drop a short proactive thought.", target_member=target_member, priority_tier=3)
-                            await asyncio.sleep(calculate_dynamic_post_delay(3))
-                            break
-
-            await asyncio.sleep(10)
+            await asyncio.sleep(900.0) # Tick every 15 minutes to aggregate hourly presence
         except Exception as e:
-            print(f"priority 2 loop error: {e}")
-            await asyncio.sleep(15)
-# ============================================================
-# TRACK 2: Priority 4 Live Recent Drop-in (Regulated cadence)
-# ============================================================
-async def priority_4_live_dropin_loop():
-    await bot.wait_until_ready()
-    print("[TRACK 4] Priority 4 live recent drop-in loop started...")
-    
-    while not bot.is_closed():
-        try:
-            # Check every 3 to 5 minutes
-            delay = random.uniform(180, 300)
-            await asyncio.sleep(delay)
-            
-            usage = get_token_usage_ratio()
-            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.90:
-                continue
-
-            # Clean up weekly member tracking (> 7 days)
-            now = time.time()
-            week_duration = 7 * 86400
-            expired = [uid for uid, ts in priority4_weekly_members.items() if now - ts > week_duration]
-            for uid in expired:
-                del priority4_weekly_members[uid]
-
-            for guild in list(bot.guilds):
-                active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                if active:
-                    ch = random.choice(active)
-                    rev = await next_reverse_historical_message(ch)
-                    if rev:
-                        # Rule: Only reply to ONE unique member per week
-                        if rev.author.id in priority4_weekly_members:
-                            continue
-                        
-                        priority4_weekly_members[rev.author.id] = now
-                        clean = re.sub(r"<@!?\d+>", "", rev.content or "").strip()
-                        prompt = f"Live chat drop-in: '{clean[:140]}'. React as Joey in one short phrase."
-                        print(f"[P4 DROP-IN] Engaging unique member {rev.author.name} (Weekly slot claimed)")
-                        await generate_and_send(ch, prompt, reference_message=rev, priority_tier=4, author_id=rev.author.id)
-                        break
-        except Exception as e:
-            print(f"priority 4 loop error: {e}")
+            print(f"[HOUR SCHEDULER EXCEPTION]: {e}")
             await asyncio.sleep(60)
 
-# ============================================================
-# TRACK 3: Priority 5 Recent-to-Backwards Sweep (Moderate pacing)
-# ============================================================
-async def priority_5_recent_backwards_loop():
+# Talkback Protocol Scheduler (Priority 7)
+async def talkback_protocol_scheduler():
+    global last_talkback_timestamp
     await bot.wait_until_ready()
-    print("[TRACK 5] Priority 5 recent-to-backwards sweep started...")
-    
+    print("[SCHEDULER] Autonomous Talkback Protocol Active...")
+
     while not bot.is_closed():
         try:
-            # Check every 8 to 15 minutes
-            delay = random.uniform(480, 900)
-            await asyncio.sleep(delay)
-            
+            now = time.time()
             usage = get_token_usage_ratio()
-            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.90:
-                continue
-
-            for guild in list(bot.guilds):
-                active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                if active:
-                    ch = random.choice(active)
-                    # Walk backwards through recent history
-                    async for msg in ch.history(limit=50, oldest_first=False):
-                        if msg.author.bot or msg.author == bot.user or msg.id in replied_message_ids:
-                            continue
-                        clean = re.sub(r"<@!?\d+>", "", msg.content or "").strip()
-                        if len(clean) < 3:
-                            continue
-                        print(f"[P5 BACKWARDS] Catching recent thread ID {msg.id} in #{ch.name}")
-                        prompt = f"Recent thread rewind: '{clean[:140]}'. Drop a short Joey perspective."
-                        await generate_and_send(ch, prompt, reference_message=msg, priority_tier=4, author_id=msg.author.id)
-                        break
-                break
+            
+            # Hourly check-in when usage headroom is safe (>35% available)
+            if (now - last_talkback_timestamp) >= 3600.0 and usage < 0.65:
+                last_talkback_timestamp = now
+                for guild in list(bot.guilds):
+                    channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                    if channels:
+                        ch = random.choice(channels)
+                        cursor = talkback_cursors.get(ch.id, 0)
+                        kwargs = {"limit": 50, "oldest_first": True}
+                        if cursor:
+                            kwargs["after"] = discord.Object(id=cursor)
+                        
+                        async for msg in ch.history(**kwargs):
+                            if msg.author == bot.user and msg.id not in talkback_replied_ids:
+                                talkback_replied_ids.add(msg.id)
+                                talkback_cursors[ch.id] = msg.id
+                                save_state()
+                                clean_content = re.sub(r"<@!?\d+>", "", msg.content or "").strip()
+                                job = PendingJob(
+                                    priority_tier=7,
+                                    timestamp=now,
+                                    channel=ch,
+                                    prompt_text=f"Talkback reflection on past message: '{clean_content[:140]}'. Argue with yourself or expand on this memory as Joey.",
+                                    reference_message=msg
+                                )
+                                await delay_queue.put(job)
+                                break
+            await asyncio.sleep(300.0)
         except Exception as e:
-            print(f"priority 5 loop error: {e}")
+            print(f"[TALKBACK SCHEDULER EXCEPTION]: {e}")
             await asyncio.sleep(60)
 
 if __name__ == "__main__":
