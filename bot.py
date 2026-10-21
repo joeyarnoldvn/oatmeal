@@ -96,7 +96,6 @@ def load_state():
 def save_state():
     def _write():
         try:
-            # Ensure the directory exists
             dir_name = os.path.dirname(STATE_PATH) or "/tmp"
             os.makedirs(dir_name, exist_ok=True)
 
@@ -107,7 +106,6 @@ def save_state():
                 "p2_complete": p2_complete,
             }
 
-            # Create a unique temporary file in the same directory
             import tempfile
             fd, tmp_path = tempfile.mkstemp(
                 prefix="oatmeal_state_",
@@ -120,10 +118,8 @@ def save_state():
                     f.flush()
                     os.fsync(f.fileno())
 
-                # Atomic replace
                 os.replace(tmp_path, STATE_PATH)
             except Exception:
-                # Clean up temp file if something went wrong
                 try:
                     os.unlink(tmp_path)
                 except Exception:
@@ -132,7 +128,6 @@ def save_state():
 
         except Exception as e:
             print(f"[STATE] Save failed: {e}")
-            # Fallback: try a simple non-atomic write so the bot keeps working
             try:
                 with open(STATE_PATH, "w", encoding="utf-8") as f:
                     json.dump({
@@ -240,7 +235,6 @@ def get_trajectory_metrics():
     u_rpd = max(0.0, min(1.0, 1.0 - (GROQ_REMAINING_RPD / 1000.0)))
     u_tpd = max(0.0, min(1.0, local_daily_tokens / 200000.0))
 
-    # Daily is the strongest signal, hourly (TPM) is the speed bump
     usage = max(u_tpm * 0.40, u_rpd * 0.20, u_tpd * 0.85)
 
     titanic = 0.0
@@ -257,6 +251,9 @@ def get_trajectory_metrics():
         "local_daily": local_daily_tokens,
     }
 
+def get_token_usage_ratio():
+    return get_trajectory_metrics()["usage"]
+
 def compute_tax_multipliers():
     m = get_trajectory_metrics()
     usage   = m["usage"]
@@ -265,7 +262,6 @@ def compute_tax_multipliers():
 
     pressure = (usage ** 1.55) + (2.8 * alpha)
 
-    # Hierarchy of grace: P1 > P4 > P3 ≈ P2
     d1 = 1.0 + pressure * (0.14 + 2.60 * titanic)   # lightest tax
     d4 = 1.0 + pressure * (0.32 + 2.40 * titanic)   # second lightest
     d3 = 1.0 + pressure * (1.45 + 1.10 * (1.0 - titanic))
@@ -278,10 +274,9 @@ def calculate_dynamic_max_tokens(priority_tier: int) -> int:
     tax   = taxes.get(priority_tier, 1.0)
     usage = get_trajectory_metrics()["usage"]
 
-    # Soft targets
     base = {
-        1: 850,   # Priority 1 can go higher when needed
-        4: 480,   # Prefer under ~600
+        1: 850,
+        4: 480,
         2: 220,
         3: 160,
     }.get(priority_tier, 180)
@@ -293,9 +288,9 @@ def calculate_dynamic_max_tokens(priority_tier: int) -> int:
     result = max(20, min(allowed, hard_ceil))
 
     if priority_tier == 1:
-        result = max(result, 160)   # never starve Priority 1
+        result = max(result, 160)
     if priority_tier == 4:
-        result = min(result, 700)  # strong preference to stay under 600-700
+        result = min(result, 700)
 
     return result
 
@@ -512,15 +507,12 @@ def split_message_for_discord(text: str, max_ch: int = 1900):
     return chunks
 
 def clean_suno_url(url: str) -> str:
-    """Return the cleanest possible Suno song link without embedding clutter."""
     if not url:
         return ""
     url = url.replace("/embed/", "/song/")
     return url.split("?")[0].strip()
 
-# --- ADD THIS NEW LIVE WEB SEARCH HELPER HERE ---
 async def fetch_live_web_context(query: str) -> str:
-    """Fetch quick, lightweight live web snippets (Bitcoin, weather, news) at zero API token cost."""
     def _search():
         try:
             clean = re.sub(r"^(what is|price of|how much is|check|search|get|tell me)\s*", "", query or "", flags=re.I).strip()
@@ -540,7 +532,6 @@ async def fetch_live_web_context(query: str) -> str:
             print(f"web search note: {e}")
         return ""
     return await asyncio.to_thread(_search)
-
 
 # ============================================================
 # 7. INDEPENDENT MEDIA SYSTEM
@@ -583,7 +574,6 @@ async def fetch_clean_tenor_gif(query):
             })
             html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
 
-            # Better extraction – prefer full /view/ links
             paths = re.findall(r'href="(/view/[^"]+-gif-\d+)"', html)
             if not paths:
                 paths = re.findall(r'href="(/view/[^"]+)"', html)
@@ -652,7 +642,6 @@ async def fetch_guild_sticker(channel):
 async def choose_media(prompt_text, priority_tier, channel):
     text = (prompt_text or "").lower()
 
-    # Soft reduction only on clear biographical Priority-1 questions
     if priority_tier == 1 and any(k in text for k in (
         "life", "2012", "2013", "2014", "2015", "2016", "2017", "history", "outline",
         "when", "born", "jail", "vietnam", "bio", "timeline", "treacher",
@@ -677,7 +666,6 @@ async def choose_media(prompt_text, priority_tier, channel):
     elif any(k in text for k in ("draw", "sketch", "paint", "art", "picture")):
         weights = [0.08, 0.08, 0.05, 0.70, 0.09]
 
-    # Try up to 3 times to get *something* valid
     for _ in range(3):
         chosen = random.choices(options, weights=weights, k=1)[0]
         url, file_attachment, sticker = "", None, None
@@ -707,7 +695,6 @@ async def choose_media(prompt_text, priority_tier, channel):
             print(f"media attempt failed ({chosen}): {e}")
             continue
 
-    # Absolute last resort – force a safe Tenor reaction
     try:
         fallback = await fetch_clean_tenor_gif("reaction funny")
         if fallback:
@@ -716,7 +703,6 @@ async def choose_media(prompt_text, priority_tier, channel):
         pass
 
     return "", None, None
-
 
 async def send_payload(channel, text, reference, member, file_attachment, sticker, media_url=None):
     chunks = split_message_for_discord(text or "")
@@ -729,8 +715,6 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
             media_url = f"{media_url}\n{media_url.replace('/embed/', '/song/')}"
         
         if "tenor.com/view/" in media_url:
-            # For Tenor GIFs, append the URL cleanly so Discord auto-embeds it 
-            # without cluttering message text if desired, or keep it as a clean standalone line
             if chunks:
                 chunks[-1] = f"{chunks[-1]}\n{media_url}"
             else:
@@ -766,6 +750,7 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
                         await channel.send(chunk or "…")
                 except Exception as e2:
                     print(f"final send fallback also failed: {e2}")
+
 # ============================================================
 # 8. CORE GENERATION ENGINE
 # ============================================================
@@ -801,7 +786,6 @@ async def generate_and_send(
         "shelton", "forest grove", "trailer", "oatmeal", "treacher"
     ))
 
-    # Detect live real-time queries (Bitcoin, crypto, price, weather, news, etc.)
     needs_live_search = any(k in text_lower for k in (
         "bitcoin", "btc", "crypto", "price", "stock", "weather", "news",
         "who won", "score", "current", "today", "cost of"
@@ -948,76 +932,23 @@ async def on_message(message):
         )
         return
 
-    # ---------- Priority 4: Live Chat Reaction (Genie) ----------
-    # Strictly locked until P2 historical backlog sweep is 100% complete
-    if not p2_complete:
-        return
-
+    # ---------- Priority 4: Live Chat Reaction Government ----------
     now = time.time()
     usage = get_token_usage_ratio()
     metrics = get_trajectory_metrics()
 
-    # Hard safety limits
-    if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.92:
+    if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.94:
         return
 
-    # Unified Goldilocks Cooldown & Government
-    base_cooldown = 15.0 + (usage * 50.0) + (metrics["titanic"] * 70.0)
-    if (now - last_genie_timestamp) < base_cooldown:
-        return
-
-    react_chance = max(0.015, 0.16 * (1.0 - usage)**1.5)
-    if random.random() > react_chance:
-        return
-
-    last_genie_timestamp = now
-    clean = re.sub(r"<@!?\d+>", "", message.content).strip()
-    if len(clean) < 3:
-        return
-
-    prompt = random.choice([
-        f"Someone said: '{clean[:140]}'. React with one punchy word or short phrase.",
-        f"Live chat thought on: '{clean[:140]}'. Drop a casual Joey reaction.",
-        f"Quick freestyle reaction to: '{clean[:100]}'",
-    ])
-    
-    ref = message if random.random() < 0.60 else None
-    await generate_and_send(
-        message.channel,
-        prompt,
-        reference_message=ref,
-        priority_tier=4,
-        author_id=message.author.id,
-    )
-
-
-    # ---------- Priority 4 – Live Chat Reaction Government ----------
-    # Can run even while Priority 2 is still working (with higher tax)
-    now = time.time()
-    usage = get_token_usage_ratio()
-    metrics = get_trajectory_metrics()
-
-    # Hard safety
-    if time.monotonic() < DAILY_EXHAUSTED_UNTIL:
-        return
-    if time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
-        return
-    if usage > 0.94:
-        return
-
-    # Adaptive cooldown – very short when budget is healthy, long when under pressure
     base_cooldown = 8.0 + (usage * 55.0) + (metrics["titanic"] * 90.0)
-    # Extra penalty if we just had a burst
     if metrics["W5"] > 1800:
         base_cooldown *= 1.8
 
     if (now - last_genie_timestamp) < base_cooldown:
         return
 
-    # Probability of reacting – high when healthy, low when pressured
-    # Goldilocks curve
     react_chance = max(0.015, 0.19 * (1.0 - usage)**1.6)
-    if metrics["alpha"] > 0.004:          # sudden acceleration → be more cautious
+    if metrics["alpha"] > 0.004:
         react_chance *= 0.55
 
     if random.random() > react_chance:
@@ -1029,14 +960,12 @@ async def on_message(message):
     if len(clean) < 2:
         return
 
-    # Prefer short, punchy reactions
     prompt = random.choice([
         f"Someone just said: '{clean[:180]}'. Give a very short Joey reaction (under 10 words preferred).",
         f"Live chat: '{clean[:180]}'. React as Joey in one short phrase or word.",
         f"Quick freestyle reaction to: '{clean[:120]}'",
     ])
 
-    # 70% of the time reply to the message, 30% just post in the channel
     ref = message if random.random() < 0.70 else None
 
     await generate_and_send(
@@ -1046,28 +975,6 @@ async def on_message(message):
         priority_tier=4,
         author_id=message.author.id,
     )
-        return
-
-    # Priority 4 (Genie) – locked until P2 is complete
-    if not p2_complete:
-        return
-
-    now = time.time()
-    usage = get_token_usage_ratio()
-    if time.monotonic() < DAILY_EXHAUSTED_UNTIL or usage > 0.92:
-        return
-
-    genie_cooldown = 22 + (usage * 45)
-    if (now - last_genie_timestamp) > genie_cooldown and random.random() < max(0.02, 0.10 * (1.0 - usage**1.5)):
-        last_genie_timestamp = now
-        clean = re.sub(r"<@!?\d+>", "", message.content).strip()
-        prompt = random.choice([
-            f"Someone said: '{clean}'. React with one punchy word or short phrase.",
-            f"Someone said: '{clean}'. Drop a casual Joey reaction.",
-            f"Someone said: '{clean}'. Give a quick freestyle thought.",
-        ])
-        ref = message if random.random() < 0.35 else None
-        await generate_and_send(message.channel, prompt, reference_message=ref, priority_tier=4, author_id=message.author.id)
 
 async def next_historical_message(channel):
     cursor = channel_cursors.get(channel.id, 0)
@@ -1128,10 +1035,7 @@ async def background_engagement_loop():
                 await asyncio.sleep(sleep_time)
                 continue
 
-            # ========================================================
             # STEP 1: PRIORITY 2 (Historical Backlog Sweep)
-            # MUST RUN UNTIL COMPLETION BEFORE P3 & P4 ARE UNLOCKED
-            # ========================================================
             oldest = None
             if not p2_complete:
                 for guild in list(bot.guilds):
@@ -1153,12 +1057,8 @@ async def background_engagement_loop():
                 save_state()
                 print("[P2] COMPLETE — Backlog fully cleared. Unlocking Priority 3 & Priority 4.")
 
-            # ========================================================
             # STEP 2: PRIORITY 3 & 4 (Unlocked ONLY after P2)
-            # Priority 3: Alphabetical member sorting, exactly one mention per message.
-            # ========================================================
             if p2_complete and usage < 0.88:
-                # Priority 4: Genie reverse sweep
                 if random.random() < max(0.03, 0.24 * (1.0 - usage)):
                     for guild in list(bot.guilds):
                         active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
@@ -1172,7 +1072,6 @@ async def background_engagement_loop():
                                 await asyncio.sleep(calculate_dynamic_post_delay(4))
                                 break
 
-                # Priority 3: Alphabetical single-mention thought stream
                 if random.random() < max(0.03, 0.13 * (1.0 - usage)):
                     for guild in list(bot.guilds):
                         members = sorted(
