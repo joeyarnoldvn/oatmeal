@@ -1149,7 +1149,7 @@ async def background_engagement_loop():
                 for guild in list(bot.guilds):
                     channels = [c for c in guild.text_channels
                                 if c.permissions_for(guild.me).send_messages
-                                and c.permissions_for(guild.me].read_message_history] # keeping syntax clean
+                                and c.permissions_for(guild.me).read_message_history] # keeping syntax clean
                     for channel in channels:
                         msg = await next_historical_message(channel)
                         if msg and (oldest is None or msg.id < oldest.id):
