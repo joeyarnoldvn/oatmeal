@@ -1080,28 +1080,34 @@ async def background_engagement_loop():
             await asyncio.sleep(30)
 
 async def priority_4_ambient_loop():
-    """Track 3: Independent Priority 4 Genie Train running in parallel at its own rate."""
+    """Track 3: Independent Priority 4 Genie Train with proportional token availability delays."""
     global last_genie_timestamp
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
-            await asyncio.sleep(12)
-            usage = get_token_usage_ratio()
+            # Base tick rate
+            await asyncio.sleep(15.0)
             
-            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.94:
-                continue
-
-            # Dynamic train speed (cooldown) based on differential tax and pressure
             metrics = get_trajectory_metrics()
-            base_cooldown = 15.0 + (usage * 55.0) + (metrics["titanic"] * 90.0)
-            if (time.time() - last_genie_timestamp) < base_cooldown:
+            usage = metrics["usage"]
+            titanic = metrics["titanic"]
+            
+            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
                 continue
 
-            react_chance = max(0.015, 0.19 * (1.0 - usage)**1.6)
+            # Proportional delay scaling: As token availability decreases (usage increases), 
+            # the cooldown stretches dynamically from seconds to minutes or hours.
+            availability_factor = max(0.05, 1.0 - usage)
+            dynamic_delay = (25.0 / availability_factor) + (titanic * 300.0)
+            
+            if (time.time() - last_genie_timestamp) < dynamic_delay:
+                continue
+
+            # Stricter reaction chance during high token scarcity
+            react_chance = max(0.005, 0.15 * (availability_factor ** 2.0))
             if random.random() > react_chance:
                 continue
 
-            # Find an active channel to drop an ambient reaction
             for guild in list(bot.guilds):
                 active = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if active:
@@ -1110,12 +1116,11 @@ async def priority_4_ambient_loop():
                     if rev:
                         last_genie_timestamp = time.time()
                         clean = re.sub(r"<@!?\d+>", "", rev.content or "").strip()
-                        prompt = f"Live chat: '{clean[:140]}'. React as Joey in one short phrase or word."
+                        prompt = f"Live chat backlog: '{clean[:140]}'. React as Joey in one short phrase."
                         await generate_and_send(ch, prompt, reference_message=rev, priority_tier=4, author_id=rev.author.id)
                         break
         except Exception as e:
             print(f"priority 4 track error: {e}")
-            await asyncio.sleep(30)
-
+            await asyncio.sleep(60)
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
