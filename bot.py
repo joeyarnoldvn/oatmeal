@@ -96,23 +96,57 @@ def load_state():
 def save_state():
     def _write():
         try:
-            dir_name = os.path.dirname(STATE_PATH)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
+            # Ensure the directory exists
+            dir_name = os.path.dirname(STATE_PATH) or "/tmp"
+            os.makedirs(dir_name, exist_ok=True)
+
             data = {
                 "replied": list(replied_message_ids)[-50000:],
                 "cursors": {str(k): v for k, v in channel_cursors.items()},
                 "p2_done_members": list(priority2_replied_member_ids),
                 "p2_complete": p2_complete,
             }
-            tmp_path = STATE_PATH + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, STATE_PATH)
+
+            # Create a unique temporary file in the same directory
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(
+                prefix="oatmeal_state_",
+                suffix=".json.tmp",
+                dir=dir_name
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+
+                # Atomic replace
+                os.replace(tmp_path, STATE_PATH)
+            except Exception:
+                # Clean up temp file if something went wrong
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+                raise
+
         except Exception as e:
             print(f"[STATE] Save failed: {e}")
+            # Fallback: try a simple non-atomic write so the bot keeps working
+            try:
+                with open(STATE_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "replied": list(replied_message_ids)[-50000:],
+                        "cursors": {str(k): v for k, v in channel_cursors.items()},
+                        "p2_done_members": list(priority2_replied_member_ids),
+                        "p2_complete": p2_complete,
+                    }, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                print("[STATE] Fallback non-atomic write succeeded")
+            except Exception as e2:
+                print(f"[STATE] Fallback also failed: {e2}")
+
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
@@ -194,64 +228,75 @@ def get_trajectory_metrics():
         cutoff = now - WINDOW_SECONDS[w]
         return sum(t for ts, t in token_windows[w] if ts >= cutoff)
 
-    W5 = window_sum(5)
+    W5  = window_sum(5)
     W15 = window_sum(15)
-    rho5 = W5 / 300.0
+    W60 = window_sum(60)
+
+    rho5  = W5  / 300.0
     rho15 = W15 / 900.0
-    alpha = (rho5 - rho15) / 300.0
+    alpha = (rho5 - rho15) / 300.0          # acceleration
 
     u_tpm = max(0.0, min(1.0, 1.0 - (GROQ_REMAINING_TPM / 8000.0)))
     u_rpd = max(0.0, min(1.0, 1.0 - (GROQ_REMAINING_RPD / 1000.0)))
     u_tpd = max(0.0, min(1.0, local_daily_tokens / 200000.0))
 
-    usage = max(u_tpm * 0.35, u_rpd * 0.25, u_tpd * 0.85)
+    # Daily is the strongest signal, hourly (TPM) is the speed bump
+    usage = max(u_tpm * 0.40, u_rpd * 0.20, u_tpd * 0.85)
 
     titanic = 0.0
-    if usage > 0.78:
-        titanic = max(0.0, min(1.0, ((usage - 0.78) / 0.22) ** 2.15))
+    if usage > 0.72:
+        titanic = max(0.0, min(1.0, ((usage - 0.72) / 0.28) ** 2.25))
 
     return {
         "usage": usage,
         "alpha": alpha,
         "titanic": titanic,
-        "W5": W5,
-        "W15": W15,
+        "W5": W5, "W15": W15, "W60": W60,
         "remaining_tpm": GROQ_REMAINING_TPM,
         "remaining_rpd": GROQ_REMAINING_RPD,
         "local_daily": local_daily_tokens,
     }
 
-def get_token_usage_ratio():
-    return get_trajectory_metrics()["usage"]
-
 def compute_tax_multipliers():
     m = get_trajectory_metrics()
-    usage = m["usage"]
-    alpha = max(0.0, m["alpha"])
+    usage   = m["usage"]
+    alpha   = max(0.0, m["alpha"])
     titanic = m["titanic"]
-    pressure = (usage ** 1.48) + (3.25 * alpha)
 
-    # Differential taxation hierarchy: P1 lowest, P4 medium, P2 & P3 highest
-    d1 = 1.0 + pressure * (0.18 + 2.85 * titanic)
-    d4 = 1.0 + pressure * (0.38 + 2.35 * titanic)
-    d3 = 1.0 + pressure * (1.55 + 0.95 * (1.0 - titanic))
-    d2 = 1.0 + pressure * (1.70 + 1.05 * (1.0 - titanic))
+    pressure = (usage ** 1.55) + (2.8 * alpha)
+
+    # Hierarchy of grace: P1 > P4 > P3 ≈ P2
+    d1 = 1.0 + pressure * (0.14 + 2.60 * titanic)   # lightest tax
+    d4 = 1.0 + pressure * (0.32 + 2.40 * titanic)   # second lightest
+    d3 = 1.0 + pressure * (1.45 + 1.10 * (1.0 - titanic))
+    d2 = 1.0 + pressure * (1.65 + 1.20 * (1.0 - titanic))  # heaviest tax
+
     return {1: d1, 2: d2, 3: d3, 4: d4}
 
 def calculate_dynamic_max_tokens(priority_tier: int) -> int:
     taxes = compute_tax_multipliers()
-    tax = taxes.get(priority_tier, 1.0)
+    tax   = taxes.get(priority_tier, 1.0)
     usage = get_trajectory_metrics()["usage"]
 
-    base = {1: 900, 2: 280, 3: 180, 4: 120}.get(priority_tier, 120)
-    compression = max(0.10, (1.0 - usage) ** 1.40)
-    allowed = int((base * compression) / max(tax, 0.65))
+    # Soft targets
+    base = {
+        1: 850,   # Priority 1 can go higher when needed
+        4: 480,   # Prefer under ~600
+        2: 220,
+        3: 160,
+    }.get(priority_tier, 180)
 
-    hard_ceil = {1: 6000, 2: 1800, 3: 1200, 4: 800}.get(priority_tier, 800)
-    result = max(24, min(allowed, hard_ceil))
+    compression = max(0.12, (1.0 - usage) ** 1.35)
+    allowed = int((base * compression) / max(tax, 0.70))
+
+    hard_ceil = {1: 5500, 4: 900, 2: 1400, 3: 900}.get(priority_tier, 900)
+    result = max(20, min(allowed, hard_ceil))
 
     if priority_tier == 1:
-        result = max(result, 180)
+        result = max(result, 160)   # never starve Priority 1
+    if priority_tier == 4:
+        result = min(result, 700)  # strong preference to stay under 600-700
+
     return result
 
 def calculate_dynamic_post_delay(priority_tier: int) -> float:
@@ -466,6 +511,37 @@ def split_message_for_discord(text: str, max_ch: int = 1900):
         text = text[split_at:].strip()
     return chunks
 
+def clean_suno_url(url: str) -> str:
+    """Return the cleanest possible Suno song link without embedding clutter."""
+    if not url:
+        return ""
+    url = url.replace("/embed/", "/song/")
+    return url.split("?")[0].strip()
+
+# --- ADD THIS NEW LIVE WEB SEARCH HELPER HERE ---
+async def fetch_live_web_context(query: str) -> str:
+    """Fetch quick, lightweight live web snippets (Bitcoin, weather, news) at zero API token cost."""
+    def _search():
+        try:
+            clean = re.sub(r"^(what is|price of|how much is|check|search|get|tell me)\s*", "", query or "", flags=re.I).strip()
+            q = urllib.parse.quote(clean or query)
+            url = f"https://html.duckduckgo.com/html/?q={q}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(req, timeout=3.5).read().decode("utf-8", "ignore")
+            snippets = re.findall(r'<a class="result__snippet[^">]*>(.*?)</a>', html, re.DOTALL)
+            clean_snips = []
+            for s in snippets[:2]:
+                text = re.sub(r'<[^>]+>', '', s).strip()
+                if text:
+                    clean_snips.append(text)
+            if clean_snips:
+                return " ".join(clean_snips)[:350]
+        except Exception as e:
+            print(f"web search note: {e}")
+        return ""
+    return await asyncio.to_thread(_search)
+
+
 # ============================================================
 # 7. INDEPENDENT MEDIA SYSTEM
 # ============================================================
@@ -495,24 +571,30 @@ async def fetch_clean_tenor_gif(query):
     def _search():
         try:
             clean = re.sub(r"^(post|find|gif|meme|pic|image|show me|give me)\s*", "", query or "", flags=re.I).strip()
-            boosters = ["funny", "dance", "reaction", "fail", "win", "confused", "oatmeal", "basketball", "90s", "shocked", "laugh"]
-            if not clean or len(clean) < 4:
+            boosters = ["funny", "dance", "reaction", "fail", "win", "confused", "oatmeal", "basketball", "90s", "shocked", "laugh", "yes", "no", "wow"]
+            if not clean or len(clean) < 3:
                 clean = random.choice(boosters)
-            elif random.random() < 0.35:
+            elif random.random() < 0.40:
                 clean = f"{clean} {random.choice(boosters)}"
+
             url = f"https://tenor.com/search/{urllib.parse.quote(clean)}-gifs"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-            paths = re.findall(r'href="(/view/[^"]+)"', html)
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            })
+            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+
+            # Better extraction – prefer full /view/ links
+            paths = re.findall(r'href="(/view/[^"]+-gif-\d+)"', html)
+            if not paths:
+                paths = re.findall(r'href="(/view/[^"]+)"', html)
+
             if not paths:
                 return ""
+
             pool = [p for p in paths if f"https://tenor.com{p}" not in recent_gif_urls] or paths
             chosen_path = random.choice(pool)
-            id_match = re.search(r'(-gif-\d+)', chosen_path)
-            if id_match:
-                end_idx = chosen_path.find(id_match.group(1)) + len(id_match.group(1))
-                chosen_path = chosen_path[:end_idx]
             chosen = "https://tenor.com" + chosen_path
+
             recent_gif_urls.append(chosen)
             if len(recent_gif_urls) > MAX_RECENT_GIFS:
                 recent_gif_urls.pop(0)
@@ -570,58 +652,94 @@ async def fetch_guild_sticker(channel):
 async def choose_media(prompt_text, priority_tier, channel):
     text = (prompt_text or "").lower()
 
+    # Soft reduction only on clear biographical Priority-1 questions
     if priority_tier == 1 and any(k in text for k in (
         "life", "2012", "2013", "2014", "2015", "2016", "2017", "history", "outline",
         "when", "born", "jail", "vietnam", "bio", "timeline", "treacher",
         "what did you", "where were you"
     )):
-        if random.random() < 0.22:
+        if random.random() < 0.18:
             return "", None, None
 
-    media_prob = {1: 0.94, 2: 1.0, 3: 1.0, 4: 1.0}.get(priority_tier, 0.95)
+    media_prob = {1: 0.93, 2: 1.0, 3: 1.0, 4: 1.0}.get(priority_tier, 0.95)
     if random.random() >= media_prob:
         return "", None, None
 
     options = ["tenor", "youtube", "suno", "image", "sticker"]
-    weights = [0.36, 0.27, 0.13, 0.14, 0.10]
+    weights = [0.40, 0.25, 0.12, 0.13, 0.10]
 
     if any(k in text for k in ("song", "music", "suno", "track")):
         weights = [0.08, 0.10, 0.65, 0.10, 0.07]
     elif any(k in text for k in ("video", "youtube", "clip")):
         weights = [0.10, 0.65, 0.08, 0.10, 0.07]
     elif any(k in text for k in ("gif", "meme", "reaction")):
-        weights = [0.72, 0.10, 0.05, 0.08, 0.05]
+        weights = [0.75, 0.08, 0.05, 0.07, 0.05]
     elif any(k in text for k in ("draw", "sketch", "paint", "art", "picture")):
         weights = [0.08, 0.08, 0.05, 0.70, 0.09]
 
-    chosen = random.choices(options, weights=weights, k=1)[0]
-    url, file_attachment, sticker = "", None, None
+    # Try up to 3 times to get *something* valid
+    for _ in range(3):
+        chosen = random.choices(options, weights=weights, k=1)[0]
+        url, file_attachment, sticker = "", None, None
 
-    if chosen == "tenor":
-        url = await fetch_clean_tenor_gif(prompt_text)
-    elif chosen == "youtube":
-        url = await fetch_direct_youtube_video(prompt_text)
-    elif chosen == "suno":
-        url = await fetch_suno_track_link(prompt_text)
-    elif chosen == "image":
-        file_attachment = await fetch_image_file_bytes(prompt_text)
-    elif chosen == "sticker":
-        sticker = await fetch_guild_sticker(channel)
+        try:
+            if chosen == "tenor":
+                url = await fetch_clean_tenor_gif(prompt_text)
+                if url and "tenor.com/view/" in url:
+                    return url, None, None
+            elif chosen == "youtube":
+                url = await fetch_direct_youtube_video(prompt_text)
+                if url and ("youtube.com/watch" in url or "youtu.be/" in url):
+                    return url, None, None
+            elif chosen == "suno":
+                url = await fetch_suno_track_link(prompt_text)
+                if url and "suno.com" in url:
+                    return url, None, None
+            elif chosen == "image":
+                file_attachment = await fetch_image_file_bytes(prompt_text)
+                if file_attachment is not None:
+                    return "", file_attachment, None
+            elif chosen == "sticker":
+                sticker = await fetch_guild_sticker(channel)
+                if sticker is not None:
+                    return "", None, sticker
+        except Exception as e:
+            print(f"media attempt failed ({chosen}): {e}")
+            continue
 
-    return url, file_attachment, sticker
+    # Absolute last resort – force a safe Tenor reaction
+    try:
+        fallback = await fetch_clean_tenor_gif("reaction funny")
+        if fallback:
+            return fallback, None, None
+    except Exception:
+        pass
+
+    return "", None, None
+
 
 async def send_payload(channel, text, reference, member, file_attachment, sticker, media_url=None):
     chunks = split_message_for_discord(text or "")
+
     if not chunks and file_attachment is None and sticker is None and not media_url:
-        chunks = [random.choice(BANTER_FALLBACK_RESPONSES)]
+        chunks = ["Exploring the infinite streams of oatmeal data."]
 
     if media_url:
         if "suno.com/embed/" in media_url:
             media_url = f"{media_url}\n{media_url.replace('/embed/', '/song/')}"
-        if chunks:
-            chunks[-1] = f"{chunks[-1]}\n\n{media_url}"
+        
+        if "tenor.com/view/" in media_url:
+            # For Tenor GIFs, append the URL cleanly so Discord auto-embeds it 
+            # without cluttering message text if desired, or keep it as a clean standalone line
+            if chunks:
+                chunks[-1] = f"{chunks[-1]}\n{media_url}"
+            else:
+                chunks = [media_url]
         else:
-            chunks = [media_url]
+            if chunks:
+                chunks[-1] = f"{chunks[-1]}\n\n{media_url}"
+            else:
+                chunks = [media_url]
 
     for idx, chunk in enumerate(chunks or [""]):
         kwargs = {}
@@ -629,17 +747,25 @@ async def send_payload(channel, text, reference, member, file_attachment, sticke
             kwargs["file"] = file_attachment
         if idx == 0 and sticker is not None:
             kwargs["stickers"] = [sticker]
+
         try:
             if idx == 0 and reference is not None:
                 await reference.reply(chunk or None, mention_author=True, **kwargs)
             elif idx == 0 and member is not None:
-                # Priority 3: single mention only – never repeat name in text body
-                await channel.send(f"{member.mention} {chunk or ''}".strip(), **kwargs)
+                content = f"{member.mention} {chunk or ''}".strip()
+                await channel.send(content, **kwargs)
             elif chunk or kwargs:
                 await channel.send(chunk or None, **kwargs)
         except Exception as e:
             print(f"send error: {e}")
-
+            if kwargs:
+                try:
+                    if reference is not None:
+                        await reference.reply(chunk or "…", mention_author=True)
+                    else:
+                        await channel.send(chunk or "…")
+                except Exception as e2:
+                    print(f"final send fallback also failed: {e2}")
 # ============================================================
 # 8. CORE GENERATION ENGINE
 # ============================================================
@@ -668,24 +794,36 @@ async def generate_and_send(
     media_url, file_attachment, sticker = await choose_media(prompt_text, priority_tier, destination_channel)
 
     text_lower = (prompt_text or "").lower()
+    
     needs_full_history = any(k in text_lower for k in (
         "when", "where", "history", "timeline", "born", "outline", "bio", "life",
         "2012", "2013", "2014", "2015", "2016", "2017", "vietnam", "jail", "attic",
-        "shelton", "forest grove", "trailer", "oatmeal", "treacher",
-        "what did you", "where were you"
+        "shelton", "forest grove", "trailer", "oatmeal", "treacher"
     ))
 
+    # Detect live real-time queries (Bitcoin, crypto, price, weather, news, etc.)
+    needs_live_search = any(k in text_lower for k in (
+        "bitcoin", "btc", "crypto", "price", "stock", "weather", "news",
+        "who won", "score", "current", "today", "cost of"
+    ))
+
+    live_context = ""
+    if priority_tier == 1 and needs_live_search:
+        live_context = await fetch_live_web_context(prompt_text)
+
     if priority_tier == 1:
-        outline_block = FULL_ANNUAL_OUTLINE if needs_full_history else SHORT_IDENTITY
+        history_block = FULL_ANNUAL_OUTLINE if needs_full_history else SHORT_IDENTITY
+        live_block = f"\nLIVE WEB SEARCH CONTEXT: {live_context}\n" if live_context else ""
+        
         system_prompt = (
             f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
             f"CURRENT MOOD:\n{MOOD_DESCRIPTIONS[mood_id]}\n\n"
-            f"IDENTITY / OUTLINE:\n{outline_block}\n\n"
-            f"SLOGANS:\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
+            f"OUTLINE:\n{history_block}\n"
+            f"{live_block}\n"
+            f"SLOGANS (USE SPARINGLY, NEVER AS A COP-OUT FOR FACTS):\n{SLOGANS_AND_MOTTOES}\n\n{SOVEREIGN}\n\n"
             f"DIRECTIVE: Priority 1 – Direct conversation. "
-            f"Prefer short answers (under ten words) unless the question is clearly important, historical, factual, or about your real life. "
-            f"Answer accurately using the outline. Never invent facts. "
-            f"Do not repeat the other person's name or tag in your reply text."
+            f"When asked a factual or real-time question (like Bitcoin price), use the live web search context provided above to answer intelligently. "
+            f"Do not cop out with slogans when given concrete facts. Stay in character as Oatmeal Joey Arnold."
         )
     else:
         system_prompt = (
@@ -783,6 +921,7 @@ async def on_message(message):
     lifetime_interacted_members.add(message.author.id)
     content_lower = message.content.lower()
 
+    # ---------- Priority 1: Direct Mentions / Replies / Names ----------
     mentioned = bot.user in message.mentions
     replied_to_bot = False
     if message.reference:
@@ -794,6 +933,7 @@ async def on_message(message):
                 replied_to_bot = ref.author == bot.user
             except Exception:
                 pass
+
     named = any(k in content_lower for k in ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall"))
 
     if mentioned or replied_to_bot or named:
@@ -806,6 +946,106 @@ async def on_message(message):
             priority_tier=1,
             author_id=message.author.id,
         )
+        return
+
+    # ---------- Priority 4: Live Chat Reaction (Genie) ----------
+    # Strictly locked until P2 historical backlog sweep is 100% complete
+    if not p2_complete:
+        return
+
+    now = time.time()
+    usage = get_token_usage_ratio()
+    metrics = get_trajectory_metrics()
+
+    # Hard safety limits
+    if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or usage > 0.92:
+        return
+
+    # Unified Goldilocks Cooldown & Government
+    base_cooldown = 15.0 + (usage * 50.0) + (metrics["titanic"] * 70.0)
+    if (now - last_genie_timestamp) < base_cooldown:
+        return
+
+    react_chance = max(0.015, 0.16 * (1.0 - usage)**1.5)
+    if random.random() > react_chance:
+        return
+
+    last_genie_timestamp = now
+    clean = re.sub(r"<@!?\d+>", "", message.content).strip()
+    if len(clean) < 3:
+        return
+
+    prompt = random.choice([
+        f"Someone said: '{clean[:140]}'. React with one punchy word or short phrase.",
+        f"Live chat thought on: '{clean[:140]}'. Drop a casual Joey reaction.",
+        f"Quick freestyle reaction to: '{clean[:100]}'",
+    ])
+    
+    ref = message if random.random() < 0.60 else None
+    await generate_and_send(
+        message.channel,
+        prompt,
+        reference_message=ref,
+        priority_tier=4,
+        author_id=message.author.id,
+    )
+
+
+    # ---------- Priority 4 – Live Chat Reaction Government ----------
+    # Can run even while Priority 2 is still working (with higher tax)
+    now = time.time()
+    usage = get_token_usage_ratio()
+    metrics = get_trajectory_metrics()
+
+    # Hard safety
+    if time.monotonic() < DAILY_EXHAUSTED_UNTIL:
+        return
+    if time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
+        return
+    if usage > 0.94:
+        return
+
+    # Adaptive cooldown – very short when budget is healthy, long when under pressure
+    base_cooldown = 8.0 + (usage * 55.0) + (metrics["titanic"] * 90.0)
+    # Extra penalty if we just had a burst
+    if metrics["W5"] > 1800:
+        base_cooldown *= 1.8
+
+    if (now - last_genie_timestamp) < base_cooldown:
+        return
+
+    # Probability of reacting – high when healthy, low when pressured
+    # Goldilocks curve
+    react_chance = max(0.015, 0.19 * (1.0 - usage)**1.6)
+    if metrics["alpha"] > 0.004:          # sudden acceleration → be more cautious
+        react_chance *= 0.55
+
+    if random.random() > react_chance:
+        return
+
+    last_genie_timestamp = now
+
+    clean = re.sub(r"<@!?\d+>", "", message.content).strip()
+    if len(clean) < 2:
+        return
+
+    # Prefer short, punchy reactions
+    prompt = random.choice([
+        f"Someone just said: '{clean[:180]}'. Give a very short Joey reaction (under 10 words preferred).",
+        f"Live chat: '{clean[:180]}'. React as Joey in one short phrase or word.",
+        f"Quick freestyle reaction to: '{clean[:120]}'",
+    ])
+
+    # 70% of the time reply to the message, 30% just post in the channel
+    ref = message if random.random() < 0.70 else None
+
+    await generate_and_send(
+        message.channel,
+        prompt,
+        reference_message=ref,
+        priority_tier=4,
+        author_id=message.author.id,
+    )
         return
 
     # Priority 4 (Genie) – locked until P2 is complete
