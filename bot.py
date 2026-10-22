@@ -782,37 +782,55 @@ async def execute_priority_8_spam_protocol():
 # ============================================================
 async def execute_priority_9_free_oatmeal_protocol():
     """
-    Runs continuously every 10 minutes (600 seconds) 24/7.
-    Posts standalone messages with ZERO TEXT and ZERO REPLIES — media only 
-    pulled from the shared wild generator.
+    Priority 9 Random Interval Free Oatmeal Protocol:
+    - Waits for a random duration between 0 seconds and 10 minutes (600 seconds) before each trigger.
+    - Posts standalone messages with ZERO TEXT and ZERO REPLIES — pure random media only 
+      pulled from the shared wild generator (0 Tokens).
+    - Never mentions, tags, or includes member names.
     """
     await bot.wait_until_ready()
-    print("[PRIORITY 9] Free Oatmeal Protocol Active (Wild Unified Media / 0 Tokens)...")
+    print("[PRIORITY 9] Free Oatmeal Protocol Active (Random 0 to 10 Mins / Infinite Wild Media / 0 Text / 0 Tokens)...")
 
     while not bot.is_closed():
         try:
-            for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                if not channels:
-                    continue
+            # Wait a random interval between 0 seconds and 10 minutes (600 seconds)
+            wait_time = random.uniform(0.0, 600.0)
+            await asyncio.sleep(wait_time)
 
-                ch = random.choice(channels)
-                media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
+            if bot.is_closed():
+                break
 
-                kwargs = {}
-                if file_attachment is not None:
-                    kwargs["file"] = file_attachment
-                if sticker_obj is not None:
-                    kwargs["stickers"] = [sticker_obj]
+            guilds = list(bot.guilds)
+            if not guilds:
+                await asyncio.sleep(60)
+                continue
+            guild = random.choice(guilds)
 
-                payload = media_url if media_url else ""
+            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+            if not channels:
+                continue
+
+            ch = random.choice(channels)
+            
+            # Pull random media from the infinite pool
+            media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
+
+            kwargs = {}
+            if file_attachment is not None:
+                kwargs["file"] = file_attachment
+            if sticker_obj is not None:
+                kwargs["stickers"] = [sticker_obj]
+
+            # Strictly 0 text, 0 member names, 0 tags, standalone message post
+            payload = media_url if media_url else ""
+            
+            if payload or file_attachment or sticker_obj:
                 await ch.send(content=payload, **kwargs)
-                print(f"[PRIORITY 9] Wild unified media posted in #{ch.name} (0 Tokens)")
+                print(f"[PRIORITY 9] Infinite pool media posted in #{ch.name} (0 Text, 0 Tokens)")
 
         except Exception as e:
             print(f"[PRIORITY 9 EXCEPTION]: {e}")
-
-        await asyncio.sleep(600.0)
+            await asyncio.sleep(60)
 # ============================================================
 # 9. CORE PROCESSOR ENGINE WITH REPLENISHMENT & TAXATION
 # ============================================================
@@ -822,7 +840,7 @@ def extract_relevant_timeline_snippet(prompt_text: str, outline_text: str) -> st
     
     # Word-to-number mapping for ages written as words
     word_numbers = {
-        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
         "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
         "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
@@ -920,12 +938,16 @@ async def process_job(job: PendingJob):
     
     live_block = f"\n[CRITICAL LIVE WEB SEARCH RESULTS]:\n{live_context}\n(Incorporate these real search findings directly into your response!)\n" if live_context else ""
 
+    # Priority 2 Rule: 5% of the time, force the response to be under 10 words
+    is_short_p2 = (job.priority_tier == 2 and random.random() < 0.05)
+    short_constraint_prompt = "\n(Constraint: Keep your response extremely brief, strictly under 10 words!)" if is_short_p2 else ""
+
     system_prompt = (
         f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
         f"MOOD:\n{PERSONA_MOODS[mood_id]}\n\n"
         f"OUTLINE:\n{history_block}\n"
         f"{live_block}\n"
-        f"SLOGANS: {random.choice(SLOGANS_AND_MOTTOES)}\n\n{SOVEREIGN}"
+        f"SLOGANS: {random.choice(SLOGANS_AND_MOTTOES)}\n\n{SOVEREIGN}{short_constraint_prompt}"
     )
 
     reply = ""
@@ -972,7 +994,8 @@ async def process_job(job: PendingJob):
     media_url = ""
     file_attachment = None
     sticker_obj = None
-    if random.random() < 0.80:
+    # Priority 2 posts random media from the pool 100% of the time
+    if job.priority_tier == 2 or random.random() < 0.80:
         media_url, file_attachment, sticker_obj = await get_wild_unified_media(
             guild=job.channel.guild if hasattr(job.channel, 'guild') else None
         )
@@ -1022,12 +1045,12 @@ async def delay_queue_worker():
 # ============================================================
 @bot.event
 async def on_ready():
-    print(f"Oatmeal AI logged in as {bot.user} with Master Synthesis V13.0 (Priority 5 Reverse Protocol Active)")
+    print(f"Oatmeal AI logged in as {bot.user} with Master Synthesis V13.0 (Priority 2 Forward Protocol Active)")
     load_state()
     bot.loop.create_task(delay_queue_worker())
-    bot.loop.create_task(hour_protocol_scheduler())
+    bot.loop.create_task(execute_priority_2_forward_loop_protocol())  # <-- Priority 2 Forward Loop Active
     bot.loop.create_task(talkback_protocol_scheduler())
-    bot.loop.create_task(execute_priority_5_reverse_loop_protocol())  # <-- Priority 5 Loop Active
+    bot.loop.create_task(execute_priority_5_reverse_loop_protocol())
     bot.loop.create_task(execute_priority_8_spam_protocol())
     bot.loop.create_task(execute_priority_9_free_oatmeal_protocol())
 
@@ -1228,40 +1251,56 @@ async def next_historical_message(channel):
     save_state()
     return target
 
-async def hour_protocol_scheduler():
+async def execute_priority_2_forward_loop_protocol():
+    """
+    Priority 2 Forward Chronological Never-Ending Loop Protocol:
+    - Waits for a random duration between 0 seconds and 24 hours (86400 seconds).
+    - Crawls forward (chronological) through channel history, replying to each unique member once.
+    - Triggers 100% media generation and short text (5% chance under 10 words).
+    """
     await bot.wait_until_ready()
+    print("[PRIORITY 2] Forward Chronological Endless Loop Protocol Active (0 to 24 Hours)...")
+
     while not bot.is_closed():
         try:
-            if get_trajectory_metrics()["usage"] < 0.80:
-                for guild in list(bot.guilds):
-                    channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                    if channels:
-                        ch = random.choice(channels)
-                        msg = await next_historical_message(ch)
-                        if msg:
-                            job = PendingJob(
-                                priority_tier=2,
-                                timestamp=time.time(),
-                                channel=ch,
-                                prompt_text=msg.content or "Thoughts?",
-                                reference_message=msg,
-                                author_id=msg.author.id
-                            )
-                            await delay_queue.put(job)
+            # Wait a random interval between 0 seconds and 24 hours (86400 seconds)
+            wait_time = random.uniform(0.0, 86400.0)
+            print(f"[PRIORITY 2] Waiting {wait_time / 3600:.2f} hours ({wait_time:.1f}s) until next forward loop trigger.")
+            await asyncio.sleep(wait_time)
 
-                        members = [m for m in guild.members if not m.bot]
-                        if members:
-                            job = PendingJob(
-                                priority_tier=3,
-                                timestamp=time.time(),
-                                channel=ch,
-                                prompt_text="Drop a short proactive thought.",
-                                target_member=random.choice(members)
-                            )
-                            await delay_queue.put(job)
-            await asyncio.sleep(900.0)
+            if bot.is_closed():
+                break
+
+            guilds = list(bot.guilds)
+            if not guilds:
+                await asyncio.sleep(60)
+                continue
+            guild = random.choice(guilds)
+
+            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+            if not channels:
+                continue
+            ch = random.choice(channels)
+
+            # Get the next historical message in forward chronological order, skipping already-replied members
+            target_msg = await next_historical_message(ch)
+            if not target_msg:
+                await asyncio.sleep(60)
+                continue
+
+            # Enqueue a Priority 2 job into the delay queue
+            job = PendingJob(
+                priority_tier=2,
+                timestamp=time.time(),
+                channel=ch,
+                prompt_text=target_msg.content or "Thoughts?",
+                reference_message=target_msg,
+                author_id=target_msg.author.id
+            )
+            await delay_queue.put(job)
+
         except Exception as e:
-            print(f"[HOUR SCHEDULER EXCEPTION]: {e}")
+            print(f"[PRIORITY 2 EXCEPTION]: {e}")
             await asyncio.sleep(60)
 
 async def talkback_protocol_scheduler():
