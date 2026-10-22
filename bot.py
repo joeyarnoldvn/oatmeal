@@ -432,6 +432,123 @@ BANTER_FALLBACK_RESPONSES = [
 ]
 
 # ============================================================
+# UNIFIED INFINITE VARIETY MEDIA & SUBJECT ENGINE (SHARED ACROSS PRIORITIES)
+# ============================================================
+RECENT_MEDIA_CACHE = collections.deque(maxlen=500)
+
+INFINITE_QUERY_SUBJECTS = [
+    "oatmeal", "joey arnold", "trailer 163", "forest grove", "oregon", "star wars", "jedi", "sith", 
+    "power rangers", "teenage mutant ninja turtles", "sega sonic", "retro 1990s", "vhs tape", "rabbit", 
+    "basketball", "karate", "wrestling", "arnold attic", "cyberpunk", "matrix", "ghetto mobile home", 
+    "camp counselor", "vietnam saigon", "shelton washington", "book shed", "chicken house", "hive blog",
+    "astronaut", "shark on the moon", "dinosaurs", "arcade cabinet", "skateboard", "dj turntable",
+    "mystery van", "wizard", "knight", "alien invasion", "time traveler", "robot uprising", "coffee mug"
+]
+
+INFINITE_QUERY_MODIFIERS = [
+    "epic fail", "funny moments", "dancing wildly", "glitch edit", "retro aesthetic", "hyperlapse",
+    "surreal meme", "action sequence", "speedrun", "chaos edition", "unseen footage", "lost archive",
+    "deep fried", "lofi chill", "ultimate victory", "plot twist", "behind the scenes", "directors cut"
+]
+
+async def fetch_infinite_tenor_gif() -> discord.File | None:
+    def _download():
+        try:
+            subj = random.choice(INFINITE_QUERY_SUBJECTS)
+            mod = random.choice(INFINITE_QUERY_MODIFIERS)
+            query = f"{subj} {mod} {random.randint(1000, 999999)}"
+            
+            search_url = f"https://tenor.com/search/{urllib.parse.quote(query)}-gifs"
+            req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            
+            gif_urls = re.findall(r'(https://media[0-9]*\.tenor\.com/[^"\s]+\.gif)', html)
+            if not gif_urls:
+                gif_urls = re.findall(r'(https://[^"\s]+\.gif)', html)
+                
+            if gif_urls:
+                fresh_urls = [u for u in gif_urls if u not in RECENT_MEDIA_CACHE]
+                if not fresh_urls:
+                    fresh_urls = gif_urls
+                chosen_url = random.choice(fresh_urls[:15])
+                RECENT_MEDIA_CACHE.append(chosen_url)
+
+                img_req = urllib.request.Request(chosen_url, headers={"User-Agent": "Mozilla/5.0"})
+                data = urllib.request.urlopen(img_req, timeout=7).read()
+                return discord.File(io.BytesIO(data), filename="oatmeal_infinite.gif")
+        except Exception:
+            pass
+        return None
+    return await asyncio.to_thread(_download)
+
+async def fetch_infinite_youtube_video() -> str:
+    def _search():
+        try:
+            subj = random.choice(INFINITE_QUERY_SUBJECTS)
+            mod = random.choice(INFINITE_QUERY_MODIFIERS)
+            query = f"{subj} {mod} {random.randint(100, 999999)}"
+            
+            url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            
+            ids = re.findall(r"watch\?v=([\w-]{11})", html)
+            if ids:
+                fresh_ids = [vid for vid in ids if vid not in RECENT_MEDIA_CACHE]
+                if not fresh_ids:
+                    fresh_ids = ids
+                chosen_id = random.choice(list(set(fresh_ids)))
+                RECENT_MEDIA_CACHE.append(chosen_id)
+                return f"https://www.youtube.com/watch?v={chosen_id}"
+        except Exception:
+            pass
+        return f"https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    return await asyncio.to_thread(_search)
+
+async def fetch_infinite_ai_artwork() -> discord.File | None:
+    def _download():
+        try:
+            subj = random.choice(INFINITE_QUERY_SUBJECTS)
+            mod = random.choice(INFINITE_QUERY_MODIFIERS)
+            style = random.choice(["oil painting", "cyberpunk neon", "1990s anime cel", "surrealist photography", "chalk sketch", "voxel 3d art", "retro vhs glitch"])
+            prompt = f"{subj} {mod}, {style}, highly detailed, unique seed {random.randint(1, 999999999)}"
+            
+            seed = random.randint(1, 999999999)
+            img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=768&height=768&nologo=true&seed={seed}"
+            
+            req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
+            data = urllib.request.urlopen(req, timeout=8).read()
+            return discord.File(io.BytesIO(data), filename="oatmeal_art_masterpiece.jpg")
+        except Exception:
+            return None
+    return await asyncio.to_thread(_download)
+
+async def get_unified_media(prompt_text: str = "") -> tuple[str, discord.File | None]:
+    """
+    Intelligent media selector:
+    - If prompt_text is provided and specific (Priority 1/2/7), attempts to match context or draw intelligently.
+    - Otherwise (Priority 3, 8, 9, etc.), draws from the infinite random pool with zero repetition.
+    """
+    choice = random.choice(["tenor", "youtube", "image"])
+    
+    # If prompt text has specific keywords, bias the search query towards them
+    clean_prompt = re.sub(r"^(search|look up|play|draw|post)\s*", "", prompt_text or "", flags=re.IGNORECASE).strip()
+    
+    if choice == "tenor":
+        file_obj = await fetch_infinite_tenor_gif()
+        if file_obj:
+            return "", file_obj
+        return "", await fetch_infinite_ai_artwork()
+    elif choice == "youtube":
+        url = await fetch_infinite_youtube_video()
+        return url, None
+    else:
+        file_obj = await fetch_infinite_ai_artwork()
+        if file_obj:
+            return "", file_obj
+        return await fetch_infinite_youtube_video(), None
+
+# ============================================================
 # 6. HELPERS, LLM SEARCH & COMPREHENSIVE MEDIA ENGINES
 # ============================================================
 async def evaluate_llm_search_intent(prompt_text: str) -> bool:
@@ -592,29 +709,18 @@ async def fetch_image_file_bytes(prompt):
     return await asyncio.to_thread(_download)
 
 # ============================================================
-# 7. PRIORITY 8: RAPID-FIRE ZERO-TEXT FREE MEDIA SPAM PROTOCOL
+# 7. PRIORITY 8: RAPID-FIRE ZERO-TEXT MULTI-PRIORITY MEDIA SPAM PROTOCOL
 # ============================================================
-async def fetch_random_free_media() -> tuple[str, discord.File | None]:
-    """Pulls random free media (Tenor GIF file, YouTube video link, or AI drawing) with zero tokens/requests."""
-    choice = random.choice(["tenor", "youtube", "image"])
-    if choice == "tenor":
-        file_obj = await fetch_tenor_gif_file_bytes(random.choice(["funny", "dance", "meme", "oatmeal", "retro", "rabbit"]))
-        return "", file_obj
-    elif choice == "youtube":
-        url = await fetch_direct_youtube_video(random.choice(["joeyarnoldvn", "Arnold Attic", "Oatmeal World", "Power Rangers"]))
-        return url, None
-    else:
-        prompt = random.choice(["oatmeal bowl", "retro 1990s room", "neon star wars spaceship", "cyberpunk rabbit", "green oatmeal artwork"])
-        file_obj = await fetch_image_file_bytes(prompt)
-        return "", file_obj
-
 async def execute_priority_8_spam_protocol():
     """
-    Rapid-fire spam protocol: loops through every member as fast as possible 
-    posting zero-text free media (GIFs, drawings, videos) with 0 tokens or API requests.
+    Rapid-fire spam protocol (Priority 8):
+    - Loops through every unique server member as fast as possible once per day.
+    - Combines Priority 2 (historical message context / channel scanning) and 
+      Priority 3 (proactive member pings) into a single unified zero-token engine.
+    - Posts ZERO TEXT (media only + user mention / reply), consuming 0 Groq tokens and 0 requests.
     """
     await bot.wait_until_ready()
-    print("[SPAM PROTOCOL] Priority 8 Rapid-Fire Zero-Text Media Protocol Active...")
+    print("[SPAM PROTOCOL] Priority 8 Rapid-Fire Multi-Priority Media Protocol Active...")
     
     while not bot.is_closed():
         try:
@@ -629,9 +735,10 @@ async def execute_priority_8_spam_protocol():
                     continue
                 ch = random.choice(channels)
 
+                # Filter members who haven't been messaged yet today for Priority 8
                 members = [m for m in guild.members if not m.bot and p8_daily_sent_members[guild_id_str].get(str(m.id)) != today_str]
                 if not members:
-                    # Reset daily list if all members have been hit, allowing rapid-fire continuation
+                    # Reset daily tracker to allow continuous rapid-fire rotation if all members reached
                     p8_daily_sent_members[guild_id_str] = {}
                     members = [m for m in guild.members if not m.bot]
 
@@ -645,23 +752,26 @@ async def execute_priority_8_spam_protocol():
                     p8_daily_sent_members[guild_id_str][str(target_member.id)] = today_str
                     save_state()
 
-                    # Fetch random free media (zero text, zero tokens)
-                    media_url, file_attachment = await fetch_random_free_media()
+                    # Fetch random zero-token infinite media (GIF file, AI art, or YouTube link)
+                    media_url, file_attachment = await get_unified_media()
 
                     try:
                         kwargs = {}
                         if file_attachment is not None:
                             kwargs["file"] = file_attachment
 
-                        # Rapid-fire text-free ping: mentions member, attaches ONLY the free media
-                        payload = f"{target_member.mention} {media_url}".strip() if media_url else target_member.mention
+                        # Blend Priority 2 & 3 mechanics: 
+                        # Rapidly iterate through each unique member once per day, 
+                        # mentioning them with zero text (media only).
+                        payload = f"{target_member.mention}\n{media_url}".strip() if media_url else target_member.mention
+                        
                         await ch.send(content=payload, **kwargs)
                         print(f"[PRIORITY 8] Rapid-fire zero-text media sent to {target_member.display_name} in #{ch.name} (0 Tokens, 0 API Req)")
                     except Exception as send_err:
                         print(f"[PRIORITY 8 SEND ERROR]: {send_err}")
 
                     # Rapid-fire pacing delay between members (fast execution)
-                    await asyncio.sleep(random.uniform(2.0, 5.0))
+                    await asyncio.sleep(random.uniform(2.0, 4.0))
 
         except Exception as e:
             print(f"[PRIORITY 8 EXCEPTION]: {e}")
@@ -669,17 +779,16 @@ async def execute_priority_8_spam_protocol():
 
         await asyncio.sleep(5.0)
 # ============================================================
-# 8. PRIORITY 9: FREE OATMEAL PROTOCOL (PURE MEDIA-ONLY, 0 TOKENS, NO REPLIES)
+# 8. PRIORITY 9: FREE OATMEAL PROTOCOL (PURE MEDIA-ONLY, 0 TOKENS)
 # ============================================================
 async def execute_priority_9_free_oatmeal_protocol():
     """
     Runs continuously every 10 minutes (600 seconds) 24/7.
     Posts standalone messages with ZERO TEXT and ZERO REPLIES — media only 
-    (Tenor GIF file, YouTube video, SoundCloud link, or AI drawing).
-    CONSUMES ZERO GROQ TOKENS AND ZERO GROQ API REQUESTS.
+    pulled from the shared infinite variety generator.
     """
     await bot.wait_until_ready()
-    print("[PRIORITY 9] Free Oatmeal Protocol Active (Pure Media-Only / 0 Tokens / 0 API Requests / No Replies)...")
+    print("[PRIORITY 9] Free Oatmeal Protocol Active (Unified Infinite Media / 0 Tokens)...")
 
     while not bot.is_closed():
         try:
@@ -690,28 +799,16 @@ async def execute_priority_9_free_oatmeal_protocol():
 
                 ch = random.choice(channels)
 
-                # Fetch random free media (Tenor GIF file, YouTube, SoundCloud, or Pollinations AI image)
-                media_url = ""
-                file_attachment = None
-                
-                choice = random.choice(["tenor", "youtube", "suno", "image"])
-                if choice == "tenor":
-                    file_attachment = await fetch_tenor_gif_file_bytes(random.choice(["oatmeal", "funny", "dance", "reaction", "rabbit"]))
-                elif choice == "youtube":
-                    media_url = await fetch_direct_youtube_video("joeyarnoldvn")
-                elif choice == "suno":
-                    media_url = await fetch_suno_track_link("oatmeal music")
-                elif choice == "image":
-                    file_attachment = await fetch_image_file_bytes(random.choice(["oatmeal bowl", "retro 1990s room", "cyberpunk rabbit"]))
+                # Pull from the shared infinite generator
+                media_url, file_attachment = await get_unified_media()
 
                 kwargs = {}
                 if file_attachment is not None:
                     kwargs["file"] = file_attachment
 
-                # Post standalone message with ZERO text and NO replies
                 payload = media_url if media_url else ""
                 await ch.send(content=payload, **kwargs)
-                print(f"[PRIORITY 9] Pure media-only message posted in #{ch.name} (0 Tokens, 0 API Req)")
+                print(f"[PRIORITY 9] Unified infinite media posted in #{ch.name} (0 Tokens)")
 
         except Exception as e:
             print(f"[PRIORITY 9 EXCEPTION]: {e}")
@@ -802,15 +899,18 @@ async def process_job(job: PendingJob):
     media_url = ""
     file_attachment = None
     if random.random() < 0.80:
-        choice = random.choice(["tenor", "youtube", "suno", "image"])
-        if choice == "tenor":
-            file_attachment = await fetch_tenor_gif_file_bytes(job.prompt_text)
-        elif choice == "youtube":
-            media_url = await fetch_direct_youtube_video(job.prompt_text)
-        elif choice == "suno":
-            media_url = await fetch_suno_track_link(job.prompt_text)
-        elif choice == "image":
-            file_attachment = await fetch_image_file_bytes(job.prompt_text)
+        # Priorities 2, 3, and 8-9 borrow seamlessly from the shared infinite generator
+        if job.priority_tier in (2, 3, 5, 6, 7):
+            media_url, file_attachment = await get_unified_media(job.prompt_text)
+        else:
+            choice = random.choice(["tenor", "youtube", "image"])
+            if choice == "tenor":
+                file_attachment = await fetch_infinite_tenor_gif()
+            elif choice == "youtube":
+                media_url = await fetch_infinite_youtube_video()
+            else:
+                file_attachment = await fetch_infinite_ai_artwork()
+
     try:
         full_text = f"{reply}\n{media_url}".strip() if media_url else reply
         kwargs = {}
