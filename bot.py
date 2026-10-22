@@ -980,8 +980,6 @@ async def on_ready():
     bot.loop.create_task(execute_priority_8_spam_protocol())
     bot.loop.create_task(execute_priority_9_free_oatmeal_protocol())
 
-global replied_message_ids, channel_cursors, talkback_cursors, talkback_replied_ids, priority2_replied_member_ids, p2_complete, p8_daily_sent_members, last_bot_own_messages
-
 @bot.event
 async def on_message(message):
     global last_genie_timestamp
