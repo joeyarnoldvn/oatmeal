@@ -114,7 +114,7 @@ def load_state():
             data = json.load(f)
         replied_message_ids = set(int(x) for x in data.get("replied", []))
         channel_cursors = {int(k): int(v) for k, v in data.get("cursors", {}).items()}
-        talkback_cursors = {int(k): int(v) for k, v in talkback_cursors.items()}
+        talkback_cursors = {int(k): int(v) for k, v in data.get("talkback_cursors", {}).items()}
         talkback_replied_ids = set(int(x) for x in data.get("talkback_replied", []))
         priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
         p2_complete = bool(data.get("p2_complete", False))
@@ -345,15 +345,15 @@ FULL_ANNUAL_OUTLINE = """
 1996: Filmed Arnold Attic movies including Power Rangers, Wrestling, Heaven Or Hell. First long movie before age 11.
 1997: Built taxi wagon and fort. Fed gerbils. Saw Star Wars.
 1998: Baptized at CCBC. Drew Action Strip comics. AWANA at CCBC 1998-1999.
-1999: Seattle Splash, WOL Super Bowl, West Coast Camp. Played Sonic on Dreamcast. Saw Bicentennial Man, Star Trek: Insurrection. WOL Teens Involved at HCBC 1999-2004.
-2000: Filmed I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, Valentines. Visited Idaho. Left homeschool, started Forest Grove High School (FGHS) 2000-2004. Art classes. Met Salena Willner. Started writing articles.
-2001: Filmed Gangster Run (starring Big Red Mickey Morehead) and Cat's Life.
-2002: Filmed Road Kill and Phenomenon. Ski retreat.
-2003: Tiffany Cumbo died. Basketball manager with Richie VanDyke filming games. Acting classes. Saw Lord of the Rings.
+1999: Attended Seattle Splash, WOL Super Bowl, and the West Coast Camp (WCC) in Lassen Pines, California. Played Sonic on Dreamcast. Saw Bicentennial Man, Star Trek: Insurrection. WOL Teens Involved at HCBC 1999-2004.
+2000: Filmed I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, Valentines. Visited Idaho. Left homeschool, started Forest Grove High School (FGHS) 2000-2004. Art classes. Met Salena Willner. Started writing articles. Attended WCC. 
+2001: Filmed Gangster Run (starring Big Red Mickey Morehead) and Cat's Life. Attended WCC. 
+2002: Filmed Road Kill and Phenomenon. Ski retreat. Attended WCC. 
+2003: Tiffany Cumbo died. Basketball manager with Richie VanDyke filming games. Acting classes. Saw Lord of the Rings. Attended WCC. 
 2004: Carpetball Pocket Ball table. Word of Life Bible Institute (WOLBI) NY. Blogged on Xanga. NYC New Year's Eve, bootlegged The Incredibles in New Jersey.
 2005: Camp counselor at Snow Camp, WCC, Ranch Camp. Saw Star Wars: Revenge of the Sith.
-2006: Appalachian Bible College in West Virginia. Fell in love with Jen Moore. Visited Quebec. Live For Only Jesus (L4OJ) video with Sawyer Frye. Saw The Matrix.
-2007: Hired by Mike Kurtz as counselor at Salvation Army Camp Kuratli. Met Megan McQuade. Western Youth Institute and Rob Noland's Revolution Hawaii. Get Your Joy On music video with Jeff Walters.
+2006: Attended the Appalachian Bible College (ABC) in West Virginia. Fell in love with Jen Moore. Visited Quebec. Live For Only Jesus (L4OJ) video with Sawyer Frye. Saw The Matrix.
+2007: Attended ABC. Hired by Mike Kurtz as counselor at Salvation Army Camp Kuratli. Met Megan McQuade. Western Youth Institute and Rob Noland's Revolution Hawaii. Get Your Joy On music video with Jeff Walters.
 2008: Moved to Alder 414 in Portland. Worked at Kells and for Daniel Grout. Ice Breaker era.
 2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang Animals Are Dying. Trolls began spamming Oatmeal Fake News on original Ojawall YouTube channel. Appeared on iJustine and Comcast. Saw Coraline.
 2010: Blake Webb died. Worked at Salvation Army Camp Redwood Glen. Met Farmer Hanna. Lived at Charlotte Battle's house. Helped Nick Becker film movie. Met Sharon Clayton at WYI who introduced The Walking Dead.
@@ -437,54 +437,61 @@ BANTER_FALLBACK_RESPONSES = [
 ]
 
 # ============================================================
-# TRULY WILD UNCONSTRAINED MEDIA & QUERY GENERATOR (SHARED)
+# TRULY WILD UNCONSTRAINED MEDIA & QUERY GENERATOR (EXPANDED)
 # ============================================================
-RECENT_MEDIA_CACHE = collections.deque(maxlen=500)
-EMOTICON_POOL = ["😀", "😎", "🤖", "🚀", "🍕", "🐱", "🎉", "🔥", "⚡", "🍀", "🐵", "🎸", "🏆", "🧩", "🌪️", "🛸", "💥", "💎", "🔮", "🎯"]
+RECENT_MEDIA_CACHE = collections.deque(maxlen=1000)
+
+EMOTICON_POOL = [
+    "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", 
+    "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🤩", "🥳", "😏", "😒", "😞", "😔", "worried", "😕", "🙁", "☹️", 
+    "😣", "confounded", "😫", "😩", "🥺", "cry", "😭", "triumph", "angry", "rage", "cursing", "furious", "ghost", "alien",
+    "🤖", "💩", "😺", "😸", "😹", "😻", "😼", "guardian", "🙀", "crying", "scream", "frowning", "anguished", "fearful", "cold"
+]
+
+EXPANDED_WILD_TERMS = [
+    "oatmeal", "joey arnold", "power rangers", "teenage mutant ninja turtles", "star trek", "star wars",
+    "vhs tape", "vcr player", "1990s retro", "cuban salsa", "trailer park", "forest grove oregon", "treacher collins",
+    "matrix glitch", "cyberpunk neon", "quantum flux", "deep space", "arcade cabinet", "sonic hedgehog", "mario bros",
+    "render failed", "python async", "discord bot", "linux terminal", "ffmpeg matroska", "ghetto mobile home", "camp counselor"
+]
 
 def get_truly_wild_query() -> str:
-    """
-    Pulls completely wild, unconstrained words and tokens from anywhere and everywhere:
-    grabs words from the running code file, random alphanumeric strings, numbers, 
-    code keywords, and symbol combinations to ensure infinite, unpredictable variety.
-    """
+    """Pulls deeply randomized terms combining code tokens, script history, and chaotic fallback concepts."""
     try:
         with open(__file__, "r", encoding="utf-8", errors="ignore") as f:
-            script_tokens = f.read().split()
+            script_tokens = [w for w in f.read().split() if len(w) > 3]
     except Exception:
-        script_tokens = ["oatmeal", "discord", "bot", "python", "script", "async"]
+        script_tokens = ["oatmeal", "discord", "bot", "python", "script", "async", "render"]
 
-    wild_sources = [
-        lambda: random.choice(script_tokens) if script_tokens else "oatmeal",
-        lambda: "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789_-$#@", k=random.randint(3, 10))),
-        lambda: str(random.randint(1, 9999999999)),
-        lambda: random.choice(["glitch", "payload", "stream", "packet", "buffer", "kernel", "matrix", "velocity", "quantum", "neon", "cyber", "void", "hyper", "mega", "ultra", "synth", "nexus", "core"])
-    ]
+    pool = script_tokens + EXPANDED_WILD_TERMS
+    num_terms = random.randint(2, 6)
+    chosen = random.sample(pool, min(num_terms, len(pool)))
     
-    # Combine 2 to 5 random wild terms into a single unique search query
-    num_terms = random.randint(2, 5)
-    terms = [random.choice(wild_sources)() for _ in range(num_terms)]
-    return " ".join(terms)
+    # Inject a random alphanumeric token or number for absolute uniqueness
+    chaos_suffix = "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=random.randint(3, 8)))
+    chosen.append(chaos_suffix)
+    return " ".join(chosen)
 
 async def fetch_wild_tenor_gif() -> discord.File | None:
     def _download():
         try:
-            query = get_truly_wild_query()
-            search_url = f"https://tenor.com/search/{urllib.parse.quote(query)}-gifs"
-            req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-            
-            gif_urls = re.findall(r'(https://media[0-9]*\.tenor\.com/[^"\s]+\.gif)', html)
-            if gif_urls:
-                fresh_urls = [u for u in gif_urls if u not in RECENT_MEDIA_CACHE]
-                if not fresh_urls:
-                    fresh_urls = gif_urls
-                chosen_url = random.choice(fresh_urls[:15])
-                RECENT_MEDIA_CACHE.append(chosen_url)
+            for _ in range(3):  # Try up to 3 times to find a fresh un-cached URL
+                query = get_truly_wild_query()
+                search_url = f"https://tenor.com/search/{urllib.parse.quote(query)}-gifs"
+                req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
+                
+                gif_urls = re.findall(r'(https://media[0-9]*\.tenor\.com/[^"\s]+\.gif)', html)
+                if gif_urls:
+                    fresh_urls = [u for u in gif_urls if u not in RECENT_MEDIA_CACHE]
+                    if not fresh_urls:
+                        fresh_urls = gif_urls
+                    chosen_url = random.choice(fresh_urls)
+                    RECENT_MEDIA_CACHE.append(chosen_url)
 
-                img_req = urllib.request.Request(chosen_url, headers={"User-Agent": "Mozilla/5.0"})
-                data = urllib.request.urlopen(img_req, timeout=5).read()
-                return discord.File(io.BytesIO(data), filename="oatmeal_wild.gif")
+                    img_req = urllib.request.Request(chosen_url, headers={"User-Agent": "Mozilla/5.0"})
+                    data = urllib.request.urlopen(img_req, timeout=5).read()
+                    return discord.File(io.BytesIO(data), filename=f"oatmeal_wild_{random.randint(1000,9999)}.gif")
         except Exception:
             pass
         return None
@@ -492,7 +499,11 @@ async def fetch_wild_tenor_gif() -> discord.File | None:
 
 async def fetch_wild_youtube_video() -> str:
     def _search():
-        fallback_ids = ["dQw4w9WgXcQ", "jNQXAC9IVRw", "9bZkp7q19f0", "kJQP7kiw5Fk", "5qap5aO4i9A", "fJ9rUzIMcZQ"]
+        massive_fallbacks = [
+            "dQw4w9WgXcQ", "jNQXAC9IVRw", "9bZkp7q19f0", "kJQP7kiw5Fk", "5qap5aO4i9A", 
+            "fJ9rUzIMcZQ", "y6120QOlsfU", "9H0GbztCRQc", "ZZ5LpwO-An4", "3JZ_D3ELwOQ",
+            "RgKAFK5djSk", "kJQP7kiw5Fk", "OPf0YbXqDm0", "2Vv-BfVoq4g", "hT_nvWreIhg"
+        ]
         try:
             query = get_truly_wild_query()
             url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
@@ -509,26 +520,26 @@ async def fetch_wild_youtube_video() -> str:
                 return f"https://www.youtube.com/watch?v={chosen_id}"
         except Exception:
             pass
-        return f"https://www.youtube.com/watch?v={random.choice(fallback_ids)}"
+        return f"https://www.youtube.com/watch?v={random.choice(massive_fallbacks)}"
     return await asyncio.to_thread(_search)
 
 async def fetch_wild_ai_artwork() -> discord.File | None:
     def _download():
         try:
-            prompt = f"{get_truly_wild_query()}, seed {random.randint(1, 999999999)}"
+            prompt = f"{get_truly_wild_query()}, cinematic style, 8k resolution, chaotic detail"
             seed = random.randint(1, 999999999)
             img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=768&height=768&nologo=true&seed={seed}"
             
             req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
             data = urllib.request.urlopen(req, timeout=6).read()
-            return discord.File(io.BytesIO(data), filename="oatmeal_wild_art.jpg")
+            return discord.File(io.BytesIO(data), filename=f"oatmeal_art_{seed}.jpg")
         except Exception:
             return None
     return await asyncio.to_thread(_download)
 
 async def get_wild_unified_media(guild: discord.Guild = None) -> tuple[str, discord.File | None, discord.Sticker | None]:
-    """Rotates seamlessly across Tenor GIFs, AI drawings, YouTube videos, guild stickers, and emoticons using wild queries."""
-    choice = random.choice(["tenor", "youtube", "image", "sticker", "emoticon"])
+    """Rotates seamlessly across Tenor GIFs, AI drawings, YouTube videos, guild stickers, and emoticons with zero repetition."""
+    choice = random.choices(["tenor", "youtube", "image", "sticker", "emoticon"], weights=[30, 25, 25, 10, 10], k=1)[0]
     
     if choice == "tenor":
         file_obj = await fetch_wild_tenor_gif()
@@ -553,23 +564,9 @@ async def get_wild_unified_media(guild: discord.Guild = None) -> tuple[str, disc
 # ============================================================
 # 6. HELPERS, LLM SEARCH & COMPREHENSIVE MEDIA ENGINES
 # ============================================================
-async def evaluate_llm_search_intent(prompt_text: str) -> bool:
-    def _check():
-        try:
-            resp = ai_client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "Determine if message requires live web data, news, crypto, or historical verification. Output ONLY 'YES' or 'NO'."},
-                    {"role": "user", "content": prompt_text}
-                ],
-                temperature=0.0,
-                max_tokens=3
-            )
-            return "YES" in resp.choices[0].message.content.strip().upper()
-        except Exception:
-            return False
-    return await asyncio.to_thread(_check)
-
+# ============================================================
+# 6. HELPERS, LLM SEARCH & COMPREHENSIVE MEDIA ENGINES
+# ============================================================
 SEARCH_TRIGGER_PATTERNS = re.compile(
     r"\b(search|look\s*up|google|find|check|what\s+is|who\s+is|latest|news|twitter|x\.com|price)\b",
     re.IGNORECASE
@@ -596,6 +593,7 @@ async def evaluate_llm_search_intent(prompt_text: str) -> bool:
             return False
 
     return await asyncio.to_thread(_check)
+
 
 async def fetch_live_web_context(query: str) -> str:
     def _search():
@@ -718,14 +716,13 @@ async def execute_priority_8_spam_protocol():
     Priority 8 Rapid-Fire Wild Spam Protocol:
     - Traverses every unique server member precisely once per day as fast as possible.
     - Strictly alternates between mentioning members directly (Priority 3) and 
-      replying to old historical channel messages (Priority 2).
+      replying to recent channel messages (Priority 2 style).
     - Uses wild queries from code, random tokens, numbers, and symbols to pull 
-      zero-token videos, GIFs, drawings, emoticons, and stickers with zero text.
+      zero-token media with zero LLM API cost.
     """
     await bot.wait_until_ready()
     print("[SPAM PROTOCOL] Priority 8 Rapid-Fire Wild Media Protocol Active (0 Tokens)...")
     
-    # Toggle to strictly alternate between Mention (P3) and Reply (P2)
     alternate_mode = False
 
     while not bot.is_closed():
@@ -756,7 +753,6 @@ async def execute_priority_8_spam_protocol():
                     p8_daily_sent_members[guild_id_str][str(target_member.id)] = today_str
                     save_state()
 
-                    # Pull from the wild rotated media pool (GIFs, Art, YouTube, Stickers, Emoticons)
                     media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
 
                     try:
@@ -768,36 +764,25 @@ async def execute_priority_8_spam_protocol():
 
                         payload = f"{target_member.mention} {media_url}".strip() if media_url else target_member.mention
 
-                        # Alternate between Mentioning (Priority 3 style) and Replying to old messages (Priority 2 style)
                         if alternate_mode:
-                            # Priority 2 style: Find an old historical message to reply to
-                            historical_msg = None
-                            try:
-                                async for h_msg in ch.history(limit=30, oldest_first=True):
-                                    if not h_msg.author.bot and h_msg.author != bot.user:
-                                        historical_msg = h_msg
-                                        break
-                            except Exception:
-                                pass
+                            # Use next_historical_message to properly crawl forward through history without looping
+                            historical_msg = await next_historical_message(ch)
 
                             if historical_msg:
                                 await historical_msg.reply(content=payload, mention_author=False, **kwargs)
-                                print(f"[PRIORITY 8] Wild Reply (P2) + Media sent to {target_member.display_name} in #{ch.name} (0 Tokens)")
+                                print(f"[PRIORITY 8] Wild Reply (P2) sent to {target_member.display_name} in #{ch.name}")
                             else:
                                 await ch.send(content=payload, **kwargs)
-                                print(f"[PRIORITY 8] Wild Send (Fallback) sent to {target_member.display_name} in #{ch.name} (0 Tokens)")
+                                print(f"[PRIORITY 8] Wild Send sent to {target_member.display_name} in #{ch.name}")
                         else:
-                            # Priority 3 style: Direct member mention ping
                             await ch.send(content=payload, **kwargs)
-                            print(f"[PRIORITY 8] Wild Mention Ping (P3) + Media sent to {target_member.display_name} in #{ch.name} (0 Tokens)")
+                            print(f"[PRIORITY 8] Wild Ping (P3) sent to {target_member.display_name} in #{ch.name}")
 
-                        # Flip alternation flag for the next member
                         alternate_mode = not alternate_mode
 
                     except Exception as send_err:
                         print(f"[PRIORITY 8 SEND ERROR]: {send_err}")
 
-                    # Rapid-fire pacing delay between members
                     await asyncio.sleep(random.uniform(2.0, 4.0))
 
         except Exception as e:
@@ -844,6 +829,64 @@ async def execute_priority_9_free_oatmeal_protocol():
 # ============================================================
 # 9. CORE PROCESSOR ENGINE WITH REPLENISHMENT & TAXATION
 # ============================================================
+def extract_relevant_timeline_snippet(prompt_text: str, outline_text: str) -> str:
+    target_years = set()
+    target_locations = set()
+    
+    # 1. Detect explicit 4-digit years (e.g., "1993", "2012")
+    year_matches = re.findall(r'\b(19\d{2}|20\d{2})\b', prompt_text)
+    for y in year_matches:
+        target_years.add(y)
+        
+    # 2. Detect age mentions (e.g., "when I was 8", "age 8") -> Birth year 1985 + Age N
+    age_matches = re.findall(r'(?:age|was|at)\s+(\d{1,2})|(\d{1,2})\s+(?:years old|yo)', prompt_text, re.IGNORECASE)
+    for match in age_matches:
+        age_str = match[0] or match[1]
+        if age_str:
+            try:
+                age_val = int(age_str)
+                calculated_year = str(1985 + age_val)
+                target_years.add(calculated_year)
+            except ValueError:
+                pass
+                
+    # 3. Detect location keywords from your life outline
+    known_locations = [
+        "forest grove", "oregon", "rose grove", "seattle", "los angeles", "california", "wolbi", "wcc", 
+        "portland", "vietnam", "bac ninh", "saigon", "hanoi", "cambodia", "abc",
+        "dalat", "shelton", "washington", "vancouver", "bc", "new york", 
+        "new jersey", "west virginia", "quebec", "long beach", "hagg lake"
+    ]
+    
+    prompt_lower = prompt_text.lower()
+    for loc in known_locations:
+        if loc in prompt_lower:
+            target_locations.add(loc)
+
+    # Scan the outline and collect any line matching either the year or location
+    lines = outline_text.strip().split('\n')
+    matched_lines = []
+    
+    for line in lines:
+        line_lower = line.lower()
+        
+        # Check if line starts with a target year
+        matched_year = any(line.startswith(f"{y}:") for y in target_years)
+        
+        # Check if line contains any target location
+        matched_loc = any(loc in line_lower for loc in target_locations)
+        
+        if matched_year or matched_loc:
+            if line not in matched_lines:
+                matched_lines.append(line)
+
+    if matched_lines:
+        print(f"[TIMELINE FILTER] Filtered years {target_years} & locations {target_locations}: {matched_lines}")
+        return "\n".join(matched_lines)
+        
+    # Fallback if no specific year, age, or location is found
+    return SHORT_IDENTITY
+
 async def process_job(job: PendingJob):
     global last_api_call_timestamp
     
@@ -873,7 +916,8 @@ async def process_job(job: PendingJob):
         live_context = await fetch_live_web_context(job.prompt_text)
         print(f"[SEARCH EXECUTED]: Context retrieved -> {live_context[:100]}...")
 
-    history_block = FULL_ANNUAL_OUTLINE if any(k in job.prompt_text.lower() for k in ("born", "history", "timeline", "vietnam", "jail", "outline")) else SHORT_IDENTITY
+    # Dynamically extract only the relevant year/age line from your timeline (0 extra outline bloat)
+    history_block = extract_relevant_timeline_snippet(job.prompt_text, FULL_ANNUAL_OUTLINE)
     
     # Emphasize live web search results so the model reads and incorporates them directly
     live_block = f"\n[CRITICAL LIVE WEB SEARCH RESULTS]:\n{live_context}\n(Incorporate these real search findings directly into your response!)\n" if live_context else ""
@@ -1076,20 +1120,23 @@ async def next_historical_message(channel):
     kwargs = {"limit": 100, "oldest_first": True}
     if cursor:
         kwargs["after"] = discord.Object(id=cursor)
-    last_seen = cursor
+    
     target = None
     async for msg in channel.history(**kwargs):
-        last_seen = msg.id
+        # Always advance cursor so we never re-examine this message ID
+        channel_cursors[channel.id] = msg.id
+        
         if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
             continue
+            
         key = p2_key(channel.guild.id, msg.author.id)
         if key in priority2_replied_member_ids or msg.id in replied_message_ids:
             continue
+            
         target = msg
         break
-    if target is None and last_seen != cursor:
-        channel_cursors[channel.id] = last_seen
-        save_state()
+
+    save_state()
     return target
 
 async def hour_protocol_scheduler():
