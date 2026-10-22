@@ -159,24 +159,7 @@ def save_state():
             print(f"[STATE] Persistence atomic write error: {e}")
 
     threading.Thread(target=_write, daemon=True).start()
-            import tempfile
-            fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(data, f)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, STATE_PATH)
-            except Exception as write_err:
-                print(f"[STATE] Inner write error: {write_err}")
-                try:
-                    os.remove(tmp_path)
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"[STATE] Persistence atomic write error: {e}")
 
-    threading.Thread(target=_write, daemon=True).start()
 # ============================================================
 # 4. COOLDOWN PROTOCOL, SLIDING WINDOWS & PROGRESSIVE TAXATION
 # ============================================================
@@ -829,10 +812,10 @@ async def execute_priority_9_free_oatmeal_protocol():
     """
     Runs continuously every 10 minutes (600 seconds) 24/7.
     Posts standalone messages with ZERO TEXT and ZERO REPLIES — media only 
-    pulled from the shared infinite variety generator.
+    pulled from the shared wild generator.
     """
     await bot.wait_until_ready()
-    print("[PRIORITY 9] Free Oatmeal Protocol Active (Unified Infinite Media / 0 Tokens)...")
+    print("[PRIORITY 9] Free Oatmeal Protocol Active (Wild Unified Media / 0 Tokens)...")
 
     while not bot.is_closed():
         try:
@@ -842,17 +825,17 @@ async def execute_priority_9_free_oatmeal_protocol():
                     continue
 
                 ch = random.choice(channels)
-
-                # Pull from the shared infinite generator
-                media_url, file_attachment = await get_unified_media()
+                media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
 
                 kwargs = {}
                 if file_attachment is not None:
                     kwargs["file"] = file_attachment
+                if sticker_obj is not None:
+                    kwargs["stickers"] = [sticker_obj]
 
                 payload = media_url if media_url else ""
                 await ch.send(content=payload, **kwargs)
-                print(f"[PRIORITY 9] Unified infinite media posted in #{ch.name} (0 Tokens)")
+                print(f"[PRIORITY 9] Wild unified media posted in #{ch.name} (0 Tokens)")
 
         except Exception as e:
             print(f"[PRIORITY 9 EXCEPTION]: {e}")
@@ -942,24 +925,18 @@ async def process_job(job: PendingJob):
 
     media_url = ""
     file_attachment = None
+    sticker_obj = None
     if random.random() < 0.80:
-        # Priorities 2, 3, and 8-9 borrow seamlessly from the shared infinite generator
-        if job.priority_tier in (2, 3, 5, 6, 7):
-            media_url, file_attachment = await get_unified_media(job.prompt_text)
-        else:
-            choice = random.choice(["tenor", "youtube", "image"])
-            if choice == "tenor":
-                file_attachment = await fetch_infinite_tenor_gif()
-            elif choice == "youtube":
-                media_url = await fetch_infinite_youtube_video()
-            else:
-                file_attachment = await fetch_infinite_ai_artwork()
-
+        media_url, file_attachment, sticker_obj = await get_wild_unified_media(
+            guild=job.channel.guild if hasattr(job.channel, 'guild') else None
+        )
     try:
         full_text = f"{reply}\n{media_url}".strip() if media_url else reply
         kwargs = {}
         if file_attachment is not None:
             kwargs["file"] = file_attachment
+        if sticker_obj is not None:
+            kwargs["stickers"] = [sticker_obj]
 
         sent_msg = None
         if job.reference_message:
