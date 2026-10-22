@@ -451,7 +451,7 @@ BANTER = [
 EMOTICON_POOL = ["🥣", "🔥", "😂", "🫡", "🚀", "📼", "🎬", "🏀", "✨", "👀", "🧠", "🌌", "💪"]
 
 # ============================================================
-# 6. MEDIA ENGINE
+# 6. UNIFIED ADAPTIVE MEDIA ENGINE
 # ============================================================
 async def fetch_tenor_gif(query: str = "funny reaction") -> Optional[str]:
     for attempt in range(2):
@@ -493,28 +493,39 @@ async def fetch_pollinations(prompt: str = "oatmeal surreal") -> Optional[discor
     except Exception:
         return None
 
-async def get_wild_media(guild: Optional[discord.Guild] = None) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
-    choice = random.choices(
+async def get_adaptive_media(
+    guild: Optional[discord.Guild] = None, 
+    custom_query: Optional[str] = None, 
+    force_type: Optional[str] = None
+) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
+    """
+    Unified adaptive media generator. 
+    Can be completely random (zero-token) or customized with queries/type constraints.
+    """
+    media_type = force_type or random.choices(
         ["tenor", "youtube", "image", "sticker", "emoticon"],
-        weights=[38, 24, 18, 10, 10], k=1
+        weights=[40, 20, 20, 10, 10], k=1
     )[0]
-    if choice == "tenor":
-        url = await fetch_tenor_gif(random.choice(["funny", "reaction", "mind blown", "laughing", "90s", "fail"]))
-        if url:
-            return url, None, None
-    elif choice == "youtube":
-        return await fetch_youtube(), None, None
-    elif choice == "image":
-        f = await fetch_pollinations()
+
+    if media_type == "tenor":
+        q = custom_query or random.choice(["funny", "reaction", "mind blown", "laughing", "90s", "fail", "joey arnold"])
+        url = await fetch_tenor_gif(q)
+        return url or "", None, None
+    elif media_type == "youtube":
+        q = custom_query or "oatmeal joey arnold"
+        return await fetch_youtube(q), None, None
+    elif media_type == "image":
+        prompt = custom_query or "oatmeal surreal 1990s aesthetic"
+        f = await fetch_pollinations(prompt)
         if f:
             return "", f, None
-    elif choice == "sticker" and guild and guild.stickers:
+    elif media_type == "sticker" and guild and guild.stickers:
         return "", None, random.choice(list(guild.stickers))
-    elif choice == "emoticon":
+    elif media_type == "emoticon":
         return random.choice(EMOTICON_POOL), None, None
-    url = await fetch_tenor_gif("reaction")
+    
+    url = await fetch_tenor_gif(custom_query or "reaction")
     return url or "", None, None
-
 # ============================================================
 # 7. SURGICAL TIMELINE EXTRACTION + SMART WORD SALAD FALLBACK
 # ============================================================
@@ -718,23 +729,27 @@ async def process_job(job: PendingJob):
     if job.priority_tier == 8:
         reply = " ".join(reply.split()[:10])
 
-    # Independent media decision
+# Independent media decision using unified adaptive engine
     media_url, file_obj, sticker = "", None, None
     if job.priority_tier != 8:
         want_media = (job.priority_tier in (3, 4, 5, 6)) or (job.priority_tier == 1 and random.random() < 0.78)
         if want_media:
-            media_url, file_obj, sticker = await get_wild_media(getattr(job.channel, "guild", None))
+            # Custom query extracted from prompt for targeted, relevant media
+            query_hint = job.prompt_text[:40] if job.prompt_text else None
+            media_url, file_obj, sticker = await get_adaptive_media(
+                guild=getattr(job.channel, "guild", None), 
+                custom_query=query_hint
+            )
 
     sent_successfully = False
     try:
-        if not reply and media_url:
-            content = media_url
-            media_url = ""
-        elif reply and media_url:
+        # Prevent raw link clutter: if text exists, suppress raw URL text or place on clean line
+        if reply and media_url:
             content = f"{reply}\n{media_url}"
+        elif media_url:
+            content = media_url
         else:
             content = reply
-
         kwargs = {}
         if file_obj:
             kwargs["file"] = file_obj
@@ -791,13 +806,17 @@ async def execute_priority_2():
                             continue
                         target = msg
                         break
+
+
                     if target:
-                        url, file_obj, sticker = await get_wild_media(guild)
+                        # Use unified adaptive media generator for zero-token media
+                        url, file_obj, sticker = await get_adaptive_media(guild=guild)
                         kwargs_send = {}
                         if file_obj: kwargs_send["file"] = file_obj
                         if sticker: kwargs_send["stickers"] = [sticker]
                         try:
-                            await target.reply(content=url or "🥣", mention_author=False, **kwargs_send)
+                            content_to_send = url if url else "🥣"
+                            await target.reply(content=content_to_send, mention_author=False, **kwargs_send)
                             replied_message_ids.add(target.id)
                             priority2_replied_member_ids.add(p2_key(guild.id, target.author.id))
                             save_state()
@@ -832,27 +851,31 @@ async def execute_priority_3():
                 if not channels:
                     continue
                 ch = random.choice(channels)
-                url, file_obj, sticker = await get_wild_media(guild)
+                
+                # Use adaptive media generator with a customized query based on member name
+                url, file_obj, sticker = await get_adaptive_media(guild, custom_query=target.display_name)
                 kwargs = {}
                 if file_obj: kwargs["file"] = file_obj
                 if sticker: kwargs["stickers"] = [sticker]
-                content = f"{target.mention} {url}".strip() if url else target.mention
+                
+                # Send mention on its own line, followed by the media URL on a new line 
+                # so Discord embeds the preview cleanly without showing raw inline clutter.
+                content = f"{target.mention}\n{url}" if url else target.mention
                 await ch.send(content=content, **kwargs)
                 print(f"[P3] {target.display_name}")
                 break
         except Exception as e:
             print(f"[P3] {e}")
             await asyncio.sleep(50)
-
 async def execute_priority_7():
-    """True infinite forward chronological self-media mirror."""
+    """True infinite forward chronological self-media mirror with auto-recovery cursor."""
     await bot.wait_until_ready()
     print("[P7] Infinite forward media mirror")
     while not bot.is_closed():
         try:
             await asyncio.sleep(random.uniform(22, 110))
             m = get_trajectory_metrics()
-            if m["usage"] > 0.87:
+            if m["usage"] > 0.92:  # Relaxed threshold slightly to prevent permanent locking
                 continue
 
             for guild in list(bot.guilds):
@@ -860,7 +883,7 @@ async def execute_priority_7():
                 random.shuffle(channels)
                 for ch in channels:
                     cursor = p7_cursors.get(str(ch.id), 0)
-                    kwargs = {"limit": 35, "oldest_first": True}
+                    kwargs = {"limit": 50, "oldest_first": True}
                     if cursor:
                         kwargs["after"] = discord.Object(id=cursor)
 
@@ -869,10 +892,19 @@ async def execute_priority_7():
                         if msg.author == bot.user:
                             target = msg
                             break
+                    
+                    # Fallback: If cursor yielded nothing, check recent history without cursor to unstick
+                    if not target and cursor:
+                        p7_cursors[str(ch.id)] = 0
+                        async for msg in ch.history(limit=20, oldest_first=False):
+                            if msg.author == bot.user:
+                                target = msg
+                                break
+
                     if not target:
                         continue
 
-                    url, file_obj, sticker = await get_wild_media(guild)
+                    url, file_obj, sticker = await get_adaptive_media(guild=guild)
                     if not (url or file_obj or sticker):
                         continue
 
@@ -895,14 +927,14 @@ async def execute_priority_7():
             await asyncio.sleep(35)
 
 async def execute_priority_8():
-    """Lightweight text-only infinite forward mirror. Cursor advances only after success."""
+    """Lightweight text-only infinite forward mirror with auto-recovery."""
     await bot.wait_until_ready()
     print("[P8] Lightweight text mirror (cursor after success)")
     while not bot.is_closed():
         try:
             await asyncio.sleep(random.uniform(35, 160))
             m = get_trajectory_metrics()
-            if m["usage"] > 0.83:
+            if m["usage"] > 0.90:  # Relaxed threshold
                 continue
 
             for guild in list(bot.guilds):
@@ -910,7 +942,7 @@ async def execute_priority_8():
                 random.shuffle(channels)
                 for ch in channels:
                     cursor = p8_cursors.get(str(ch.id), 0)
-                    kwargs = {"limit": 28, "oldest_first": True}
+                    kwargs = {"limit": 40, "oldest_first": True}
                     if cursor:
                         kwargs["after"] = discord.Object(id=cursor)
 
@@ -919,6 +951,15 @@ async def execute_priority_8():
                         if msg.author == bot.user:
                             target = msg
                             break
+
+                    # Fallback: Unstick cursor if dead
+                    if not target and cursor:
+                        p8_cursors[str(ch.id)] = 0
+                        async for msg in ch.history(limit=20, oldest_first=False):
+                            if msg.author == bot.user:
+                                target = msg
+                                break
+
                     if not target:
                         continue
 
@@ -939,7 +980,6 @@ async def execute_priority_8():
         except Exception as e:
             print(f"[P8] {e}")
             await asyncio.sleep(45)
-
 async def execute_priority_5_reverse():
     await bot.wait_until_ready()
     print("[P5] Reverse sweep")
@@ -980,7 +1020,7 @@ async def execute_priority_6_drops():
                 if not channels:
                     continue
                 ch = random.choice(channels)
-                url, file_obj, sticker = await get_wild_media(guild)
+                url, file_obj, sticker = await get_adaptive_media(guild=guild)
                 kwargs = {}
                 if file_obj: kwargs["file"] = file_obj
                 if sticker: kwargs["stickers"] = [sticker]
