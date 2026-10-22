@@ -159,7 +159,6 @@ def save_state():
             print(f"[STATE] Persistence atomic write error: {e}")
 
     threading.Thread(target=_write, daemon=True).start()
-
             import tempfile
             fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
             try:
