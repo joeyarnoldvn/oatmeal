@@ -38,7 +38,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V16.1 – Token Guardian + Infinite Mirror")
+        self.wfile.write("Oatmeal AI V16.1 – Token Guardian + Infinite Mirror".encode("utf-8"))
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
