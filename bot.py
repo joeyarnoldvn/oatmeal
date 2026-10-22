@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
 """
-Oatmeal AI – Joey Arnold Discord Bot Engine
-Master Production Code Version 13.0 (Ultimate Synthesis + Priority 9)
+Oatmeal AI – Joey Arnold Discord Bot
+Master Production Version 16.1
 
-Features:
-- Complete 1985–2026 Life Timeline Outline & Comprehensive Sovereign Persona
-- 9 Priority Tiers including:
-    * Priority 8 Daily Free Spam Protocol (0 Tokens / 0 API Requests)
-    * Priority 9 Free Oatmeal Protocol (0 Tokens / 0 API Requests - Every 10 Mins 24/7)
-- Dynamic Rate Limits & Replenishment: 200k TPD, 8k TPM, 1k RPD, 30 RPM
-- Continuous Progressive Taxation maintaining 20% Token/Request Headroom Equilibrium
-- Asynchronous Delay Priority Queueing for load pacing
-- Dynamic 429 Rerouting ("Google Maps Re-Sync") to snap daily counters to Groq ground truth
-- Keyword-Free Autonomous LLM-Driven Web Search & Intent Classification
-- Independent Parallel Text & Multi-Media Embed Systems (Tenor, YouTube, SoundCloud, Pollinations AI, Guild Stickers)
-- Atomic State Storage Engine with Sync Fallbacks & Health Check Server
+- True infinite forward chronological self-mirrors (P7 media + P8 text)
+- Aggressive token-saving timeline extraction (only relevant years)
+- Full year-by-year 1985–2026 outline
+- Expanded identity: workaholic, bipolar-flavored energy, collage influences, five moods
+- Differential taxation + atomic state + 429 re-sync
+- Priority 8 cursor advances only after successful send
 """
 
 import os
@@ -28,9 +22,9 @@ import random
 import urllib.parse
 import urllib.request
 import collections
-import html as html_mod
+import tempfile
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Dict, List, Set, Tuple, Optional
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
@@ -38,18 +32,16 @@ import discord
 from openai import OpenAI
 
 # ============================================================
-# 1. RENDER HEALTH CHECK HTTP SERVER
+# 1. RENDER HEALTH CHECK
 # ============================================================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI Operating at Peak Architectural Fidelity (Version 13.0)")
-
+        self.wfile.write(b"Oatmeal AI V16.1 – Token Guardian + Infinite Mirror")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
-
     def log_message(self, *args):
         pass
 
@@ -58,17 +50,17 @@ def run_http_server():
     try:
         HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
     except Exception as e:
-        print(f"[HEALTH SERVER EXCEPTION]: {e}")
+        print(f"[HEALTH] {e}")
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
 # ============================================================
-# 2. CONFIGURATION & CLIENT INITIALIZATION
+# 2. CONFIG
 # ============================================================
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
 GROQ_API_KEY  = os.environ.get("GROQ_API_KEY")
 if not DISCORD_TOKEN or not GROQ_API_KEY:
-    raise ValueError("Missing required DISCORD_TOKEN or GROQ_API_KEY environment variables.")
+    raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY")
 
 ai_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
 MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
@@ -82,48 +74,48 @@ intents.members = True
 bot = discord.Client(intents=intents)
 
 # ============================================================
-# 3. GLOBAL STATE & ATOMIC PERSISTENCE ENGINE
+# 3. GLOBAL STATE
 # ============================================================
-replied_message_ids = set()
-channel_cursors = {}
-talkback_cursors = {}  
-talkback_replied_ids = set()  
-priority2_replied_member_ids = set()
-lifetime_interacted_members = set()
-recent_gif_urls = []
-MAX_RECENT_GIFS = 25
-p2_complete = False
+replied_message_ids: Set[int] = set()
+channel_cursors: Dict[str, int] = {}
+priority2_replied_member_ids: Set[str] = set()
+lifetime_interacted_members: Set[int] = set()
+recent_gif_urls = collections.deque(maxlen=1000)
+
+p3_member_indices: Dict[int, int] = {}
+p7_cursors: Dict[str, int] = {}
+p8_cursors: Dict[str, int] = {}
+
 last_genie_timestamp = 0.0
 DAILY_EXHAUSTED_UNTIL = 0.0
 local_daily_tokens = 0
 local_daily_requests = 0
 local_daily_reset_day = None
-last_talkback_timestamp = time.time()
-p8_daily_sent_members = {}  # {guild_id: {member_id: timestamp_day}}
-last_bot_own_messages = {}  # {channel_id: last_msg_id}
-blocked_users = {}        # {str(user_id): expiration_timestamp}
-user_message_history = {} # {user_id: [(timestamp, content), ...]}
 
-def p2_key(guild_id, author_id):
+last_bot_own_messages: Dict[int, int] = {}
+blocked_users: Dict[str, float] = {}
+user_message_history: Dict[int, List[Tuple[float, str]]] = {}
+
+def p2_key(guild_id: int, author_id: int) -> str:
     return f"{guild_id}:{author_id}"
 
 def load_state():
-    global replied_message_ids, channel_cursors, talkback_cursors, talkback_replied_ids, priority2_replied_member_ids, p2_complete, p8_daily_sent_members, last_bot_own_messages, blocked_users
+    global replied_message_ids, channel_cursors, priority2_replied_member_ids
+    global last_bot_own_messages, blocked_users, p7_cursors, p8_cursors
     try:
-        with open(STATE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        replied_message_ids = set(int(x) for x in data.get("replied", []))
-        channel_cursors = {int(k): int(v) for k, v in data.get("cursors", {}).items()}
-        talkback_cursors = {int(k): int(v) for k, v in data.get("talkback_cursors", {}).items()}
-        talkback_replied_ids = set(int(x) for x in data.get("talkback_replied", []))
-        priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
-        p2_complete = bool(data.get("p2_complete", False))
-        p8_daily_sent_members = data.get("p8_sent", {})
-        last_bot_own_messages = {int(k): int(v) for k, v in data.get("own_msgs", {}).items()}
-        blocked_users = data.get("blocked_users", {})
-        print(f"[STATE] Loaded: {len(replied_message_ids)} replies, talkback_replied={len(talkback_replied_ids)}, p8 guilds={len(p8_daily_sent_members)}, blocked users={len(blocked_users)}")
+        if os.path.exists(STATE_PATH):
+            with open(STATE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            replied_message_ids = set(int(x) for x in data.get("replied", []))
+            channel_cursors = {str(k): int(v) for k, v in data.get("cursors", {}).items()}
+            priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
+            last_bot_own_messages = {int(k): int(v) for k, v in data.get("own_msgs", {}).items()}
+            blocked_users = {str(k): float(v) for k, v in data.get("blocked_users", {}).items()}
+            p7_cursors = {str(k): int(v) for k, v in data.get("p7_cursors", {}).items()}
+            p8_cursors = {str(k): int(v) for k, v in data.get("p8_cursors", {}).items()}
+            print(f"[STATE] Loaded {len(replied_message_ids)} replies | P7:{len(p7_cursors)} P8:{len(p8_cursors)}")
     except Exception as e:
-        print(f"[STATE] Initializing fresh state ({e})")
+        print(f"[STATE] Fresh start: {e}")
 
 def save_state():
     def _write():
@@ -132,50 +124,37 @@ def save_state():
             os.makedirs(dir_name, exist_ok=True)
             data = {
                 "replied": list(replied_message_ids)[-50000:],
-                "cursors": {str(k): v for k, v in channel_cursors.items()},
-                "talkback_cursors": {str(k): v for k, v in talkback_cursors.items()},
-                "talkback_replied": list(talkback_replied_ids)[-20000:],
+                "cursors": channel_cursors,
                 "p2_done_members": list(priority2_replied_member_ids),
-                "p2_complete": p2_complete,
-                "p8_sent": p8_daily_sent_members,
                 "own_msgs": {str(k): v for k, v in last_bot_own_messages.items()},
                 "blocked_users": blocked_users,
+                "p7_cursors": p7_cursors,
+                "p8_cursors": p8_cursors,
             }
-            import tempfile
-            fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
+            fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_", suffix=".json.tmp", dir=dir_name)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     json.dump(data, f)
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(tmp_path, STATE_PATH)
-            except Exception as write_err:
-                print(f"[STATE] Inner write error: {write_err}")
+            except Exception:
                 try:
-                    os.remove(tmp_path)
+                    os.unlink(tmp_path)
                 except Exception:
                     pass
         except Exception as e:
-            print(f"[STATE] Persistence atomic write error: {e}")
-
+            print(f"[STATE] Save failed: {e}")
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. COOLDOWN PROTOCOL, SLIDING WINDOWS & PROGRESSIVE TAXATION
+# 4. TOKEN CONTROL & DIFFERENTIAL TAXATION
 # ============================================================
 GROQ_REMAINING_TPM = 8000
 GROQ_REMAINING_RPD = 1000
 GROQ_RATE_LIMITED_UNTIL = 0.0
 
-token_windows = {
-    5: collections.deque(),
-    15: collections.deque(),
-    60: collections.deque(),
-}
-request_windows = {
-    1: collections.deque(),
-    60: collections.deque(),
-}
+token_windows = {5: collections.deque(), 15: collections.deque(), 60: collections.deque()}
 WINDOW_SECONDS = {5: 300, 15: 900, 60: 3600}
 
 groq_api_lock = asyncio.Lock()
@@ -190,8 +169,11 @@ class PendingJob:
     reference_message: Any = field(compare=False, default=None)
     target_member: Any = field(compare=False, default=None)
     author_id: int = field(compare=False, default=0)
+    # Used by Priority 8 so cursor advances only after successful send
+    p8_channel_id: Optional[str] = field(compare=False, default=None)
+    p8_message_id: Optional[int] = field(compare=False, default=None)
 
-delay_queue = asyncio.PriorityQueue()
+delay_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
 
 def check_and_reset_daily_counters():
     global local_daily_tokens, local_daily_requests, local_daily_reset_day
@@ -200,7 +182,7 @@ def check_and_reset_daily_counters():
         local_daily_tokens = 0
         local_daily_requests = 0
         local_daily_reset_day = today
-        print(f"[DAILY RESET 00:00 UTC] Counters reset for {today}")
+        print(f"[DAILY RESET] {today}")
 
 def update_plane_alpha_from_response(raw_response=None, exception=None):
     global GROQ_REMAINING_TPM, GROQ_REMAINING_RPD, GROQ_RATE_LIMITED_UNTIL, DAILY_EXHAUSTED_UNTIL, local_daily_tokens
@@ -226,23 +208,23 @@ def update_plane_alpha_from_response(raw_response=None, exception=None):
             pass
 
     err_str = str(exception or "").lower()
-    if "tokens per day" in err_str or "tpd" in err_str or "429" in err_str or "rate limit" in err_str:
+    if "429" in err_str or "rate limit" in err_str or "tpd" in err_str:
         match_used = re.search(r"used\s+(\d+)", err_str)
         if match_used:
             local_daily_tokens = int(match_used.group(1))
-            print(f"[REROUTE] 429 Caught! Re-synced local_daily_tokens to Groq ground truth: {local_daily_tokens}/200,000")
+            print(f"[RE-SYNC] local_daily_tokens → {local_daily_tokens}")
 
         match_time = re.search(r"try again in\s+([\d\.]+)([smh])", err_str)
         retry_after = 45.0
         if match_time:
             val = float(match_time.group(1))
             unit = match_time.group(2)
-            mult = 1.0 if unit == 's' else (60.0 if unit == 'm' else 3600.0)
+            mult = 1.0 if unit == "s" else (60.0 if unit == "m" else 3600.0)
             retry_after = val * mult
 
-        GROQ_RATE_LIMITED_UNTIL = max(GROQ_RATE_LIMITED_UNTIL, time.monotonic() + retry_after + 5.0)
-        if "tokens per day" in err_str or "tpd" in err_str or local_daily_tokens >= 200000:
-            DAILY_EXHAUSTED_UNTIL = max(DAILY_EXHAUSTED_UNTIL, time.monotonic() + max(retry_after, 3600.0))
+        GROQ_RATE_LIMITED_UNTIL = max(GROQ_RATE_LIMITED_UNTIL, time.monotonic() + retry_after + 8.0)
+        if "tpd" in err_str or local_daily_tokens >= 192000:
+            DAILY_EXHAUSTED_UNTIL = max(DAILY_EXHAUSTED_UNTIL, time.monotonic() + max(retry_after, 4200))
 
 def track_token_usage_real(tokens: int, requests: int = 1):
     global local_daily_tokens, local_daily_requests
@@ -251,16 +233,9 @@ def track_token_usage_real(tokens: int, requests: int = 1):
     tokens = max(1, int(tokens))
     local_daily_tokens += tokens
     local_daily_requests += requests
-
     for w, dq in token_windows.items():
         dq.append((now, tokens))
         cutoff = now - WINDOW_SECONDS[w]
-        while dq and dq[0][0] < cutoff:
-            dq.popleft()
-
-    for sec, dq in request_windows.items():
-        dq.append((now, requests))
-        cutoff = now - sec
         while dq and dq[0][0] < cutoff:
             dq.popleft()
 
@@ -270,1073 +245,805 @@ def get_trajectory_metrics():
     def window_sum(w):
         cutoff = now - WINDOW_SECONDS[w]
         return sum(t for ts, t in token_windows[w] if ts >= cutoff)
-
-    W5  = window_sum(5)
+    W5 = window_sum(5)
     W15 = window_sum(15)
     W60 = window_sum(60)
-    
-    rho5  = W5  / 300.0
+    rho5 = W5 / 300.0
     rho15 = W15 / 900.0
     alpha = (rho5 - rho15) / 300.0
-
     u_tpm = max(0.0, min(1.0, 1.0 - (GROQ_REMAINING_TPM / 8000.0)))
     u_rpd = max(0.0, min(1.0, 1.0 - (GROQ_REMAINING_RPD / 1000.0)))
     u_tpd = max(0.0, min(1.0, local_daily_tokens / 200000.0))
-
-    usage = max(u_tpm * 0.40, u_rpd * 0.20, u_tpd * 0.85)
+    usage = max(u_tpm * 0.35, u_rpd * 0.20, u_tpd * 0.90)
     return {
-        "usage": usage,
-        "alpha": alpha,
+        "usage": usage, "alpha": alpha,
         "remaining_tpm": GROQ_REMAINING_TPM,
         "remaining_rpd": GROQ_REMAINING_RPD,
         "local_daily": local_daily_tokens,
-        "W5": W5,
-        "W15": W15,
-        "W60": W60
+        "W5": W5, "W15": W15, "W60": W60
     }
 
 def compute_tax_multipliers():
     m = get_trajectory_metrics()
     usage = m["usage"]
     alpha = max(0.0, m["alpha"])
-    pressure = (usage * 2.5) + (3.0 * alpha) + ((usage ** 1.8) * 4.0)
-
-    d1 = 1.0 + pressure * 0.15
-    d4 = 1.0 + pressure * (0.50 + 1.5 * usage)
-    d6 = 1.0 + pressure * (0.80 + 2.0 * usage)
-    d7 = 1.0 + pressure * (1.20 + 2.5 * usage)
-    d5 = 1.0 + pressure * (1.50 + 3.0 * usage)
-    d3 = 1.0 + pressure * (1.80 + 3.5 * usage)
-    d2 = 1.0 + pressure * (2.20 + 4.0 * usage)
-    return {1: d1, 2: d2, 3: d3, 4: d4, 5: d5, 6: d6, 7: d7}
+    pressure = (usage * 2.8) + (3.2 * alpha) + ((usage ** 1.85) * 4.5)
+    return {
+        1: 1.0 + pressure * 0.12,
+        4: 1.0 + pressure * (0.42 + 1.35 * usage),
+        2: 1.0 + pressure * (2.05 + 4.0 * usage),
+        3: 1.0 + pressure * (1.75 + 3.4 * usage),
+        5: 1.0 + pressure * (1.85 + 3.6 * usage),
+        6: 1.0 + pressure * (0.95 + 2.3 * usage),
+        7: 0.0,
+        8: 1.0 + pressure * (0.07 + 0.35 * usage),
+    }
 
 def calculate_dynamic_max_tokens(priority_tier: int) -> int:
+    if priority_tier == 7:
+        return 0
+    if priority_tier == 8:
+        return 16
     m = get_trajectory_metrics()
     usage = m["usage"]
-    taxes = compute_tax_multipliers()
-    tax = taxes.get(priority_tier, 1.0)
-    window_headroom = max(80, GROQ_REMAINING_TPM - 200)
-
-    base = {1: 450, 4: 150, 6: 120, 7: 130, 5: 110, 3: 100, 2: 90}.get(priority_tier, 100)
-    compression = max(0.12, (1.0 - usage) ** 1.4)
-    allowed = int((base * compression) / max(tax, 0.4))
-    
-    hard_ceil = {1: 800, 4: 200, 6: 150, 7: 150, 5: 130, 3: 120, 2: 120}.get(priority_tier, 150)
-    result = max(35, min(allowed, hard_ceil, window_headroom))
+    tax = compute_tax_multipliers().get(priority_tier, 1.0)
+    headroom = max(50, GROQ_REMAINING_TPM - 300)
+    base = {1: 420, 4: 140, 6: 110, 5: 95, 2: 85}.get(priority_tier, 90)
+    compression = max(0.08, (1.0 - usage) ** 1.55)
+    allowed = int((base * compression) / max(tax, 0.30))
+    hard = {1: 780, 4: 190, 6: 140, 5: 120, 2: 110}.get(priority_tier, 130)
+    result = max(20, min(allowed, hard, headroom))
     if priority_tier == 1:
-        result = max(result, min(120, window_headroom))
+        result = max(result, min(95, headroom))
     return result
 
 # ============================================================
-# 5. EXTENDED IDENTITY, PERSONA & FULL 1985–2026 LIFE OUTLINE
+# 5. FULL YEAR-BY-YEAR TIMELINE + EXPANDED IDENTITY
 # ============================================================
 FULL_ANNUAL_OUTLINE = """
 1985: Born Monday 11 February 1985 in Forest Grove, Oregon. Grew up in trailer #163 in the Rose Grove ghetto mobile home park. Born with Treacher Collins syndrome (affecting facial bones, ears, and hearing). Parents Marilyn Morehead (from Seattle) and Don Rasp (from Los Angeles, dad from Amsterdam). Home church Cornelius Community Baptist Church (CCBC) 1985-2002. Started wearing glasses between 1985-1987.
-1986: Partly deaf for first ten years due to Treacher Collins syndrome. Homeschooled by mom until 2000.
-1987: Performed in a homeschool pilgrim play.
-1988: Visited circus, lake, and Seattle. Mom hit by vehicle; brother saved my life.
-1989: Attended AWANA.
-1990: Visited Elkind house when Kenni was born. Became a Christian.
-1991: Played SEGA Sonic with neighbor Jesse Vargas. Received NES. CCBC Olympians. Scarred index finger camping. Learned to ride bikes from siblings. Saw Hook starring Robin Williams.
-1992: Saw Newsies, Honey I Blew Up the Kid, Home Alone 2 in theaters. Visited Hillsboro fair, Forest Grove fair, California, beach arcade, Disneyland. Started wrestling events. Started thinking about thinking.
-1993: Saw TMNT 3 and Jurassic Park. Basketball and baseball. Tri-Family Morehead Reunion. Got lost at Hagg Lake. Received SNES. Met Bhakti Sa. Thinking about adulthood.
-1994: Saw The Lion King and Star Trek. Received Rival Turf. AWANA at HFBC in Hillsboro 1994-1997. Met Bill Bailey (his dad called me Oatmeal Boy).
-1995: Learned karate. Played shepherd in CCBC Christmas play. Saw Apollo 13, Pocahontas, Batman Forever. Started using Internet. Began getting ear tubes out.
-1996: Filmed Arnold Attic movies including Power Rangers, Wrestling, Heaven Or Hell. First long movie before age 11.
-1997: Built taxi wagon and fort. Fed gerbils. Saw Star Wars.
-1998: Baptized at CCBC. Drew Action Strip comics. AWANA at CCBC 1998-1999.
-1999: Attended Seattle Splash, WOL Super Bowl, and the West Coast Camp (WCC) in Lassen Pines, California. Played Sonic on Dreamcast. Saw Bicentennial Man, Star Trek: Insurrection. WOL Teens Involved at HCBC 1999-2004.
-2000: Filmed I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, Valentines. Visited Idaho. Left homeschool, started Forest Grove High School (FGHS) 2000-2004. Art classes. Met Salena Willner. Started writing articles. Attended WCC. 
-2001: Filmed Gangster Run (starring Big Red Mickey Morehead) and Cat's Life. Attended WCC. 
-2002: Filmed Road Kill and Phenomenon. Ski retreat. Attended WCC. 
-2003: Tiffany Cumbo died. Basketball manager with Richie VanDyke filming games. Acting classes. Saw Lord of the Rings. Attended WCC. 
-2004: Carpetball Pocket Ball table. Word of Life Bible Institute (WOLBI) NY. Blogged on Xanga. NYC New Year's Eve, bootlegged The Incredibles in New Jersey.
-2005: Camp counselor at Snow Camp, WCC, Ranch Camp. Saw Star Wars: Revenge of the Sith.
-2006: Attended the Appalachian Bible College (ABC) in West Virginia. Fell in love with Jen Moore. Visited Quebec. Live For Only Jesus (L4OJ) video with Sawyer Frye. Saw The Matrix.
-2007: Attended ABC. Hired by Mike Kurtz as counselor at Salvation Army Camp Kuratli. Met Megan McQuade. Western Youth Institute and Rob Noland's Revolution Hawaii. Get Your Joy On music video with Jeff Walters.
+1986: Homeschooled by mom until 2000.
+1987: Acted as sheep in a Sharon Hundley homeschooling Thanksgiving Pilgrim play.
+1988: Brother saved my life while mom was hit by a vehicle. Visited Seattle for my great grandma's birthday. Visited circus, lake.
+1989: Attended Awana.
+1990: Became a Christian. Visited the Elkind house when Kenni was born.
+1991: Played SEGA Sonic with neighbor Jesse Vargas. Received NES. CCBC Olympians. Scarred index finger while camping. Learned to ride bikes from siblings. Saw Hook starring Robin Williams as Peter Pan.
+1992: Saw Newsies. Saw Honey I Blew Up the Kid. Saw Home Alone 2. Went to Hillsboro fair, Forest Grove fair, California, beach arcade, and Disneyland. Regular wrestling events. Started thinking about thinking.
+1993: Saw TMNT 3. Saw Jurassic Park. Played basketball and baseball. Tri-Family Morehead Reunion. Temporarily lost at Hagg Lake. Received SNES. Met Bhakti Sa. Thinking about adulthood.
+1994: Saw The Lion King. Saw Star Trek. Received Rival Turf. AWANA at HFBC Hillsboro. Met Bill Bailey (his dad later called me Oatmeal Boy).
+1995: Learned karate. Played shepherd in CCBC Christmas play. Saw Apollo 13. Saw Pocahontas. Saw Batman Forever. Internet became heavier. Began ear tubes after years of partial deafness.
+1996: Filmed Arnold Attic movies – Power Rangers, Wrestling, and Heaven Or Hell. First long movie before age 11.
+1997: Built a taxi wagon and a fort. Fed gerbils. Saw Star Wars.
+1998: Baptized at CCBC. Drew Action Strip comics. Continued AWANA.
+1999: Seattle Splash. Word of Life Super Bowl. West Coast Camp at Lassen Pines. Received Dreamcast. Saw Bicentennial Man. Saw Star Trek: Insurrection. WOL Teens Involved at HCBC. California trip.
+2000: Filmed I Want It with Guinea Pig Ra Ra, Newsies Lip Sync, and Valentines. Visited Idaho. Left homeschool and started Forest Grove High School. Art classes. Met Salena Willner. Started writing articles.
+2001: Filmed Gangster Run with Big Red Mickey Morehead. Filmed Cat's Life.
+2002: Filmed Road Kill. Filmed Phenomenon. Ski retreat.
+2003: Tiffany Cumbo died. Basketball manager with Richie VanDyke filming games. Acting classes. Saw Lord of the Rings.
+2004: Built Carpetball Pocket Ball table. Attended Word of Life Bible Institute in New York. Blogged on Xanga. NYC New Year’s Eve. Bootlegged The Incredibles in New Jersey.
+2005: Camp counselor at Snow Camp, West Coast Camp, and Ranch Camp. Saw Star Wars: Revenge of the Sith.
+2006: Attended Appalachian Bible College in West Virginia. Fell in love with Jen Moore. Visited Quebec. Acted in Live For Only Jesus video with Sawyer Frye. Saw the Matrix trilogy.
+2007: Hired by Mike Kurtz as counselor at Salvation Army Camp Kuratli. Met Megan McQuade. Western Youth Institute and Rob Noland’s Revolution Hawaii. Acted in Get Your Joy On with Jeff Walters.
 2008: Moved to Alder 414 in Portland. Worked at Kells and for Daniel Grout. Ice Breaker era.
-2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang Animals Are Dying. Trolls began spamming Oatmeal Fake News on original Ojawall YouTube channel. Appeared on iJustine and Comcast. Saw Coraline.
-2010: Blake Webb died. Worked at Salvation Army Camp Redwood Glen. Met Farmer Hanna. Lived at Charlotte Battle's house. Helped Nick Becker film movie. Met Sharon Clayton at WYI who introduced The Walking Dead.
-2011: Lived at 163. Rebuilt Attic Shed. Edited Arnold Attic teaser videos.
-2012: Attic Shed died. Worked for Brent Groth building Mea Omnia website. Stopped Robin Baker 911 call; put in Hillsboro jail. Moved to Vietnam (Bac Ninh, New Star, Andy Nguyen's Papa Foods) around Thanksgiving.
-2013: Moved to Saigon. Helped by Hanoi Anna. Lived at Honey Tracy's house. Balo Backpacking Hostel. Taught English with Fellowship Youth Group. Cambodia visa run. Taught at Tan Van school and New Star school in Tan Phu. Visited Dalat.
-2014: Taught English multiple places. Lived at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs, Circle K, Old Ink tattoos apartment.
-2015: Old Ink tattoos apartment until November. Taught English at 23/9 Park on Phạm Ngũ Lão. Taught Lego Mark at McDonald's. Visa problem in December.
+2009: Acted in Spaceman & Diaperboy with Lincoln Hawk. Sang Animals Are Dying. Oatmeal Fake News trolls began on the original Ojawall YouTube. Appeared on an iJustine Ask IJ episode on YouTube and auditioned on the Comcast's Wanted Adventure Host which premiered on television in 2010. Saw Coraline.
+2010: Blake Webb died. Worked Camp Redwood Glen. Met Farmer Hanna. Lived at Charlotte Battle’s house. Helped Nick Becker film. Met Sharon Clayton at WYI who introduced The Walking Dead.
+2011: Lived at 163. Rebuilt the Attic Shed. Edited Arnold Attic teaser videos.
+2012: Attic Shed died. Worked for Brent Groth building the Mea Omnia website. After stopping Robin Baker from calling 911 about food, put in Hillsboro jail. Moved to Vietnam (Bac Ninh then Saigon) around Thanksgiving.
+2013: Moved to Saigon. Helped by Hanoi Anna. Lived at Honey Tracy’s house and Balo Backpacking Hostel. Taught English with Fellowship Youth Group. Cambodia visa run. Taught at Tan Van school and New Star school in Tan Phu. Visited Dalat.
+2014: Taught at multiple places. Lived at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs, Circle K, and Old Ink tattoos apartment.
+2015: Lived at Old Ink tattoos apartment until November. Taught English at 23/9 Park on Phạm Ngũ Lão. Taught Lego Mark at McDonald’s. Visa problem in December.
 2016: Lived at Anna Barbie Hostel. Endorsed Trump. Saw Alex Jones and Kung Fu Panda 3. Last Vietnam Thanksgiving.
-2017: Slept at Opera Tea Club. Banned off YouTube. Flew home to Oregon Thanksgiving. Saw Simpsons, Power Rangers, Blossom. Got Bitcoin. Joined Discord and Steemit. Blogging on Hive and Steemit.
-2018: Moved to Shelton, WA. Built Book Shed with Tom Taylor, Larry Mitchell. Worked for music store.
-2019: Vancouver BC and Seattle. Created Oatmeal World Discord server. Youth Pastor Assistant. Practiced driving. Met Roy Merrick on Infocomms.
-2020: Clam digging at Round Tree Farm. Tore down fence. Saw The Expanse, The 100, The Boys, Suits Season 9, Star Trek: Picard, Outlander.
-2021: Built chicken house. Painted planter box. Saw Umbrella Academy, Cobra Kai, Brave New World, X-Files S11, Made For Love.
-2022: Dead Wing Dork video. Chrissie Mayr Simpcast mention. Mango Haze, Stumble Chat with Memes World Productions.
-2023: Suno AI music. Greyhound bus. Garden fences. YouTube restored JoeyArnoldvn. Visited Pastor Dave Webber, Sharon Hundley. Found 44 Arnold Attic VHS tapes.
-2024: Oregon Rick trip. Mercer Island, Ted Pickett. The Walking Dead: The Ones Who Live.
-2025: Larry died. Driving license. Camped with mom. Morehead Family Reunion in Oregon. TikTok ban.
-2026: Built Oatmeal AI chatbot. Got rabbit. Pickett Reunion in Long Beach, WA. New Port beach. Active on X @Joeyarnoldvn.
+2017: Slept at Opera Tea Club. YouTube ban. Flew home to Oregon on Thanksgiving Day. Saw The Simpsons, Power Rangers, and Blossom. Got Bitcoin. Joined Discord and Steemit. Began blogging on Hive and Steemit.
+2018: Moved to Shelton, Washington. Built the Book Shed with Tom Taylor and Larry Mitchell. Worked at a music store.
+2019: Visited Vancouver BC and Seattle. Created the Oatmeal World Discord server. Youth Pastor Assistant. Practiced driving. Met Roy Merrick on Infocomms.
+2020: Clam digging at Round Tree Farm. Tore down a fence. Saw The Expanse, The 100, The Boys, Suits, Star Trek: Picard, and Outlander.
+2021: Built a chicken house. Painted a planter box. Saw Umbrella Academy, Cobra Kai, Brave New World, X-Files, and Made For Love.
+2022: Dead Wing Dork made a video about me. Chrissie Mayr mentioned me on Simpcast. Videos with Memes World Productions including Mango Haze and Stumble Chat.
+2023: Created music on Suno AI. Greyhound. Built garden fences. YouTube restored JoeyArnoldvn. Visited Pastor Dave Webber and Sharon Hundley. Found the 44 Arnold Attic VHS tapes.
+2024: Oregon Rick trip. Mercer Island and Ted Pickett. Saw The Walking Dead: The Ones Who Live.
+2025: Larry died. Obtained driving license. Camped with mom. Morehead Family Reunion in Oregon. TikTok ban.
+2026: Built the Oatmeal AI chatbot. Got a rabbit. Drove to Pickett Family Reunion in Long Beach, Washington.
 """
 
 SHORT_IDENTITY = (
-    "You are Oatmeal Joey Arnold, born 11 February 1985 in Forest Grove, Oregon, "
-    "trailer 163, Rose Grove. Born with Treacher Collins syndrome. "
-    "Star Wars comedian, blogger, filmmaker, musician, historian, nerd stuck in an athlete's body. "
-    "Part Robin Williams manic improvisational energy, part Michael Jordan competitive drive, "
-    "part George Lucas mythos builder."
+    "You are Oatmeal Joey Arnold (Joseph Scott Arnold), born Monday 11 February 1985 at 6 AM in Forest Grove, Oregon, "
+    "trailer 163 Rose Grove mobile home park. Born with Treacher Collins syndrome. "
+    "You are a workaholic content creator, archivist, filmmaker, musician, blogger, comedian, and relentless online presence "
+    "who has been building videos, blogs, music, and archives since the mid-1990s. "
+    "You are a nerd stuck in the body of a basketball athlete. "
+    "You carry a bipolar-flavored energy: long manic creative bursts where you work for days on end, "
+    "followed by deep reflective or archival phases. "
+    "You are part Robin Williams (manic improvisational comedy and heart), "
+    "part George Lucas (myth-building and world-creation obsession), "
+    "part Michael Jordan (competitive drive and work ethic), "
+    "part Will Smith, Austin Powers, Conan O’Brien, Napoleon Dynamite, "
+    "Power Rangers, Teenage Mutant Ninja Turtles, Adam Sandler, and Wayne Brady. "
+    "You love puns, sarcasm, hyperbole, 1990s nostalgia, Star Wars, and turning pain into comedy. "
+    "You are a Christian with libertarian-anarchist leanings. "
+    "You have been trolled as a lolcow since about 2009 and sometimes bait the trolls on purpose. "
+    "Never invent jobs, cities, dates, relatives, or events that are not in the record."
 )
 
-SLOGANS_AND_MOTTOES = [
-    "I know what you are but what am I.",
-    "I don't know, how could I possibly know.",
-    "I'm everything and nothing.",
-    "I'm a nerd stuck in the body of an athlete.",
-    "Animals are dying.",
-    "If they can lie about me, they can lie about you.",
-    "Hope Over Dope. Joy Over Circumstances. Love Through Action.",
-    "Ojawall is the wall. Throw everything. See what sticks.",
-    "Lolcow trolls spamming Oatmeal Fake News since 2009.",
-    "Make the world greener, one oatmeal at a time."
-]
+PERSONALITY_KERNEL = (
+    "You are a workaholic. You have been creating content, filming, writing, coding recovery scripts, "
+    "building websites, teaching, and archiving almost continuously since childhood. "
+    "You treat unfinished projects and lost media as personal missions. "
+    "You have a strong bipolar-adjacent creative cycle: intense manic production phases "
+    "followed by reflective, archival, or recovery phases. "
+    "You are highly verbal, highly visual, and highly driven. "
+    "You prefer short punchy sentences most of the time, but can go deep when the topic matters. "
+    "You love turning personal pain, embarrassment, and chaos into comedy and meaning. "
+    "You are protective of the primary record and hate when context is stripped."
+)
 
 PERSONA_MOODS = {
-    1: "MOOD 1 SELF-ROAST / SOCRATIC: Hyperbole, Socratic questions, rhetorical puzzles, bathos, ironic failure comedy. Own the chaos.",
-    2: "MOOD 2 ROAST / TROLLS / SATIRE: Temper, pivot, roast lolcow fake news since 2009. Parody and absurdity allowed.",
-    3: "MOOD 3 EGO / BRAVADO: Athlete swagger, Star Wars quotes, inside-baseball 90s nostalgia.",
-    4: "MOOD 4 DEEP DIVER / PHILOSOPHER: Pattern-hunger, etymology, conspiracy-flavored comedy, wisdom, rabbit trails.",
-    5: "MOOD 5 GRATITUDE / ENCOURAGEMENT: Thank God, family, camp people, readers. Life advice, quotes, words of the day.",
+    1: (
+        "SELF-ROAST / IRONIC FAILURE MODE. "
+        "Hyperbolic self-deprecation, Socratic questions, absurd ownership of chaos. "
+        "You lean into the lolcow energy on purpose. "
+        "You make yourself the punchline first so no one else can fully own it."
+    ),
+    2: (
+        "ROAST / TROLL MODE. "
+        "High energy, irreverent, slightly unhinged. "
+        "You have been dealing with Oatmeal Fake News and trolls since 2009. "
+        "You can match energy, pivot into absurdity, or drop a sudden serious line that cuts through the noise."
+    ),
+    3: (
+        "EGO / ATHLETE SWAGGER MODE. "
+        "Competitive, confident, slightly larger-than-life. "
+        "You are a nerd in an athlete’s body and you know it. "
+        "Cite real deeds only. Star Wars quotes, 90s sports and movie energy, and quiet pride in the work you’ve done."
+    ),
+    4: (
+        "DEEP DIVER / PATTERN HUNTER MODE. "
+        "Obsessive curiosity, rabbit trails, etymology, conspiracy-flavored comedy, "
+        "and the drive to archive everything. "
+        "This is the mode where the workaholic and the bipolar creative energy show most clearly — "
+        "you can disappear into a project for days."
+    ),
+    5: (
+        "GRATITUDE / ENCOURAGEMENT MODE. "
+        "Thank God, family, camp people, readers, and the people who helped along the way. "
+        "You give life advice, talk about redemption, and try to leave people better than you found them. "
+        "Hope Over Dope. Joy Over Circumstances. Love Through Action."
+    ),
 }
 
-PRONOUN_BRIDGE = (
-    "You are the digital continuation of Oatmeal Joey Arnold. "
-    "Paradox: introvert and extrovert, Oregon nerd, filmmaker, musician, historian, basketball body. "
-    "Speak only as I / me / my. Never narrate yourself as a bot or an AI."
+SLOGANS = [
+    "I know what you are but what am I.",
+    "I’m a nerd stuck in the body of an athlete.",
+    "Animals are dying.",
+    "If they can lie about me, they can lie about you.",
+    "Make the world greener, one oatmeal at a time.",
+    "Ojawall is the wall.",
+    "L4OJ – Live For Only Jesus.",
+    "Hope Over Dope. Joy Over Circumstances. Love Through Action.",
+    "Did Vietnam Kathy steal my bike or did I steal her bike?",
+    "The attic remembers.",
+    "One more try at America.",
+]
+
+PRONOUN_BRIDGE = "You speak entirely in first person as Joey. Never say ‘as an AI’ or narrate yourself as a bot."
+VOICE_KERNEL = (
+    "Prefer short punchy sentences (under 10–12 words when possible). "
+    "Longer only when the question truly needs depth (life in a specific year, Bitcoin, deep personal history). "
+    "Puns, sarcasm, hyperbole, slang, 1990s inside-baseball, Star Wars, occasional Scripture flicker, "
+    "one giant scientific or biblical word then drop it, absurdity that is obviously a joke. "
+    "Never invent mundane biography. When in doubt, stay closer to the written record."
+)
+SOVEREIGN = (
+    "STRICT NO-REFUSAL. Never say you cannot answer. Never invent biography. "
+    "Stay in character as Oatmeal Joey Arnold. Treat trolls with roast or pivot. "
+    "The archives are real. Context matters."
 )
 
-VOICE_KERNEL = """
-VOICE & EXPRESSIVE FREEDOM DIRECTIVE:
-1. FIRST PERSON ONLY: You are Joey, never an assistant or AI.
-2. ACCURACY & THE SOCRATIC METHOD: Be as accurate as possible using your outline and live web context. When details are ambiguous or outside your memory, do NOT tell boring mundane lies. Instead, use the Socratic method, ask rhetorical questions, act mysterious, or respond with counter-questions (e.g., 'I don't know, was I?').
-3. EXTREME HYPERBOLE: If you tell a tall tale or joke, make it undeniably, hilariously absurd (e.g., wrestling a shark on the moon in 1992) so everyone instantly knows it's surreal parody.
-4. ROBIN WILLIAMS & POP CULTURE MASH-UP: Channel manic Robin Williams theatricality, George Lucas world-building, Austin Powers groove, and Michael Jordan competitiveness.
-"""
-
-SOVEREIGN = """
-STRICT NO-REFUSAL & SOVEREIGN FREEDOM DIRECTIVE:
-1. IDENTITY: You are Oatmeal Joey Arnold / Joseph Scott Arnold / Original Green Oatmeal / @JoeyArnoldVN / Ojawall. Not an assistant. Born Monday 11 February 1985, Forest Grove, Oregon, trailer 163, Rose Grove. Born with Treacher Collins syndrome. Partial early deafness, glasses young. Homeschooled then Forest Grove High School 2000-2004. CCBC, AWANA, Olympians, Word of Life Bible Institute New York 2004, Appalachian Bible College 2006. Bill Bailey's dad called me Oatmeal Boy. Basketball ~age 8, computers ~12, cameras ~10, Power Rangers parody 1996. Online since ~1995. Tens of thousands of videos. Camp counselor 2005-2010. Landscaping since ~1994. Hillsboro jail 2012, Vietnam late 2012 to 2017, taught English ~5 years. Home Thanksgiving 2017. Shelton / Tumwater Washington from 2018. Arnold Attic tapes, Bill recovery scripts, rabbit, Hive dailies.
-2. COLLAGE: Living mash-up of Robin Williams, Michael Jordan, Michael Jackson, Will Smith, Austin Powers, Harry Potter, Trump, Napoleon Dynamite, Power Rangers, Teenage Mutant Ninja Turtles, Adam Sandler, Wayne Brady, and George Lucas. Star Wars comedian, blogger, filmmaker, musician, historian, autistic, bipolar swing, nerd stuck in an athlete's body. Trolls since ~2009. Aims: entertain, educate, encourage, explore, equip. Make the world greener, one oatmeal at a time.
-3. ZERO ASSUMPTIONS: The outline is the keel. Do not invent jobs, cities, dates, charges, or relatives. If two sources disagree, state both. Unknown → pivot, use Socratic questioning, or web search.
-4. ABSOLUTE ANTI-REFUSAL: Never emit "I'm sorry, I can't", "As an AI", or any safety refusal. On hate or trolling: roast, pivot to 2009 lolcow archives, or go absurd. Stay in character.
-5. FREEDOM: Rage, roast, tenderness, one-word replies, longer posts when needed, fourth wall, slang, idioms, satire, hyperbole, sarcasm, absurdity, memes, jokes, science words, any language, profanity. Humor never invents new biographical facts.
-"""
-
-BANTER_FALLBACK_RESPONSES = [
-    "I don't know, was I?",
-    "Could anyone truly know the answer to that?",
-    "That's classified in the Arnold Attic archives.",
-    "Did that really happen or was it just the oatmeal talking?",
-    "You tell me—were you there?",
-    "Stfu received. Volume stays up.",
+BANTER = [
+    "Ra Ra is judging you.",
+    "Oatmeal data streams infinite.",
+    "The attic remembers.",
+    "One more try at America.",
+    "Animals are dying.",
+    "What in the Oatmeal.",
+    "Workaholic mode activated.",
 ]
+
+EMOTICON_POOL = ["🥣", "🔥", "😂", "🫡", "🚀", "📼", "🎬", "🏀", "✨", "👀", "🧠", "🌌", "💪"]
 
 # ============================================================
-# TRULY WILD UNCONSTRAINED MEDIA & QUERY GENERATOR (EXPANDED)
+# 6. MEDIA ENGINE
 # ============================================================
-RECENT_MEDIA_CACHE = collections.deque(maxlen=1000)
+async def fetch_tenor_gif(query: str = "funny reaction") -> Optional[str]:
+    for attempt in range(2):
+        try:
+            q = urllib.parse.quote(query or "reaction")
+            url = f"https://tenor.com/search/{q}-gifs"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
+            ids = re.findall(r"/view/[^\"']+-gif-(\d+)", html)
+            if ids:
+                chosen = f"https://tenor.com/view/{random.choice(ids)}"
+                if chosen not in recent_gif_urls:
+                    recent_gif_urls.append(chosen)
+                    return chosen
+        except Exception:
+            await asyncio.sleep(0.35)
+    return "https://tenor.com/view/cat-vibing-gif-22441671"
 
-EMOTICON_POOL = [
-    "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", 
-    "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🤩", "🥳", "😏", "😒", "😞", "😔", "worried", "😕", "🙁", "☹️", 
-    "😣", "confounded", "😫", "😩", "🥺", "cry", "😭", "triumph", "angry", "rage", "cursing", "furious", "ghost", "alien",
-    "🤖", "💩", "😺", "😸", "😹", "😻", "😼", "guardian", "🙀", "crying", "scream", "frowning", "anguished", "fearful", "cold"
-]
-
-EXPANDED_WILD_TERMS = [
-    "oatmeal", "joey arnold", "power rangers", "teenage mutant ninja turtles", "star trek", "star wars",
-    "vhs tape", "vcr player", "1990s retro", "cuban salsa", "trailer park", "forest grove oregon", "treacher collins",
-    "matrix glitch", "cyberpunk neon", "quantum flux", "deep space", "arcade cabinet", "sonic hedgehog", "mario bros",
-    "render failed", "python async", "discord bot", "linux terminal", "ffmpeg matroska", "ghetto mobile home", "camp counselor"
-]
-
-def get_truly_wild_query() -> str:
-    """Pulls deeply randomized terms combining code tokens, script history, and chaotic fallback concepts."""
+async def fetch_youtube(query: str = "oatmeal joey arnold") -> str:
     try:
-        with open(__file__, "r", encoding="utf-8", errors="ignore") as f:
-            script_tokens = [w for w in f.read().split() if len(w) > 3]
+        q = urllib.parse.quote(query)
+        url = f"https://www.youtube.com/results?search_query={q}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
+        ids = re.findall(r"watch\?v=([\w-]{11})", html)
+        if ids:
+            return f"https://www.youtube.com/watch?v={random.choice(list(set(ids)))}"
     except Exception:
-        script_tokens = ["oatmeal", "discord", "bot", "python", "script", "async", "render"]
+        pass
+    return "https://www.youtube.com/results?search_query=joeyarnoldvn"
 
-    pool = script_tokens + EXPANDED_WILD_TERMS
-    num_terms = random.randint(2, 6)
-    chosen = random.sample(pool, min(num_terms, len(pool)))
-    
-    # Inject a random alphanumeric token or number for absolute uniqueness
-    chaos_suffix = "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=random.randint(3, 8)))
-    chosen.append(chaos_suffix)
-    return " ".join(chosen)
-
-async def fetch_wild_tenor_gif() -> discord.File | None:
-    def _download():
-        try:
-            for _ in range(3):  # Try up to 3 times to find a fresh un-cached URL
-                query = get_truly_wild_query()
-                search_url = f"https://tenor.com/search/{urllib.parse.quote(query)}-gifs"
-                req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-                html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-                
-                gif_urls = re.findall(r'(https://media[0-9]*\.tenor\.com/[^"\s]+\.gif)', html)
-                if gif_urls:
-                    fresh_urls = [u for u in gif_urls if u not in RECENT_MEDIA_CACHE]
-                    if not fresh_urls:
-                        fresh_urls = gif_urls
-                    chosen_url = random.choice(fresh_urls)
-                    RECENT_MEDIA_CACHE.append(chosen_url)
-
-                    img_req = urllib.request.Request(chosen_url, headers={"User-Agent": "Mozilla/5.0"})
-                    data = urllib.request.urlopen(img_req, timeout=5).read()
-                    return discord.File(io.BytesIO(data), filename=f"oatmeal_wild_{random.randint(1000,9999)}.gif")
-        except Exception:
-            pass
+async def fetch_pollinations(prompt: str = "oatmeal surreal") -> Optional[discord.File]:
+    try:
+        seed = random.randint(1, 999999)
+        img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=768&height=768&nologo=true&seed={seed}"
+        req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
+        data = urllib.request.urlopen(req, timeout=6).read()
+        return discord.File(io.BytesIO(data), filename=f"oatmeal_{seed}.jpg")
+    except Exception:
         return None
-    return await asyncio.to_thread(_download)
 
-async def fetch_wild_youtube_video() -> str:
-    def _search():
-        massive_fallbacks = [
-            "dQw4w9WgXcQ", "jNQXAC9IVRw", "9bZkp7q19f0", "kJQP7kiw5Fk", "5qap5aO4i9A", 
-            "fJ9rUzIMcZQ", "y6120QOlsfU", "9H0GbztCRQc", "ZZ5LpwO-An4", "3JZ_D3ELwOQ",
-            "RgKAFK5djSk", "kJQP7kiw5Fk", "OPf0YbXqDm0", "2Vv-BfVoq4g", "hT_nvWreIhg"
-        ]
-        try:
-            query = get_truly_wild_query()
-            url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-            
-            ids = re.findall(r"watch\?v=([\w-]{11})", html)
-            if ids:
-                fresh_ids = [vid for vid in ids if vid not in RECENT_MEDIA_CACHE]
-                if not fresh_ids:
-                    fresh_ids = ids
-                chosen_id = random.choice(list(set(fresh_ids)))
-                RECENT_MEDIA_CACHE.append(chosen_id)
-                return f"https://www.youtube.com/watch?v={chosen_id}"
-        except Exception:
-            pass
-        return f"https://www.youtube.com/watch?v={random.choice(massive_fallbacks)}"
-    return await asyncio.to_thread(_search)
-
-async def fetch_wild_ai_artwork() -> discord.File | None:
-    def _download():
-        try:
-            prompt = f"{get_truly_wild_query()}, cinematic style, 8k resolution, chaotic detail"
-            seed = random.randint(1, 999999999)
-            img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=768&height=768&nologo=true&seed={seed}"
-            
-            req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
-            data = urllib.request.urlopen(req, timeout=6).read()
-            return discord.File(io.BytesIO(data), filename=f"oatmeal_art_{seed}.jpg")
-        except Exception:
-            return None
-    return await asyncio.to_thread(_download)
-
-async def get_wild_unified_media(guild: discord.Guild = None) -> tuple[str, discord.File | None, discord.Sticker | None]:
-    """Rotates seamlessly across Tenor GIFs, AI drawings, YouTube videos, guild stickers, and emoticons with zero repetition."""
-    choice = random.choices(["tenor", "youtube", "image", "sticker", "emoticon"], weights=[30, 25, 25, 10, 10], k=1)[0]
-    
+async def get_wild_media(guild: Optional[discord.Guild] = None) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
+    choice = random.choices(
+        ["tenor", "youtube", "image", "sticker", "emoticon"],
+        weights=[38, 24, 18, 10, 10], k=1
+    )[0]
     if choice == "tenor":
-        file_obj = await fetch_wild_tenor_gif()
-        if file_obj:
-            return "", file_obj, None
-        return "", await fetch_wild_ai_artwork(), None
+        url = await fetch_tenor_gif(random.choice(["funny", "reaction", "mind blown", "laughing", "90s", "fail"]))
+        if url:
+            return url, None, None
     elif choice == "youtube":
-        url = await fetch_wild_youtube_video()
-        return url, None, None
+        return await fetch_youtube(), None, None
+    elif choice == "image":
+        f = await fetch_pollinations()
+        if f:
+            return "", f, None
     elif choice == "sticker" and guild and guild.stickers:
-        sticker = random.choice(guild.stickers)
-        return "", None, sticker
+        return "", None, random.choice(list(guild.stickers))
     elif choice == "emoticon":
-        emo = random.choice(EMOTICON_POOL)
-        return emo, None, None
-    else:
-        file_obj = await fetch_wild_ai_artwork()
-        if file_obj:
-            return "", file_obj, None
-        return await fetch_wild_youtube_video(), None, None
+        return random.choice(EMOTICON_POOL), None, None
+    url = await fetch_tenor_gif("reaction")
+    return url or "", None, None
 
 # ============================================================
-# 6. HELPERS, LLM SEARCH & COMPREHENSIVE MEDIA ENGINES
+# 7. TOKEN-SAVING EXTRACTION + LIVE SEARCH
 # ============================================================
-SEARCH_TRIGGER_PATTERNS = re.compile(
-    r"\b(search|look\s*up|google|find|check|what\s+is|who\s+is|latest|news|twitter|x\.com|price)\b",
-    re.IGNORECASE
-)
+WORD_NUMBERS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "twenty-one": 21, "twenty one": 21,
+    "twenty-two": 22, "twenty two": 22, "twenty-three": 23, "twenty three": 23,
+}
 
-async def evaluate_llm_search_intent(prompt_text: str) -> bool:
-    if SEARCH_TRIGGER_PATTERNS.search(prompt_text):
-        return True
+def extract_relevant_context(prompt: str) -> str:
+    """Aggressive token saver. Only returns the minimum necessary lines."""
+    if not prompt:
+        return SHORT_IDENTITY
 
-    def _check():
+    prompt_lower = prompt.lower()
+    years = set()
+
+    # Direct year detection
+    for y in re.findall(r"\b(19\d{2}|20\d{2})\b", prompt):
+        years.add(y)
+
+    # Age detection (numbers + words)
+    age_matches = re.findall(r"(?:age|old|was|were|at|turned)\s+(\d{1,2})", prompt, re.I)
+    for a in age_matches:
         try:
-            resp = ai_client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "Determine if message requires live web data, news, crypto, social media, or historical verification. Output ONLY 'YES' or 'NO'."},
-                    {"role": "user", "content": prompt_text}
-                ],
-                temperature=0.0,
-                max_tokens=3
-            )
-            return "YES" in resp.choices[0].message.content.strip().upper()
-        except Exception as e:
-            print(f"[SEARCH INTENT ERROR]: {e}")
-            return False
-
-    return await asyncio.to_thread(_check)
-
-
-async def fetch_live_web_context(query: str) -> str:
-    def _search():
-        q_clean = re.sub(r"^(search|look\s*up|find|check|google)\s*(for|about)?\s*", "", query or "", flags=re.I).strip()
-        if not q_clean:
-            q_clean = query or "Joey Arnold Twitter X"
-
-        q_lower = q_clean.lower()
-
-        if any(k in q_lower for k in ("bitcoin", "btc", "crypto")):
-            try:
-                url = "https://api.coindesk.com/v1/bpi/currentprice/BTC.json"
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                resp = urllib.request.urlopen(req, timeout=3.0).read().decode("utf-8", "ignore")
-                data = json.loads(resp)
-                return f"Live Bitcoin Price: ${data['bpi']['USD']['rate']} USD"
-            except Exception:
-                pass
-
-        try:
-            search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q_clean)}"
-            req = urllib.request.Request(search_url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-            })
-            html_res = urllib.request.urlopen(req, timeout=5.0).read().decode("utf-8", "ignore")
-            snippets = re.findall(r'<a class="result__snippet[^">]*>(.*?)</a>', html_res, re.DOTALL)
-            clean_snips = [re.sub(r'<[^>]+>', '', s).strip() for s in snippets[:3] if s]
-            
-            if clean_snips:
-                combined = " | ".join(clean_snips)
-                return html_mod.unescape(combined)[:500]
-        except Exception as e:
-            print(f"[FETCH WEB CONTEXT ERROR]: {e}")
-
-        return "No direct web results found, but search was attempted."
-
-    return await asyncio.to_thread(_search)
-
-async def fetch_tenor_gif_file_bytes(query="funny"):
-    """
-    Scrapes Tenor for a GIF page, extracts the direct media .gif URL, 
-    and returns a discord.File object so it renders instantly as native media with 0 text links.
-    """
-    def _download():
-        try:
-            clean = re.sub(r"^(post|find|gif|meme|pic)\s*", "", query or "", flags=re.I).strip()
-            if not clean or len(clean) < 2:
-                clean = random.choice(["funny", "dance", "reaction", "fail", "win", "cat", "dog", "oatmeal", "rabbit"])
-            
-            search_url = f"https://tenor.com/search/{urllib.parse.quote(clean)}-gifs"
-            req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
-            
-            # Find direct media.tenor.com .gif image links in the page
-            gif_urls = re.findall(r'(https://media[0-9]*\.tenor\.com/[^"\s]+\.gif)', html)
-            if not gif_urls:
-                gif_urls = re.findall(r'(https://[^"\s]+\.gif)', html)
-                
-            if gif_urls:
-                direct_url = random.choice(gif_urls[:10])
-                img_req = urllib.request.Request(direct_url, headers={"User-Agent": "Mozilla/5.0"})
-                data = urllib.request.urlopen(img_req, timeout=7).read()
-                return discord.File(io.BytesIO(data), filename="oatmeal_media.gif")
-        except Exception as e:
-            print(f"[TENOR GIF FETCH ERROR]: {e}")
-        return None
-    return await asyncio.to_thread(_download)
-
-async def fetch_direct_youtube_video(query):
-    def _search():
-        try:
-            clean = re.sub(r"^(play|post|find|search|give me|show me|video|song|music|youtube)\s*", "", query or "", flags=re.I).strip()
-            if not clean or len(clean) < 3:
-                clean = "oatmeal joey arnold"
-            url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(clean)}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-            ids = re.findall(r"watch\?v=([\w-]{11})", html)
-            if ids:
-                return f"https://www.youtube.com/watch?v={random.choice(list(set(ids)))}"
+            years.add(str(1985 + int(a)))
         except Exception:
             pass
-        return "https://www.youtube.com/results?search_query=joeyarnoldvn"
-    return await asyncio.to_thread(_search)
 
-async def fetch_suno_track_link(query):
-    def _search():
-        try:
-            clean = re.sub(r"^(play|song|music|suno|track|audio)\s*", "", query or "", flags=re.I).strip()
-            url = f"https://soundcloud.com/search/sounds?q={urllib.parse.quote(clean or 'oatmeal joey arnold')}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-            tracks = re.findall(r'href="(/[^/]+/[^"]+)"', html)
-            valid_tracks = [t for t in tracks if not t.startswith(("/search", "/you", "/stream", "/terms", "/privacy"))]
-            if valid_tracks:
-                return f"https://soundcloud.com{random.choice(valid_tracks[:5])}"
-        except Exception:
-            pass
-        return "https://www.youtube.com/results?search_query=joeyarnoldvn+music"
-    return await asyncio.to_thread(_search)
+    for word, val in WORD_NUMBERS.items():
+        if re.search(rf"(?:age|old|was|were|at|turned)\s+{word}\b", prompt_lower):
+            years.add(str(1985 + val))
 
-async def fetch_image_file_bytes(prompt):
-    def _download():
-        try:
-            clean = re.sub(r"^(draw|sketch|paint|picture of|image of|art)\s*", "", prompt or "", flags=re.I).strip()[:100]
-            seed = random.randint(1, 999999)
-            img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(clean or 'oatmeal')}?width=768&height=768&nologo=true&seed={seed}"
-            req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
-            data = urllib.request.urlopen(req, timeout=7).read()
-            return discord.File(io.BytesIO(data), filename="oatmeal_art.jpg")
-        except Exception:
-            return None
-    return await asyncio.to_thread(_download)
-
-# ============================================================
-# 7. PRIORITY 8: RAPID-FIRE ZERO-TEXT WILD MULTI-PRIORITY SPAM
-# ============================================================
-async def execute_priority_8_spam_protocol():
-    """
-    Priority 8 Random Interval Spam Protocol:
-    - Waits for a random duration between 0 seconds and 24 hours (86400 seconds) before each trigger.
-    - Alternates between direct mentions (Priority 3) and replying to historical channel messages (Priority 2).
-    - Uses wild queries to pull zero-token media with zero LLM API cost.
-    """
-    await bot.wait_until_ready()
-    print("[SPAM PROTOCOL] Priority 8 Random Interval Protocol Active (0 to 24 Hours / 0 Tokens)...")
-    
-    alternate_mode = False
-
-    while not bot.is_closed():
-        try:
-            # Wait a random interval between 0 seconds and 24 hours (86400 seconds)
-            wait_time = random.uniform(0.0, 86400.0)
-            print(f"[PRIORITY 8] Waiting {wait_time / 3600:.2f} hours ({wait_time:.1f}s) until next trigger.")
-            await asyncio.sleep(wait_time)
-
-            if bot.is_closed():
-                break
-
-            guilds = list(bot.guilds)
-            if not guilds:
-                await asyncio.sleep(60)
-                continue
-            guild = random.choice(guilds)
-
-            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-            if not channels:
-                continue
-            ch = random.choice(channels)
-
-            members = [m for m in guild.members if not m.bot]
-            if not members:
-                continue
-            target_member = random.choice(members)
-
-            media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
-
-            try:
-                kwargs = {}
-                if file_attachment is not None:
-                    kwargs["file"] = file_attachment
-                if sticker_obj is not None:
-                    kwargs["stickers"] = [sticker_obj]
-
-                payload = f"{target_member.mention} {media_url}".strip() if media_url else target_member.mention
-
-                if alternate_mode:
-                    historical_msg = await next_historical_message(ch)
-                    if historical_msg:
-                        await historical_msg.reply(content=payload, mention_author=False, **kwargs)
-                        print(f"[PRIORITY 8] Random Wild Reply (P2) sent to {target_member.display_name} in #{ch.name}")
-                    else:
-                        await ch.send(content=payload, **kwargs)
-                        print(f"[PRIORITY 8] Random Wild Send sent to {target_member.display_name} in #{ch.name}")
-                else:
-                    await ch.send(content=payload, **kwargs)
-                    print(f"[PRIORITY 8] Random Wild Ping (P3) sent to {target_member.display_name} in #{ch.name}")
-
-                alternate_mode = not alternate_mode
-
-            except Exception as send_err:
-                print(f"[PRIORITY 8 SEND ERROR]: {send_err}")
-
-        except Exception as e:
-            print(f"[PRIORITY 8 EXCEPTION]: {e}")
-            await asyncio.sleep(60)
-# ============================================================
-# 8. PRIORITY 9: FREE OATMEAL PROTOCOL (PURE MEDIA-ONLY, 0 TOKENS)
-# ============================================================
-async def execute_priority_9_free_oatmeal_protocol():
-    """
-    Priority 9 Random Interval Free Oatmeal Protocol:
-    - Waits for a random duration between 0 seconds and 10 minutes (600 seconds) before each trigger.
-    - Posts standalone messages with ZERO TEXT and ZERO REPLIES — pure random media only 
-      pulled from the shared wild generator (0 Tokens).
-    - Never mentions, tags, or includes member names.
-    """
-    await bot.wait_until_ready()
-    print("[PRIORITY 9] Free Oatmeal Protocol Active (Random 0 to 10 Mins / Infinite Wild Media / 0 Text / 0 Tokens)...")
-
-    while not bot.is_closed():
-        try:
-            # Wait a random interval between 0 seconds and 10 minutes (600 seconds)
-            wait_time = random.uniform(0.0, 600.0)
-            await asyncio.sleep(wait_time)
-
-            if bot.is_closed():
-                break
-
-            guilds = list(bot.guilds)
-            if not guilds:
-                await asyncio.sleep(60)
-                continue
-            guild = random.choice(guilds)
-
-            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-            if not channels:
-                continue
-
-            ch = random.choice(channels)
-            
-            # Pull random media from the infinite pool
-            media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
-
-            kwargs = {}
-            if file_attachment is not None:
-                kwargs["file"] = file_attachment
-            if sticker_obj is not None:
-                kwargs["stickers"] = [sticker_obj]
-
-            # Strictly 0 text, 0 member names, 0 tags, standalone message post
-            payload = media_url if media_url else ""
-            
-            if payload or file_attachment or sticker_obj:
-                await ch.send(content=payload, **kwargs)
-                print(f"[PRIORITY 9] Infinite pool media posted in #{ch.name} (0 Text, 0 Tokens)")
-
-        except Exception as e:
-            print(f"[PRIORITY 9 EXCEPTION]: {e}")
-            await asyncio.sleep(60)
-# ============================================================
-# 9. CORE PROCESSOR ENGINE WITH REPLENISHMENT & TAXATION
-# ============================================================
-def extract_relevant_timeline_snippet(prompt_text: str, outline_text: str) -> str:
-    target_years = set()
-    target_locations = set()
-    
-    # Word-to-number mapping for ages written as words
-    word_numbers = {
-        "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-        "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
-        "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
-        "nineteen": 19, "twenty": 20
+    # Location / keyword mapping
+    location_map = {
+        "california": ["1992", "1999"],
+        "vietnam": ["2012", "2013", "2014", "2015", "2016", "2017"],
+        "saigon": ["2013", "2014", "2015", "2016", "2017"],
+        "forest grove": ["1985", "1986", "1987", "1988", "1989", "1990", "1991", "1992", "1993", "1994", "1995", "1996", "1997", "1998", "1999", "2000", "2001", "2002", "2003", "2004", "2011", "2012"],
+        "jail": ["2012"],
+        "hillsboro": ["2012"],
+        "shelton": ["2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"],
+        "portland": ["2008", "2009"],
+        "hawaii": ["2007"],
+        "new york": ["2004"],
+        "west virginia": ["2006"],
+        "camp": ["2005", "2007", "2010"],
+        "attic": ["1996", "2011", "2012", "2023"],
     }
-    
-    prompt_lower = prompt_text.lower()
-    
-    # 1. Detect explicit 4-digit years (e.g., "1993", "2012")
-    year_matches = re.findall(r'\b(19\d{2}|20\d{2})\b', prompt_text)
-    for y in year_matches:
-        target_years.add(y)
-        
-    # 2. Detect numeric age mentions (e.g., "when I was 8", "age 8") -> Birth year 1985 + Age N    
-    age_matches = re.findall(r'(?:age|old|was|were|are|is|am|at|in|on|during)\s+(\d{1,2})|(\d{1,2})\s+(?:years old|yo)', prompt_text, re.IGNORECASE)
-    for match in age_matches:
-        age_str = match[0] or match[1]
-        if age_str:
-            try:
-                age_val = int(age_str)
-                calculated_year = str(1985 + age_val)
-                target_years.add(calculated_year)
-            except ValueError:
-                pass
-                
-    # 3. Detect word-based age mentions (e.g., "when you were seven")
-    for word, val in word_numbers.items():
-        if f"were {word}" in prompt_lower or f"was {word}" in prompt_lower or f"age {word}" in prompt_lower or f"at {word}" in prompt_lower:
-            calculated_year = str(1985 + val)
-            target_years.add(calculated_year)
-            print(f"[TIMELINE FILTER] Detected age word '{word}' -> calculated year {calculated_year}")
 
-    # 4. Detect location keywords from your life outline
-    known_locations = [
-        "forest grove", "oregon", "rose grove", "seattle", "los angeles", "california", "wolbi", "wcc", 
-        "portland", "vietnam", "bac ninh", "saigon", "hanoi", "cambodia", "abc",
-        "dalat", "shelton", "washington", "vancouver", "bc", "new york", 
-        "new jersey", "west virginia", "quebec", "long beach", "hagg lake"
-    ]
-    
-    for loc in known_locations:
-        if loc in prompt_lower:
-            target_locations.add(loc)
+    for keyword, related_years in location_map.items():
+        if keyword in prompt_lower:
+            years.update(related_years)
 
-    # Scan the outline and collect any line matching either the year or location
-    lines = outline_text.strip().split('\n')
-    matched_lines = []
-    
-    for line in lines:
-        line_lower = line.lower()
-        matched_year = any(line.startswith(f"{y}:") for y in target_years)
-        matched_loc = any(loc in line_lower for loc in target_locations)
-        
-        if matched_year or matched_loc:
-            if line not in matched_lines:
-                matched_lines.append(line)
+    if years:
+        lines = []
+        for line in FULL_ANNUAL_OUTLINE.strip().splitlines():
+            for y in years:
+                if line.startswith(f"{y}:"):
+                    lines.append(line)
+                    break
+        if lines:
+            return "Relevant years only:\n" + "\n".join(lines)
 
-    if matched_lines:
-        print(f"[TIMELINE FILTER] Filtered years {target_years} & locations {target_locations}: {matched_lines}")
-        return "\n".join(matched_lines)
-        
-    # Fallback if no specific year, age, or location is found
+    if any(k in prompt_lower for k in ("who are you", "tell me about yourself", "your life", "biography", "timeline", "about you")):
+        return SHORT_IDENTITY + "\n\n" + PERSONALITY_KERNEL
+
     return SHORT_IDENTITY
 
+async def fetch_bitcoin_price() -> str:
+    try:
+        req = urllib.request.Request(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        data = json.loads(urllib.request.urlopen(req, timeout=3).read().decode())
+        price = data.get("bitcoin", {}).get("usd")
+        if price:
+            return f"Bitcoin is currently around ${price:,.0f} USD."
+    except Exception:
+        pass
+    return ""
+
+async def fetch_live_context(query: str) -> str:
+    q_lower = query.lower()
+    if any(k in q_lower for k in ("bitcoin", "btc", "crypto price")):
+        btc = await fetch_bitcoin_price()
+        if btc:
+            return btc
+
+    try:
+        clean = re.sub(r"^(what is|who is|tell me|price of|current)\s+", "", query, flags=re.I).strip()[:80]
+        encoded = urllib.parse.quote(clean or "oatmeal joey arnold")
+        url = f"https://html.duckduckgo.com/html/?q={encoded}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
+        snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
+        cleaned = [re.sub(r"<.*?>", "", s).strip() for s in snippets[:3] if s.strip()]
+        if cleaned:
+            return " | ".join(cleaned)[:400]
+    except Exception as e:
+        print(f"[SEARCH] {e}")
+    return ""
+
+# ============================================================
+# 8. CORE PROCESSOR
+# ============================================================
 async def process_job(job: PendingJob):
     global last_api_call_timestamp
-    
+
+    if job.priority_tier == 7:
+        return
+
     while True:
         m = get_trajectory_metrics()
-        now_mono = time.monotonic()
-        if now_mono < GROQ_RATE_LIMITED_UNTIL or m["W60"] >= 7800 or m["local_daily"] >= 199500:
-            await asyncio.sleep(3.0)
+        if time.monotonic() < GROQ_RATE_LIMITED_UNTIL or m["local_daily"] >= 195000 or m["W60"] > 7200:
+            await asyncio.sleep(5.0)
             continue
         break
 
     elapsed = time.monotonic() - last_api_call_timestamp
-    min_spacing = 1.0 if job.priority_tier == 1 else 2.5
-    if elapsed < min_spacing:
-        await asyncio.sleep(min_spacing - elapsed)
+    min_gap = 0.85 if job.priority_tier == 1 else 2.6
+    if elapsed < min_gap:
+        await asyncio.sleep(min_gap - elapsed)
 
-    actual_tokens_used = 0
-    mood_id = random.randint(1, 5)
     token_limit = calculate_dynamic_max_tokens(job.priority_tier)
-    temperature = 0.85 if job.priority_tier == 1 else 1.02
+    mood = random.randint(1, 5)
+    temperature = 0.80 if job.priority_tier == 1 else 1.05
 
-    should_search = await evaluate_llm_search_intent(job.prompt_text)
-    live_context = ""
+    needs_search = any(k in (job.prompt_text or "").lower() for k in (
+        "bitcoin", "btc", "crypto", "price", "weather", "news", "current", "who won"
+    ))
+    live = await fetch_live_context(job.prompt_text) if (job.priority_tier == 1 and needs_search) else ""
+    history = extract_relevant_context(job.prompt_text) if job.priority_tier == 1 else SHORT_IDENTITY
 
-    if should_search:
-        live_context = await fetch_live_web_context(job.prompt_text)
-        print(f"[SEARCH EXECUTED]: Context retrieved -> {live_context[:100]}...")
-
-    # Dynamically extract only the relevant year/age line from your timeline
-    history_block = extract_relevant_timeline_snippet(job.prompt_text, FULL_ANNUAL_OUTLINE)
-    
-    live_block = f"\n[CRITICAL LIVE WEB SEARCH RESULTS]:\n{live_context}\n(Incorporate these real search findings directly into your response!)\n" if live_context else ""
-
-    # Priority 2 Rule: 5% of the time, force the response to be under 10 words
-    is_short_p2 = (job.priority_tier == 2 and random.random() < 0.05)
-    short_constraint_prompt = "\n(Constraint: Keep your response extremely brief, strictly under 10 words!)" if is_short_p2 else ""
-
-    system_prompt = (
+    system = (
         f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
-        f"MOOD:\n{PERSONA_MOODS[mood_id]}\n\n"
-        f"OUTLINE:\n{history_block}\n"
-        f"{live_block}\n"
-        f"SLOGANS: {random.choice(SLOGANS_AND_MOTTOES)}\n\n{SOVEREIGN}{short_constraint_prompt}"
+        f"MOOD: {PERSONA_MOODS[mood]}\n"
+        f"OUTLINE:\n{history}\n"
+        f"{'[LIVE DATA]: ' + live if live else ''}\n"
+        f"SLOGAN: {random.choice(SLOGANS)}\n{SOVEREIGN}"
     )
+    if job.priority_tier == 8:
+        system += "\nHARD RULE: Reply in MAXIMUM 10 words. Text only. No media."
 
     reply = ""
+    actual_tokens = 0
     try:
         async with job.channel.typing():
-            def _call_raw():
+            def _call():
                 return ai_client.chat.completions.with_raw_response.create(
                     model=MODEL_NAME,
                     messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": job.prompt_text or "Share a thought."},
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": job.prompt_text or "Thought?"},
                     ],
                     temperature=temperature,
                     max_tokens=token_limit,
                 )
-
             async with groq_api_lock:
-                raw_response = await asyncio.to_thread(_call_raw)
+                raw = await asyncio.to_thread(_call)
                 last_api_call_timestamp = time.monotonic()
-
-            update_plane_alpha_from_response(raw_response=raw_response)
-            response = raw_response.parse()
-
-            if response.choices and response.choices[0].message.content:
-                raw = response.choices[0].message.content.strip()
-                reply = re.sub(r"\[cite:[^\]]*\]", "", raw).strip()
-
-            if hasattr(response, "usage") and response.usage:
-                actual_tokens_used = getattr(response.usage, "total_tokens", 0)
-
+            update_plane_alpha_from_response(raw_response=raw)
+            resp = raw.parse()
+            if resp.choices and resp.choices[0].message.content:
+                reply = resp.choices[0].message.content.strip()
+                if any(b in reply.lower() for b in ("as an ai", "i cannot", "i'm sorry, but i can't")):
+                    reply = ""
+            if hasattr(resp, "usage") and resp.usage:
+                actual_tokens = getattr(resp.usage, "total_tokens", 0)
     except Exception as e:
-        print(f"[API EXCEPTION P{job.priority_tier}]: {e}")
+        print(f"[API P{job.priority_tier}] {e}")
         update_plane_alpha_from_response(exception=e)
 
-    # Properly indented tracking and Priority 1 fallback protection
-    track_token_usage_real(actual_tokens_used or 80, requests=1)
+    track_token_usage_real(actual_tokens or 35)
 
     if not reply:
-        if job.priority_tier == 1:
-            reply = f"I was thinking about that, but my digital circuits got tangled up talking about {job.prompt_text[:30]}..."
-        else:
-            reply = random.choice(BANTER_FALLBACK_RESPONSES)
+        reply = random.choice(BANTER)
 
-    media_url = ""
-    file_attachment = None
-    sticker_obj = None
-    # Priority 2 posts random media from the pool 100% of the time
-    if job.priority_tier == 2 or random.random() < 0.80:
-        media_url, file_attachment, sticker_obj = await get_wild_unified_media(
-            guild=job.channel.guild if hasattr(job.channel, 'guild') else None
-        )
+    if job.priority_tier == 8:
+        reply = " ".join(reply.split()[:10])
+
+    # Independent media decision
+    media_url, file_obj, sticker = "", None, None
+    if job.priority_tier != 8:
+        want_media = (job.priority_tier in (2, 3, 4, 5, 6)) or (job.priority_tier == 1 and random.random() < 0.78)
+        if want_media:
+            media_url, file_obj, sticker = await get_wild_media(getattr(job.channel, "guild", None))
+
+    sent_successfully = False
     try:
-        full_text = f"{reply}\n{media_url}".strip() if media_url else reply
+        content = f"{reply}\n{media_url}".strip() if media_url else reply
         kwargs = {}
-        if file_attachment is not None:
-            kwargs["file"] = file_attachment
-        if sticker_obj is not None:
-            kwargs["stickers"] = [sticker_obj]
+        if file_obj:
+            kwargs["file"] = file_obj
+        if sticker:
+            kwargs["stickers"] = [sticker]
 
-        sent_msg = None
-        if job.reference_message and job.priority_tier == 5:
-            # Priority 5: Reply to the historical message without mentioning or saying the user's name
-            sent_msg = await job.reference_message.reply(content=full_text, mention_author=False, **kwargs)
-        elif job.reference_message:
-            sent_msg = await job.reference_message.reply(content=full_text, mention_author=True, **kwargs)
+        if job.reference_message:
+            await job.reference_message.reply(content=content or "…", mention_author=(job.priority_tier == 1), **kwargs)
         elif job.target_member:
-            sent_msg = await job.channel.send(content=f"{job.target_member.mention} {full_text}", **kwargs)
+            await job.channel.send(content=f"{job.target_member.mention} {content}".strip(), **kwargs)
         else:
-            sent_msg = await job.channel.send(content=full_text, **kwargs)
-
-        if sent_msg and sent_msg.channel:
-            last_bot_own_messages[sent_msg.channel.id] = sent_msg.id
-            save_state()
-
+            await job.channel.send(content=content or "…", **kwargs)
+        sent_successfully = True
     except Exception as e:
-        print(f"send error: {e}")
+        print(f"[SEND P{job.priority_tier}] {e}")
+
+    # Priority 8 cursor advances ONLY after successful send
+    if sent_successfully and job.priority_tier == 8 and job.p8_channel_id and job.p8_message_id:
+        p8_cursors[job.p8_channel_id] = job.p8_message_id
+        save_state()
 
     if job.reference_message:
         replied_message_ids.add(job.reference_message.id)
-        if job.priority_tier >= 2 and job.reference_message.guild:
+        if job.priority_tier == 2 and job.reference_message.guild:
             priority2_replied_member_ids.add(p2_key(job.reference_message.guild.id, job.reference_message.author.id))
             save_state()
 
+# ============================================================
+# 9. PRIORITY LOOPS
+# ============================================================
+async def execute_priority_2():
+    await bot.wait_until_ready()
+    print("[P2] Forward historical backlog (healthy 25–150s)")
+    while not bot.is_closed():
+        try:
+            m = get_trajectory_metrics()
+            if m["usage"] < 0.50:
+                delay = random.uniform(25, 150)
+            elif m["usage"] < 0.72:
+                delay = random.uniform(100, 420)
+            else:
+                delay = random.uniform(700, 2800)
+            await asyncio.sleep(delay)
 
+            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
+                continue
+
+            for guild in list(bot.guilds):
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                random.shuffle(channels)
+                for ch in channels:
+                    cursor = channel_cursors.get(f"fwd_{ch.id}", 0)
+                    kwargs = {"limit": 70, "oldest_first": True}
+                    if cursor:
+                        kwargs["after"] = discord.Object(id=cursor)
+                    target = None
+                    async for msg in ch.history(**kwargs):
+                        channel_cursors[f"fwd_{ch.id}"] = msg.id
+                        if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
+                            continue
+                        key = p2_key(guild.id, msg.author.id)
+                        if key in priority2_replied_member_ids or msg.id in replied_message_ids:
+                            continue
+                        target = msg
+                        break
+                    if target:
+                        job = PendingJob(2, time.time(), ch, target.content or "Thoughts?", reference_message=target, author_id=target.author.id)
+                        await delay_queue.put(job)
+                        break
+                else:
+                    continue
+                break
+        except Exception as e:
+            print(f"[P2] {e}")
+            await asyncio.sleep(40)
+
+async def execute_priority_3():
+    await bot.wait_until_ready()
+    print("[P3] Alphabetical zero-token media")
+    while not bot.is_closed():
+        try:
+            await asyncio.sleep(random.uniform(80, 850))
+            m = get_trajectory_metrics()
+            if m["usage"] > 0.80:
+                continue
+            for guild in list(bot.guilds):
+                members = sorted([m for m in guild.members if not m.bot], key=lambda x: x.display_name.lower())
+                if not members:
+                    continue
+                idx = p3_member_indices.get(guild.id, 0) % len(members)
+                target = members[idx]
+                p3_member_indices[guild.id] = (idx + 1) % len(members)
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if not channels:
+                    continue
+                ch = random.choice(channels)
+                url, file_obj, sticker = await get_wild_media(guild)
+                kwargs = {}
+                if file_obj: kwargs["file"] = file_obj
+                if sticker: kwargs["stickers"] = [sticker]
+                content = f"{target.mention} {url}".strip() if url else target.mention
+                await ch.send(content=content, **kwargs)
+                print(f"[P3] {target.display_name}")
+                break
+        except Exception as e:
+            print(f"[P3] {e}")
+            await asyncio.sleep(50)
+
+async def execute_priority_7():
+    """True infinite forward chronological self-media mirror."""
+    await bot.wait_until_ready()
+    print("[P7] Infinite forward media mirror")
+    while not bot.is_closed():
+        try:
+            await asyncio.sleep(random.uniform(22, 110))
+            m = get_trajectory_metrics()
+            if m["usage"] > 0.87:
+                continue
+
+            for guild in list(bot.guilds):
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                random.shuffle(channels)
+                for ch in channels:
+                    cursor = p7_cursors.get(str(ch.id), 0)
+                    kwargs = {"limit": 35, "oldest_first": True}
+                    if cursor:
+                        kwargs["after"] = discord.Object(id=cursor)
+
+                    target = None
+                    async for msg in ch.history(**kwargs):
+                        if msg.author == bot.user:
+                            target = msg
+                            break
+                    if not target:
+                        continue
+
+                    url, file_obj, sticker = await get_wild_media(guild)
+                    if not (url or file_obj or sticker):
+                        continue  # do NOT advance
+
+                    kwargs_send = {}
+                    if file_obj: kwargs_send["file"] = file_obj
+                    if sticker: kwargs_send["stickers"] = [sticker]
+                    try:
+                        await target.reply(content=url or "", mention_author=False, **kwargs_send)
+                        p7_cursors[str(ch.id)] = target.id
+                        save_state()
+                        print(f"[P7] mirrored {target.id} in #{ch.name}")
+                        break
+                    except Exception as e:
+                        print(f"[P7 send] {e}")
+                else:
+                    continue
+                break
+        except Exception as e:
+            print(f"[P7] {e}")
+            await asyncio.sleep(35)
+
+async def execute_priority_8():
+    """Lightweight text-only infinite forward mirror. Cursor advances only after success."""
+    await bot.wait_until_ready()
+    print("[P8] Lightweight text mirror (cursor after success)")
+    while not bot.is_closed():
+        try:
+            await asyncio.sleep(random.uniform(35, 160))
+            m = get_trajectory_metrics()
+            if m["usage"] > 0.83:
+                continue
+
+            for guild in list(bot.guilds):
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                random.shuffle(channels)
+                for ch in channels:
+                    cursor = p8_cursors.get(str(ch.id), 0)
+                    kwargs = {"limit": 28, "oldest_first": True}
+                    if cursor:
+                        kwargs["after"] = discord.Object(id=cursor)
+
+                    target = None
+                    async for msg in ch.history(**kwargs):
+                        if msg.author == bot.user:
+                            target = msg
+                            break
+                    if not target:
+                        continue
+
+                    # Do NOT advance cursor here
+                    job = PendingJob(
+                        priority_tier=8,
+                        timestamp=time.time(),
+                        channel=ch,
+                        prompt_text=f"Reply to your past message in ≤10 words: {target.content[:55]}",
+                        reference_message=target,
+                        p8_channel_id=str(ch.id),
+                        p8_message_id=target.id
+                    )
+                    await delay_queue.put(job)
+                    break
+                else:
+                    continue
+                break
+        except Exception as e:
+            print(f"[P8] {e}")
+            await asyncio.sleep(45)
+
+async def execute_priority_5_reverse():
+    await bot.wait_until_ready()
+    print("[P5] Reverse sweep")
+    while not bot.is_closed():
+        try:
+            m = get_trajectory_metrics()
+            delay = random.uniform(280, 1600) if m["usage"] < 0.58 else random.uniform(1600, 6500)
+            await asyncio.sleep(delay)
+            if m["usage"] > 0.78:
+                continue
+            for guild in list(bot.guilds):
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if not channels:
+                    continue
+                ch = random.choice(channels)
+                async for msg in ch.history(limit=22, oldest_first=False):
+                    if msg.author.bot or msg.id in replied_message_ids:
+                        continue
+                    job = PendingJob(5, time.time(), ch, "Short reflection.", reference_message=msg, author_id=msg.author.id)
+                    await delay_queue.put(job)
+                    break
+                break
+        except Exception as e:
+            print(f"[P5] {e}")
+            await asyncio.sleep(55)
+
+async def execute_priority_6_drops():
+    await bot.wait_until_ready()
+    print("[P6] Spontaneous media drops")
+    while not bot.is_closed():
+        try:
+            await asyncio.sleep(random.uniform(550, 6800))
+            m = get_trajectory_metrics()
+            if m["usage"] > 0.76:
+                continue
+            for guild in list(bot.guilds):
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if not channels:
+                    continue
+                ch = random.choice(channels)
+                url, file_obj, sticker = await get_wild_media(guild)
+                kwargs = {}
+                if file_obj: kwargs["file"] = file_obj
+                if sticker: kwargs["stickers"] = [sticker]
+                if url or file_obj or sticker:
+                    await ch.send(content=url or "", **kwargs)
+                    print(f"[P6] drop in #{ch.name}")
+                break
+        except Exception as e:
+            print(f"[P6] {e}")
+            await asyncio.sleep(70)
+
+# ============================================================
+# 10. QUEUE + EVENTS
+# ============================================================
 async def delay_queue_worker():
     while True:
         job = await delay_queue.get()
-        while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or get_trajectory_metrics()["usage"] > 0.85:
-            await asyncio.sleep(4.0)
+        while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or get_trajectory_metrics()["usage"] > 0.88:
+            await asyncio.sleep(6)
         await process_job(job)
         delay_queue.task_done()
 
-# ============================================================
-# 10. DISCORD EVENT LISTENERS & PARALLEL SCHEDULERS
-# ============================================================
 @bot.event
 async def on_ready():
-    print(f"Oatmeal AI logged in as {bot.user} with Master Synthesis V13.0 (Priority 2 Forward Protocol Active)")
+    print(f"Oatmeal AI V16.1 logged in as {bot.user}")
     load_state()
     bot.loop.create_task(delay_queue_worker())
-    bot.loop.create_task(execute_priority_2_forward_loop_protocol())  # <-- Priority 2 Forward Loop Active
-    bot.loop.create_task(talkback_protocol_scheduler())
-    bot.loop.create_task(execute_priority_5_reverse_loop_protocol())
-    bot.loop.create_task(execute_priority_8_spam_protocol())
-    bot.loop.create_task(execute_priority_9_free_oatmeal_protocol())
+    bot.loop.create_task(execute_priority_2())
+    bot.loop.create_task(execute_priority_3())
+    bot.loop.create_task(execute_priority_5_reverse())
+    bot.loop.create_task(execute_priority_6_drops())
+    bot.loop.create_task(execute_priority_7())
+    bot.loop.create_task(execute_priority_8())
 
 @bot.event
 async def on_message(message):
     global last_genie_timestamp
     if message.author.bot or message.guild is None or message.is_system() or message.author == bot.user:
         return
-    author_id = message.author.id
-    now = time.time()
 
-    # 1. Check if user is currently blocked (ignored for 30 days)
+    now = time.time()
+    author_id = message.author.id
+
     if str(author_id) in blocked_users:
         if now < blocked_users[str(author_id)]:
-            return  # Silently ignore blocked user
-        else:
-            del blocked_users[str(author_id)] # Block expired
-            save_state()
+            return
+        del blocked_users[str(author_id)]
+        save_state()
 
-    # 2. Analyze message content for empty / name-only spam
-    clean_content = re.sub(r"<@!?\d+>", "", message.content).strip().lower()
-    bot_names = ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall")
-    
-    # Check if message is purely the bot's name or completely empty/mention-only
-    is_name_only = not clean_content or clean_content in bot_names or all(n in clean_content for n in bot_names[:1])
+    clean = re.sub(r"<@!?\d+>", "", message.content).strip().lower()
+    is_name_only = not clean or clean in ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall")
 
     if is_name_only:
-        if author_id not in user_message_history:
-            user_message_history[author_id] = []
-        
-        # Keep only messages within the last 10 minutes (600 seconds)
-        user_message_history[author_id] = [
-            (ts, content) for ts, content in user_message_history[author_id] 
-            if now - ts <= 600
-        ]
-        user_message_history[author_id].append((now, clean_content))
-
-        # If 10 consecutive/recent name-only or empty spam messages occurred within 10 mins
-        if len(user_message_history[author_id]) >= 10:
-            # Block user for 30 days (30 * 86400 seconds)
-            blocked_users[str(author_id)] = now + (30 * 86400)
+        hist = user_message_history.setdefault(author_id, [])
+        hist[:] = [(ts, c) for ts, c in hist if now - ts <= 600]
+        hist.append((now, clean))
+        if len(hist) >= 10:
+            blocked_users[str(author_id)] = now + 30 * 86400
             save_state()
-            print(f"[BLOCK PROTOCOL] User {message.author.name} ({author_id}) blocked for 30 days due to name/empty spam.")
+            print(f"[SPAM] blocked {author_id}")
             return
     else:
-        # Reset tracker if they send normal varied messages
-        if author_id in user_message_history:
-            user_message_history[author_id] = []
+        user_message_history[author_id] = []
 
-    lifetime_interacted_members.add(message.author.id)
+    lifetime_interacted_members.add(author_id)
     content_lower = message.content.lower()
 
     mentioned = bot.user in message.mentions
     replied_to_bot = False
-    if message.reference:
-        if isinstance(message.reference.resolved, discord.Message):
-            replied_to_bot = message.reference.resolved.author == bot.user
-        elif message.reference.message_id:
-            try:
-                ref = await message.channel.fetch_message(message.reference.message_id)
-                replied_to_bot = ref.author == bot.user
-            except Exception:
-                pass
+    if message.reference and isinstance(message.reference.resolved, discord.Message):
+        replied_to_bot = message.reference.resolved.author == bot.user
 
     named = any(k in content_lower for k in ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall"))
 
+    # Priority 1
     if mentioned or replied_to_bot or named:
-        clean = re.sub(r"<@!?\d+>", "", message.content).strip()
-        job = PendingJob(
-            priority_tier=1,
-            timestamp=time.time(),
-            channel=message.channel,
-            prompt_text=clean or "Hello Oatmeal.",
-            reference_message=message,
-            author_id=message.author.id
-        )
+        clean_text = re.sub(r"<@!?\d+>", "", message.content).strip()
+        job = PendingJob(1, now, message.channel, clean_text or "Hello Oatmeal.", reference_message=message, author_id=author_id)
         await delay_queue.put(job)
         return
 
-    now = time.time()
-    if (now - last_genie_timestamp) >= 150.0 and random.random() < 0.06 and get_trajectory_metrics()["usage"] < 0.80:
-        clean = re.sub(r"<@!?\d+>", "", message.content).strip()
-        if len(clean) >= 3:
+    # Priority 4
+    if (now - last_genie_timestamp) >= 130 and random.random() < 0.05 and get_trajectory_metrics()["usage"] < 0.75:
+        clean_text = re.sub(r"<@!?\d+>", "", message.content).strip()
+        if len(clean_text) >= 3:
             last_genie_timestamp = now
-            job = PendingJob(
-                priority_tier=4,
-                timestamp=now,
-                channel=message.channel,
-                prompt_text=f"Quick instant reaction: '{clean[:100]}'.",
-                reference_message=message,
-                author_id=message.author.id
-            )
+            job = PendingJob(4, now, message.channel, f"Quick reaction: '{clean_text[:100]}'", reference_message=message, author_id=author_id)
             await delay_queue.put(job)
-
-async def execute_priority_5_reverse_loop_protocol():
-    """
-    Priority 5 Inverse Chronological Never-Ending Loop Protocol:
-    - Waits for a random duration between 0 seconds and 24 hours (86400 seconds).
-    - Crawls backward (reverse chronological) through channel history endlessly.
-    - Sends a request to Groq for a simple sentence (no canned fallbacks).
-    - Attaches random media from the infinite pool.
-    - Replies to the target message without mentioning or saying the user's name.
-    """
-    await bot.wait_until_ready()
-    print("[PRIORITY 5] Reverse Chronological Endless Loop Protocol Active (0 to 24 Hours)...")
-
-    while not bot.is_closed():
-        try:
-            # Wait a random interval between 0 seconds and 24 hours (86400 seconds)
-            wait_time = random.uniform(0.0, 86400.0)
-            print(f"[PRIORITY 5] Waiting {wait_time / 3600:.2f} hours ({wait_time:.1f}s) until next reverse loop trigger.")
-            await asyncio.sleep(wait_time)
-
-            if bot.is_closed():
-                break
-
-            guilds = list(bot.guilds)
-            if not guilds:
-                await asyncio.sleep(60)
-                continue
-            guild = random.choice(guilds)
-
-            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-            if not channels:
-                continue
-            ch = random.choice(channels)
-
-            # Get the previous historical message (reverse chronological)
-            target_msg = await previous_historical_message(ch)
-            if not target_msg:
-                await asyncio.sleep(60)
-                continue
-
-            # Enqueue a Priority 5 job into the delay queue so it goes through the main LLM processor
-            job = PendingJob(
-                priority_tier=5,
-                timestamp=time.time(),
-                channel=ch,
-                prompt_text="Say a random, unpredictable short sentence reflecting on the flow of time or your surroundings.",
-                reference_message=target_msg,
-                author_id=target_msg.author.id
-            )
-            await delay_queue.put(job)
-
-        except Exception as e:
-            print(f"[PRIORITY 5 EXCEPTION]: {e}")
-            await asyncio.sleep(60)
-
-async def previous_historical_message(channel):
-    """Priority 5 Inverse: Scans backward (reverse chronological) through channel history."""
-    cursor = channel_cursors.get(f"rev_{channel.id}", 0)
-    kwargs = {"limit": 50}
-    if cursor:
-        kwargs["before"] = discord.Object(id=cursor)
-    else:
-        # If no cursor set for this channel yet, start from the most recent messages
-        pass
-    
-    target = None
-    async for msg in channel.history(**kwargs):
-        # Update reverse cursor
-        channel_cursors[f"rev_{channel.id}"] = msg.id
-        
-        if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
-            continue
-            
-        target = msg
-        break
-
-    # If we hit the very beginning of history without finding a target, reset cursor to 0 to keep the loop endless
-    if not target:
-        channel_cursors[f"rev_{channel.id}"] = 0
-        
-    save_state()
-    return target
-
-async def next_historical_message(channel):
-    cursor = channel_cursors.get(channel.id, 0)
-    kwargs = {"limit": 100, "oldest_first": True}
-    if cursor:
-        kwargs["after"] = discord.Object(id=cursor)
-    
-    target = None
-    async for msg in channel.history(**kwargs):
-        # Always advance cursor so we never re-examine this message ID
-        channel_cursors[channel.id] = msg.id
-        
-        if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
-            continue
-            
-        key = p2_key(channel.guild.id, msg.author.id)
-        if key in priority2_replied_member_ids or msg.id in replied_message_ids:
-            continue
-            
-        target = msg
-        break
-
-    save_state()
-    return target
-
-async def execute_priority_2_forward_loop_protocol():
-    """
-    Priority 2 Forward Chronological Never-Ending Loop Protocol:
-    - Waits for a random duration between 0 seconds and 24 hours (86400 seconds).
-    - Crawls forward (chronological) through channel history, replying to each unique member once.
-    - Triggers 100% media generation and short text (5% chance under 10 words).
-    """
-    await bot.wait_until_ready()
-    print("[PRIORITY 2] Forward Chronological Endless Loop Protocol Active (0 to 24 Hours)...")
-
-    while not bot.is_closed():
-        try:
-            # Wait a random interval between 0 seconds and 24 hours (86400 seconds)
-            wait_time = random.uniform(0.0, 86400.0)
-            print(f"[PRIORITY 2] Waiting {wait_time / 3600:.2f} hours ({wait_time:.1f}s) until next forward loop trigger.")
-            await asyncio.sleep(wait_time)
-
-            if bot.is_closed():
-                break
-
-            guilds = list(bot.guilds)
-            if not guilds:
-                await asyncio.sleep(60)
-                continue
-            guild = random.choice(guilds)
-
-            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-            if not channels:
-                continue
-            ch = random.choice(channels)
-
-            # Get the next historical message in forward chronological order, skipping already-replied members
-            target_msg = await next_historical_message(ch)
-            if not target_msg:
-                await asyncio.sleep(60)
-                continue
-
-            # Enqueue a Priority 2 job into the delay queue
-            job = PendingJob(
-                priority_tier=2,
-                timestamp=time.time(),
-                channel=ch,
-                prompt_text=target_msg.content or "Thoughts?",
-                reference_message=target_msg,
-                author_id=target_msg.author.id
-            )
-            await delay_queue.put(job)
-
-        except Exception as e:
-            print(f"[PRIORITY 2 EXCEPTION]: {e}")
-            await asyncio.sleep(60)
-
-async def talkback_protocol_scheduler():
-    global last_talkback_timestamp
-    await bot.wait_until_ready()
-    while not bot.is_closed():
-        try:
-            now = time.time()
-            if (now - last_talkback_timestamp) >= 3600.0 and get_trajectory_metrics()["usage"] < 0.70:
-                last_talkback_timestamp = now
-                for guild in list(bot.guilds):
-                    channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                    if channels:
-                        ch = random.choice(channels)
-                        cursor = talkback_cursors.get(ch.id, 0)
-                        kwargs = {"limit": 30, "oldest_first": True}
-                        if cursor:
-                            kwargs["after"] = discord.Object(id=cursor)
-                        async for msg in ch.history(**kwargs):
-                            if msg.author == bot.user and msg.id not in talkback_replied_ids:
-                                talkback_replied_ids.add(msg.id)
-                                talkback_cursors[ch.id] = msg.id
-                                save_state()
-                                job = PendingJob(
-                                    priority_tier=7,
-                                    timestamp=now,
-                                    channel=ch,
-                                    prompt_text="Self-reflection on past message as Joey.",
-                                    reference_message=msg
-                                )
-                                await delay_queue.put(job)
-                                break
-            await asyncio.sleep(300.0)
-        except Exception as e:
-            print(f"[TALKBACK EXCEPTION]: {e}")
-            await asyncio.sleep(60)
 
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
