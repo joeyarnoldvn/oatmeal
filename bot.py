@@ -451,7 +451,7 @@ BANTER = [
 EMOTICON_POOL = ["🥣", "🔥", "😂", "🫡", "🚀", "📼", "🎬", "🏀", "✨", "👀", "🧠", "🌌", "💪"]
 
 # ============================================================
-# 6. UNIFIED ADAPTIVE MEDIA ENGINE
+# 6. UNIFIED ADAPTIVE MEDIA ENGINE (RANDOM + ADAPTIVE + ZERO-TOKEN)
 # ============================================================
 async def fetch_tenor_gif(query: str = "funny reaction") -> Optional[str]:
     for attempt in range(2):
@@ -496,29 +496,46 @@ async def fetch_pollinations(prompt: str = "oatmeal surreal") -> Optional[discor
 async def get_adaptive_media(
     guild: Optional[discord.Guild] = None, 
     custom_query: Optional[str] = None, 
-    force_type: Optional[str] = None
+    force_type: Optional[str] = None,
+    priority_tier: int = 2
 ) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
     """
-    Unified adaptive media generator. 
-    Can be completely random (zero-token) or customized with queries/type constraints.
+    Unified adaptive media generator.
+    - Operates 100% token-free (zero Groq tokens) for background priorities (P2, P3, P6, P7).
+    - Dynamically adapts to user prompts (e.g., 'draw a woman' strictly triggers image generation).
+    - Pulls randomly when no explicit intent is provided.
     """
+    q_lower = (custom_query or "").lower()
+    
+    # 1. Smart Intent Interceptor: Enforce exact format matching user directives
+    if not force_type:
+        if any(k in q_lower for k in ("draw", "paint", "sketch", "generate", "image", "picture", "photo", "art")):
+            force_type = "image"
+        elif any(k in q_lower for k in ("video", "watch", "clip", "youtube", "song")):
+            force_type = "youtube"
+        elif any(k in q_lower for k in ("gif", "reaction", "funny", "laugh", "meme")):
+            force_type = "tenor"
+
+    # 2. Fallback to random weighted selection if no intent keyword matched
     media_type = force_type or random.choices(
         ["tenor", "youtube", "image", "sticker", "emoticon"],
         weights=[40, 20, 20, 10, 10], k=1
     )[0]
 
-    if media_type == "tenor":
+    # 3. Execute generation based on selected/forced media type
+    if media_type == "image":
+        prompt = custom_query or "oatmeal surreal 1990s aesthetic"
+        f = await fetch_pollinations(prompt)
+        if f:
+            return "", f, None  # Returns strictly the image file attachment (no URL links, no GIFs, no videos!)
+        return await fetch_tenor_gif(prompt), None, None
+    elif media_type == "tenor":
         q = custom_query or random.choice(["funny", "reaction", "mind blown", "laughing", "90s", "fail", "joey arnold"])
         url = await fetch_tenor_gif(q)
         return url or "", None, None
     elif media_type == "youtube":
         q = custom_query or "oatmeal joey arnold"
         return await fetch_youtube(q), None, None
-    elif media_type == "image":
-        prompt = custom_query or "oatmeal surreal 1990s aesthetic"
-        f = await fetch_pollinations(prompt)
-        if f:
-            return "", f, None
     elif media_type == "sticker" and guild and guild.stickers:
         return "", None, random.choice(list(guild.stickers))
     elif media_type == "emoticon":
@@ -526,6 +543,7 @@ async def get_adaptive_media(
     
     url = await fetch_tenor_gif(custom_query or "reaction")
     return url or "", None, None
+
 # ============================================================
 # 7. SURGICAL TIMELINE EXTRACTION + SMART WORD SALAD FALLBACK
 # ============================================================
@@ -734,37 +752,44 @@ async def process_job(job: PendingJob):
     if job.priority_tier != 8:
         want_media = (job.priority_tier in (3, 4, 5, 6)) or (job.priority_tier == 1 and random.random() < 0.78)
         if want_media:
-            # Custom query extracted from prompt for targeted, relevant media
-            query_hint = job.prompt_text[:40] if job.prompt_text else None
+            query_hint = job.prompt_text if job.prompt_text else None
             media_url, file_obj, sticker = await get_adaptive_media(
                 guild=getattr(job.channel, "guild", None), 
-                custom_query=query_hint
+                custom_query=query_hint,
+                priority_tier=job.priority_tier
             )
 
     sent_successfully = False
     try:
-        # Prevent raw link clutter: if text exists, suppress raw URL text or place on clean line
-        if reply and media_url:
-            content = f"{reply}\n{media_url}"
-        elif media_url:
-            content = media_url
-        else:
-            content = reply
         kwargs = {}
         if file_obj:
             kwargs["file"] = file_obj
         if sticker:
             kwargs["stickers"] = [sticker]
 
-        if not content and not file_obj and not sticker:
-            return
-
+        # Clean dispatch: Send text reply first, then send media separately (prevents raw URL link clutter)
         if job.reference_message:
-            await job.reference_message.reply(content=content or "…", mention_author=(job.priority_tier == 1), **kwargs)
+            if reply:
+                await job.reference_message.reply(content=reply, mention_author=(job.priority_tier == 1))
+            if media_url:
+                await job.channel.send(content=media_url)
+            elif file_obj or sticker:
+                await job.channel.send(**kwargs)
         elif job.target_member:
-            await job.channel.send(content=f"{job.target_member.mention} {content}".strip(), **kwargs)
+            if reply:
+                await job.channel.send(content=f"{job.target_member.mention} {reply}".strip())
+            if media_url:
+                await job.channel.send(content=media_url)
+            elif file_obj or sticker:
+                await job.channel.send(**kwargs)
         else:
-            await job.channel.send(content=content or "…", **kwargs)
+            if reply:
+                await job.channel.send(content=reply)
+            if media_url:
+                await job.channel.send(content=media_url)
+            elif file_obj or sticker:
+                await job.channel.send(**kwargs)
+
         sent_successfully = True
     except Exception as e:
         print(f"[SEND P{job.priority_tier}] {e}")
@@ -867,15 +892,16 @@ async def execute_priority_3():
         except Exception as e:
             print(f"[P3] {e}")
             await asyncio.sleep(50)
+
 async def execute_priority_7():
-    """True infinite forward chronological self-media mirror with auto-recovery cursor."""
+    """True infinite forward chronological self-media mirror with smart cursor auto-initialization."""
     await bot.wait_until_ready()
     print("[P7] Infinite forward media mirror")
     while not bot.is_closed():
         try:
             await asyncio.sleep(random.uniform(22, 110))
             m = get_trajectory_metrics()
-            if m["usage"] > 0.92:  # Relaxed threshold slightly to prevent permanent locking
+            if m["usage"] > 0.95:  # Slightly more lenient threshold
                 continue
 
             for guild in list(bot.guilds):
@@ -883,7 +909,17 @@ async def execute_priority_7():
                 random.shuffle(channels)
                 for ch in channels:
                     cursor = p7_cursors.get(str(ch.id), 0)
-                    kwargs = {"limit": 50, "oldest_first": True}
+                    
+                    # If cursor is 0, initialize to the latest bot message so we skip ancient history
+                    if not cursor:
+                        async for msg in ch.history(limit=50, oldest_first=False):
+                            if msg.author == bot.user:
+                                p7_cursors[str(ch.id)] = msg.id
+                                cursor = msg.id
+                                save_state()
+                                break
+
+                    kwargs = {"limit": 30, "oldest_first": True}
                     if cursor:
                         kwargs["after"] = discord.Object(id=cursor)
 
@@ -893,18 +929,17 @@ async def execute_priority_7():
                             target = msg
                             break
                     
-                    # Fallback: If cursor yielded nothing, check recent history without cursor to unstick
-                    if not target and cursor:
-                        p7_cursors[str(ch.id)] = 0
-                        async for msg in ch.history(limit=20, oldest_first=False):
-                            if msg.author == bot.user:
+                    # Fallback: grab most recent bot message if cursor yielded nothing
+                    if not target:
+                        async for msg in ch.history(limit=10, oldest_first=False):
+                            if msg.author == bot.user and msg.id != cursor:
                                 target = msg
                                 break
 
                     if not target:
                         continue
 
-                    url, file_obj, sticker = await get_adaptive_media(guild=guild)
+                    url, file_obj, sticker = await get_adaptive_media(guild=guild, priority_tier=7)
                     if not (url or file_obj or sticker):
                         continue
 
@@ -927,14 +962,14 @@ async def execute_priority_7():
             await asyncio.sleep(35)
 
 async def execute_priority_8():
-    """Lightweight text-only infinite forward mirror with auto-recovery."""
+    """Lightweight text-only infinite forward mirror with smart cursor auto-initialization."""
     await bot.wait_until_ready()
     print("[P8] Lightweight text mirror (cursor after success)")
     while not bot.is_closed():
         try:
             await asyncio.sleep(random.uniform(35, 160))
             m = get_trajectory_metrics()
-            if m["usage"] > 0.90:  # Relaxed threshold
+            if m["usage"] > 0.92:
                 continue
 
             for guild in list(bot.guilds):
@@ -942,7 +977,16 @@ async def execute_priority_8():
                 random.shuffle(channels)
                 for ch in channels:
                     cursor = p8_cursors.get(str(ch.id), 0)
-                    kwargs = {"limit": 40, "oldest_first": True}
+                    
+                    if not cursor:
+                        async for msg in ch.history(limit=50, oldest_first=False):
+                            if msg.author == bot.user:
+                                p8_cursors[str(ch.id)] = msg.id
+                                cursor = msg.id
+                                save_state()
+                                break
+
+                    kwargs = {"limit": 30, "oldest_first": True}
                     if cursor:
                         kwargs["after"] = discord.Object(id=cursor)
 
@@ -952,11 +996,9 @@ async def execute_priority_8():
                             target = msg
                             break
 
-                    # Fallback: Unstick cursor if dead
-                    if not target and cursor:
-                        p8_cursors[str(ch.id)] = 0
-                        async for msg in ch.history(limit=20, oldest_first=False):
-                            if msg.author == bot.user:
+                    if not target:
+                        async for msg in ch.history(limit=10, oldest_first=False):
+                            if msg.author == bot.user and msg.id != cursor:
                                 target = msg
                                 break
 
@@ -980,6 +1022,7 @@ async def execute_priority_8():
         except Exception as e:
             print(f"[P8] {e}")
             await asyncio.sleep(45)
+
 async def execute_priority_5_reverse():
     await bot.wait_until_ready()
     print("[P5] Reverse sweep")
@@ -1038,11 +1081,11 @@ async def execute_priority_6_drops():
 async def delay_queue_worker():
     while True:
         job = await delay_queue.get()
-        while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or get_trajectory_metrics()["usage"] > 0.88:
-            await asyncio.sleep(6)
+        # Allow priority 8 (micro-token jobs) to bypass heavy usage blocks
+        while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or (get_trajectory_metrics()["usage"] > 0.92 and job.priority_tier != 8):
+            await asyncio.sleep(4)
         await process_job(job)
         delay_queue.task_done()
-
 @bot.event
 async def on_ready():
     print(f"Oatmeal AI V16.3 logged in as {bot.user}")
