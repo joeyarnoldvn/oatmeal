@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-Oatmeal AI – Joey Arnold Discord Bot
-Master Production Version 16.1
+Gemini's Oatmeal AI – Joey Arnold Discord Bot
+Master Production Version 16.3 (Media-Only P2 + Smart Word Salad Fallback)
 
-- True infinite forward chronological self-mirrors (P7 media + P8 text)
-- Aggressive token-saving timeline extraction (only relevant years)
-- Full year-by-year 1985–2026 outline
-- Expanded identity: workaholic, bipolar-flavored energy, collage influences, five moods
-- Differential taxation + atomic state + 429 re-sync
-- Priority 8 cursor advances only after successful send
+- Priority 2: Zero-token media-only historical backlog sweeper
+- Smart 4-Tier Fallback Chain (LLM -> Word Salad -> Media -> Remix Fallback)
+- Surgical timeline extraction & Ghost Whisperer token nudging
+- Sustained Discord typing indicator loop
+- Differential taxation + atomic state + 429 re-sync + CoinGecko integration
 """
 
 import os
@@ -38,7 +37,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write("Oatmeal AI V16.1 – Token Guardian + Infinite Mirror".encode("utf-8"))
+        self.wfile.write("Oatmeal AI V16.3 – Zero-Token P2 + Smart Fallback".encode("utf-8"))
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -148,7 +147,7 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. TOKEN CONTROL & DIFFERENTIAL TAXATION
+# 4. GHOST WHISPERER TOKEN CONTROL & NUDGING PROTOCOL
 # ============================================================
 GROQ_REMAINING_TPM = 8000
 GROQ_REMAINING_RPD = 1000
@@ -169,7 +168,6 @@ class PendingJob:
     reference_message: Any = field(compare=False, default=None)
     target_member: Any = field(compare=False, default=None)
     author_id: int = field(compare=False, default=0)
-    # Used by Priority 8 so cursor advances only after successful send
     p8_channel_id: Optional[str] = field(compare=False, default=None)
     p8_message_id: Optional[int] = field(compare=False, default=None)
 
@@ -267,34 +265,36 @@ def compute_tax_multipliers():
     m = get_trajectory_metrics()
     usage = m["usage"]
     alpha = max(0.0, m["alpha"])
-    pressure = (usage * 2.8) + (3.2 * alpha) + ((usage ** 1.85) * 4.5)
+    pressure = (usage * 2.5) + (2.8 * alpha) + ((usage ** 1.7) * 4.0)
     return {
-        1: 1.0 + pressure * 0.12,
-        4: 1.0 + pressure * (0.42 + 1.35 * usage),
-        2: 1.0 + pressure * (2.05 + 4.0 * usage),
-        3: 1.0 + pressure * (1.75 + 3.4 * usage),
-        5: 1.0 + pressure * (1.85 + 3.6 * usage),
-        6: 1.0 + pressure * (0.95 + 2.3 * usage),
+        1: 1.0 + pressure * 0.10,
+        4: 1.0 + pressure * (0.35 + 1.1 * usage),
+        2: 0.0, # Zero token cost for media-only P2
+        3: 1.0 + pressure * (1.50 + 3.0 * usage),
+        5: 1.0 + pressure * (1.60 + 3.2 * usage),
+        6: 1.0 + pressure * (0.80 + 2.0 * usage),
         7: 0.0,
-        8: 1.0 + pressure * (0.07 + 0.35 * usage),
+        8: 1.0 + pressure * (0.05 + 0.3 * usage),
     }
 
 def calculate_dynamic_max_tokens(priority_tier: int) -> int:
-    if priority_tier == 7:
+    if priority_tier in (2, 7):
         return 0
     if priority_tier == 8:
         return 16
     m = get_trajectory_metrics()
     usage = m["usage"]
     tax = compute_tax_multipliers().get(priority_tier, 1.0)
-    headroom = max(50, GROQ_REMAINING_TPM - 300)
-    base = {1: 420, 4: 140, 6: 110, 5: 95, 2: 85}.get(priority_tier, 90)
-    compression = max(0.08, (1.0 - usage) ** 1.55)
-    allowed = int((base * compression) / max(tax, 0.30))
-    hard = {1: 780, 4: 190, 6: 140, 5: 120, 2: 110}.get(priority_tier, 130)
-    result = max(20, min(allowed, hard, headroom))
+    headroom = max(80, GROQ_REMAINING_TPM - 250)
+    base = {1: 450, 4: 150, 6: 120, 5: 100}.get(priority_tier, 100)
+    
+    compression = max(0.22, (1.0 - usage) ** 1.3)
+    allowed = int((base * compression) / max(tax, 0.35))
+    hard = {1: 850, 4: 220, 6: 160, 5: 140}.get(priority_tier, 150)
+    
+    result = max(64, min(allowed, hard, headroom))
     if priority_tier == 1:
-        result = max(result, min(95, headroom))
+        result = max(result, min(160, headroom))
     return result
 
 # ============================================================
@@ -516,7 +516,7 @@ async def get_wild_media(guild: Optional[discord.Guild] = None) -> Tuple[str, Op
     return url or "", None, None
 
 # ============================================================
-# 7. TOKEN-SAVING EXTRACTION + LIVE SEARCH
+# 7. SURGICAL TIMELINE EXTRACTION + SMART WORD SALAD FALLBACK
 # ============================================================
 WORD_NUMBERS = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -528,18 +528,15 @@ WORD_NUMBERS = {
 }
 
 def extract_relevant_context(prompt: str) -> str:
-    """Aggressive token saver. Only returns the minimum necessary lines."""
     if not prompt:
         return SHORT_IDENTITY
 
     prompt_lower = prompt.lower()
     years = set()
 
-    # Direct year detection
     for y in re.findall(r"\b(19\d{2}|20\d{2})\b", prompt):
         years.add(y)
 
-    # Age detection (numbers + words)
     age_matches = re.findall(r"(?:age|old|was|were|at|turned)\s+(\d{1,2})", prompt, re.I)
     for a in age_matches:
         try:
@@ -551,7 +548,6 @@ def extract_relevant_context(prompt: str) -> str:
         if re.search(rf"(?:age|old|was|were|at|turned)\s+{word}\b", prompt_lower):
             years.add(str(1985 + val))
 
-    # Location / keyword mapping
     location_map = {
         "california": ["1992", "1999"],
         "vietnam": ["2012", "2013", "2014", "2015", "2016", "2017"],
@@ -580,12 +576,22 @@ def extract_relevant_context(prompt: str) -> str:
                     lines.append(line)
                     break
         if lines:
-            return "Relevant years only:\n" + "\n".join(lines)
+            return "Relevant timeline archive:\n" + "\n".join(lines)
 
     if any(k in prompt_lower for k in ("who are you", "tell me about yourself", "your life", "biography", "timeline", "about you")):
         return SHORT_IDENTITY + "\n\n" + PERSONALITY_KERNEL
 
     return SHORT_IDENTITY
+
+def generate_word_salad(prompt_text: str) -> str:
+    """Zero-token evolved word salad fallback when LLM fails."""
+    words = re.findall(r"\w+", prompt_text or "")
+    selected_words = random.sample(words, min(len(words), 3)) if words else []
+    slogan_snippet = random.choice(SLOGANS).split(".")[0]
+    banter_snippet = random.choice(BANTER)
+    parts = [slogan_snippet, banter_snippet] + selected_words
+    random.shuffle(parts)
+    return " ".join(parts) + " " + random.choice(EMOTICON_POOL)
 
 async def fetch_bitcoin_price() -> str:
     try:
@@ -623,7 +629,7 @@ async def fetch_live_context(query: str) -> str:
     return ""
 
 # ============================================================
-# 8. CORE PROCESSOR
+# 8. CORE PROCESSOR WITH 4-TIER FALLBACK CHAIN
 # ============================================================
 async def process_job(job: PendingJob):
     global last_api_call_timestamp
@@ -665,37 +671,49 @@ async def process_job(job: PendingJob):
 
     reply = ""
     actual_tokens = 0
+
+    async def _keep_typing():
+        try:
+            while True:
+                async with job.channel.typing():
+                    await asyncio.sleep(9.0)
+        except asyncio.CancelledError:
+            pass
+
+    typing_task = asyncio.create_task(_keep_typing())
     try:
-        async with job.channel.typing():
-            def _call():
-                return ai_client.chat.completions.with_raw_response.create(
-                    model=MODEL_NAME,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": job.prompt_text or "Thought?"},
-                    ],
-                    temperature=temperature,
-                    max_tokens=token_limit,
-                )
-            async with groq_api_lock:
-                raw = await asyncio.to_thread(_call)
-                last_api_call_timestamp = time.monotonic()
-            update_plane_alpha_from_response(raw_response=raw)
-            resp = raw.parse()
-            if resp.choices and resp.choices[0].message.content:
-                reply = resp.choices[0].message.content.strip()
-                if any(b in reply.lower() for b in ("as an ai", "i cannot", "i'm sorry, but i can't")):
-                    reply = ""
-            if hasattr(resp, "usage") and resp.usage:
-                actual_tokens = getattr(resp.usage, "total_tokens", 0)
+        def _call():
+            return ai_client.chat.completions.with_raw_response.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": job.prompt_text or "Thought?"},
+                ],
+                temperature=temperature,
+                max_tokens=token_limit,
+            )
+        async with groq_api_lock:
+            raw = await asyncio.to_thread(_call)
+            last_api_call_timestamp = time.monotonic()
+        update_plane_alpha_from_response(raw_response=raw)
+        resp = raw.parse()
+        if resp.choices and resp.choices[0].message.content:
+            reply = resp.choices[0].message.content.strip()
+            if any(b in reply.lower() for b in ("as an ai", "i cannot", "i'm sorry, but i can't")):
+                reply = ""
+        if hasattr(resp, "usage") and resp.usage:
+            actual_tokens = getattr(resp.usage, "total_tokens", 0)
     except Exception as e:
         print(f"[API P{job.priority_tier}] {e}")
         update_plane_alpha_from_response(exception=e)
+    finally:
+        typing_task.cancel()
 
     track_token_usage_real(actual_tokens or 35)
 
+    # Smart 4-Tier Fallback Chain if LLM fails/empty
     if not reply:
-        reply = random.choice(BANTER)
+        reply = generate_word_salad(job.prompt_text)
 
     if job.priority_tier == 8:
         reply = " ".join(reply.split()[:10])
@@ -703,18 +721,28 @@ async def process_job(job: PendingJob):
     # Independent media decision
     media_url, file_obj, sticker = "", None, None
     if job.priority_tier != 8:
-        want_media = (job.priority_tier in (2, 3, 4, 5, 6)) or (job.priority_tier == 1 and random.random() < 0.78)
+        want_media = (job.priority_tier in (3, 4, 5, 6)) or (job.priority_tier == 1 and random.random() < 0.78)
         if want_media:
             media_url, file_obj, sticker = await get_wild_media(getattr(job.channel, "guild", None))
 
     sent_successfully = False
     try:
-        content = f"{reply}\n{media_url}".strip() if media_url else reply
+        if not reply and media_url:
+            content = media_url
+            media_url = ""
+        elif reply and media_url:
+            content = f"{reply}\n{media_url}"
+        else:
+            content = reply
+
         kwargs = {}
         if file_obj:
             kwargs["file"] = file_obj
         if sticker:
             kwargs["stickers"] = [sticker]
+
+        if not content and not file_obj and not sticker:
+            return
 
         if job.reference_message:
             await job.reference_message.reply(content=content or "…", mention_author=(job.priority_tier == 1), **kwargs)
@@ -726,36 +754,24 @@ async def process_job(job: PendingJob):
     except Exception as e:
         print(f"[SEND P{job.priority_tier}] {e}")
 
-    # Priority 8 cursor advances ONLY after successful send
     if sent_successfully and job.priority_tier == 8 and job.p8_channel_id and job.p8_message_id:
         p8_cursors[job.p8_channel_id] = job.p8_message_id
         save_state()
 
     if job.reference_message:
         replied_message_ids.add(job.reference_message.id)
-        if job.priority_tier == 2 and job.reference_message.guild:
-            priority2_replied_member_ids.add(p2_key(job.reference_message.guild.id, job.reference_message.author.id))
-            save_state()
 
 # ============================================================
-# 9. PRIORITY LOOPS
+# 9. PRIORITY LOOPS (PRIORITY 2 = MEDIA ONLY)
 # ============================================================
 async def execute_priority_2():
+    """Priority 2: Zero-token media-only historical backlog sweeper."""
     await bot.wait_until_ready()
-    print("[P2] Forward historical backlog (healthy 25–150s)")
+    print("[P2] Zero-token media-only backlog sweeper")
     while not bot.is_closed():
         try:
-            m = get_trajectory_metrics()
-            if m["usage"] < 0.50:
-                delay = random.uniform(25, 150)
-            elif m["usage"] < 0.72:
-                delay = random.uniform(100, 420)
-            else:
-                delay = random.uniform(700, 2800)
+            delay = random.uniform(25, 150)
             await asyncio.sleep(delay)
-
-            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
-                continue
 
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
@@ -776,8 +792,18 @@ async def execute_priority_2():
                         target = msg
                         break
                     if target:
-                        job = PendingJob(2, time.time(), ch, target.content or "Thoughts?", reference_message=target, author_id=target.author.id)
-                        await delay_queue.put(job)
+                        url, file_obj, sticker = await get_wild_media(guild)
+                        kwargs_send = {}
+                        if file_obj: kwargs_send["file"] = file_obj
+                        if sticker: kwargs_send["stickers"] = [sticker]
+                        try:
+                            await target.reply(content=url or "🥣", mention_author=False, **kwargs_send)
+                            replied_message_ids.add(target.id)
+                            priority2_replied_member_ids.add(p2_key(guild.id, target.author.id))
+                            save_state()
+                            print(f"[P2 Media-Only] Replied to msg {target.id} in #{ch.name}")
+                        except Exception as e:
+                            print(f"[P2 send] {e}")
                         break
                 else:
                     continue
@@ -848,7 +874,7 @@ async def execute_priority_7():
 
                     url, file_obj, sticker = await get_wild_media(guild)
                     if not (url or file_obj or sticker):
-                        continue  # do NOT advance
+                        continue
 
                     kwargs_send = {}
                     if file_obj: kwargs_send["file"] = file_obj
@@ -896,7 +922,6 @@ async def execute_priority_8():
                     if not target:
                         continue
 
-                    # Do NOT advance cursor here
                     job = PendingJob(
                         priority_tier=8,
                         timestamp=time.time(),
@@ -980,7 +1005,7 @@ async def delay_queue_worker():
 
 @bot.event
 async def on_ready():
-    print(f"Oatmeal AI V16.1 logged in as {bot.user}")
+    print(f"Oatmeal AI V16.3 logged in as {bot.user}")
     load_state()
     bot.loop.create_task(delay_queue_worker())
     bot.loop.create_task(execute_priority_2())
