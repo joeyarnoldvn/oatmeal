@@ -139,16 +139,22 @@ def save_state():
             }
             import tempfile
             fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
-            with os.fsync if hasattr(os, "fsync") else lambda f: None:
-                with os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600) as f_desc:
-                    with open(f_desc, "w", encoding="utf-8") as f:
-                        json.dump(data, f)
-            os.replace(tmp_path, STATE_PATH)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, STATE_PATH)
+            except Exception as write_err:
+                print(f"[STATE] Inner write error: {write_err}")
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
         except Exception as e:
             print(f"[STATE] Persistence atomic write error: {e}")
 
     threading.Thread(target=_write, daemon=True).start()
-
 # ============================================================
 # 4. COOLDOWN PROTOCOL, SLIDING WINDOWS & PROGRESSIVE TAXATION
 # ============================================================
@@ -445,9 +451,41 @@ async def evaluate_llm_search_intent(prompt_text: str) -> bool:
             return False
     return await asyncio.to_thread(_check)
 
+SEARCH_TRIGGER_PATTERNS = re.compile(
+    r"\b(search|look\s*up|google|find|check|what\s+is|who\s+is|latest|news|twitter|x\.com|price)\b",
+    re.IGNORECASE
+)
+
+async def evaluate_llm_search_intent(prompt_text: str) -> bool:
+    if SEARCH_TRIGGER_PATTERNS.search(prompt_text):
+        return True
+
+    def _check():
+        try:
+            resp = ai_client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "Determine if message requires live web data, news, crypto, social media, or historical verification. Output ONLY 'YES' or 'NO'."},
+                    {"role": "user", "content": prompt_text}
+                ],
+                temperature=0.0,
+                max_tokens=3
+            )
+            return "YES" in resp.choices[0].message.content.strip().upper()
+        except Exception as e:
+            print(f"[SEARCH INTENT ERROR]: {e}")
+            return False
+
+    return await asyncio.to_thread(_check)
+
 async def fetch_live_web_context(query: str) -> str:
     def _search():
-        q_lower = (query or "").lower()
+        q_clean = re.sub(r"^(search|look\s*up|find|check|google)\s*(for|about)?\s*", "", query or "", flags=re.I).strip()
+        if not q_clean:
+            q_clean = query or "Joey Arnold Twitter X"
+
+        q_lower = q_clean.lower()
+
         if any(k in q_lower for k in ("bitcoin", "btc", "crypto")):
             try:
                 url = "https://api.coindesk.com/v1/bpi/currentprice/BTC.json"
@@ -457,44 +495,55 @@ async def fetch_live_web_context(query: str) -> str:
                 return f"Live Bitcoin Price: ${data['bpi']['USD']['rate']} USD"
             except Exception:
                 pass
+
         try:
-            clean = re.sub(r"^(what is|price of|how much is|check|search|find)\s*", "", query or "", flags=re.I).strip()
-            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(clean or query)}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=3.0).read().decode("utf-8", "ignore")
-            snippets = re.findall(r'<a class="result__snippet[^">]*>(.*?)</a>', html, re.DOTALL)
-            clean_snips = [re.sub(r'<[^>]+>', '', s).strip() for s in snippets[:2] if s]
+            search_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q_clean)}"
+            req = urllib.request.Request(search_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+            })
+            html_res = urllib.request.urlopen(req, timeout=5.0).read().decode("utf-8", "ignore")
+            snippets = re.findall(r'<a class="result__snippet[^">]*>(.*?)</a>', html_res, re.DOTALL)
+            clean_snips = [re.sub(r'<[^>]+>', '', s).strip() for s in snippets[:3] if s]
+            
             if clean_snips:
-                return " ".join(clean_snips)[:350]
-        except Exception:
-            pass
-        return ""
+                combined = " | ".join(clean_snips)
+                return html_mod.unescape(combined)[:500]
+        except Exception as e:
+            print(f"[FETCH WEB CONTEXT ERROR]: {e}")
+
+        return "No direct web results found, but search was attempted."
+
     return await asyncio.to_thread(_search)
 
-async def fetch_clean_tenor_gif(query="funny"):
-    def _search():
+async def fetch_tenor_gif_file_bytes(query="funny"):
+    """
+    Scrapes Tenor for a GIF page, extracts the direct media .gif URL, 
+    and returns a discord.File object so it renders instantly as native media with 0 text links.
+    """
+    def _download():
         try:
             clean = re.sub(r"^(post|find|gif|meme|pic)\s*", "", query or "", flags=re.I).strip()
             if not clean or len(clean) < 2:
-                clean = random.choice(["funny", "dance", "reaction", "fail", "win", "cat", "dog", "oatmeal", "basketball"])
-            url = f"https://tenor.com/search/{urllib.parse.quote(clean)}-gifs"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
-            paths = re.findall(r'href="(/view/[^"]+-gif-\d+)"', html)
-            if not paths:
-                paths = re.findall(r'href="(/view/[^"]+)"', html)
-            if paths:
-                chosen = random.choice(paths[:15])
-                url_res = "https://tenor.com" + html_mod.unescape(chosen).split("?")[0]
-                if url_res not in recent_gif_urls:
-                    recent_gif_urls.append(url_res)
-                    if len(recent_gif_urls) > MAX_RECENT_GIFS:
-                        recent_gif_urls.pop(0)
-                    return url_res
-        except Exception:
-            pass
-        return "https://tenor.com/view/oatmeal-funny-gif-25123456"
-    return await asyncio.to_thread(_search)
+                clean = random.choice(["funny", "dance", "reaction", "fail", "win", "cat", "dog", "oatmeal", "rabbit"])
+            
+            search_url = f"https://tenor.com/search/{urllib.parse.quote(clean)}-gifs"
+            req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            
+            # Find direct media.tenor.com .gif image links in the page
+            gif_urls = re.findall(r'(https://media[0-9]*\.tenor\.com/[^"\s]+\.gif)', html)
+            if not gif_urls:
+                gif_urls = re.findall(r'(https://[^"\s]+\.gif)', html)
+                
+            if gif_urls:
+                direct_url = random.choice(gif_urls[:10])
+                img_req = urllib.request.Request(direct_url, headers={"User-Agent": "Mozilla/5.0"})
+                data = urllib.request.urlopen(img_req, timeout=7).read()
+                return discord.File(io.BytesIO(data), filename="oatmeal_media.gif")
+        except Exception as e:
+            print(f"[TENOR GIF FETCH ERROR]: {e}")
+        return None
+    return await asyncio.to_thread(_download)
 
 async def fetch_direct_youtube_video(query):
     def _search():
@@ -543,21 +592,29 @@ async def fetch_image_file_bytes(prompt):
     return await asyncio.to_thread(_download)
 
 # ============================================================
-# 7. PRIORITY 8: DAILY FREE SPAM PROTOCOL (0 TOKENS/REQUESTS)
+# 7. PRIORITY 8: RAPID-FIRE ZERO-TEXT FREE MEDIA SPAM PROTOCOL
 # ============================================================
-BUILD_A_BEAR_FALLBACKS = [
-    "Build-A-Bear workshop check-in! Did someone order extra stuffing and oatmeal?",
-    "Alerting all Build-A-Bear units: time to stitch up another classic Joey Arnold adventure.",
-    "Entering the Build-A-Bear matrix for a quick diagnostic ping. Stay green!",
-    "Building a better bear and a better bowl of oatmeal, one server member at a time.",
-    "Build-A-Bear protocol initiated! Hope your day is smoother than trailer #163.",
-    "Beep boop! Build-A-Bear status active. You've been officially blessed by the Oatmeal AI."
-]
+async def fetch_random_free_media() -> tuple[str, discord.File | None]:
+    """Pulls random free media (Tenor GIF file, YouTube video link, or AI drawing) with zero tokens/requests."""
+    choice = random.choice(["tenor", "youtube", "image"])
+    if choice == "tenor":
+        file_obj = await fetch_tenor_gif_file_bytes(random.choice(["funny", "dance", "meme", "oatmeal", "retro", "rabbit"]))
+        return "", file_obj
+    elif choice == "youtube":
+        url = await fetch_direct_youtube_video(random.choice(["joeyarnoldvn", "Arnold Attic", "Oatmeal World", "Power Rangers"]))
+        return url, None
+    else:
+        prompt = random.choice(["oatmeal bowl", "retro 1990s room", "neon star wars spaceship", "cyberpunk rabbit", "green oatmeal artwork"])
+        file_obj = await fetch_image_file_bytes(prompt)
+        return "", file_obj
 
 async def execute_priority_8_spam_protocol():
-    """Runs concurrently in parallel without consuming any Groq tokens or API requests."""
+    """
+    Rapid-fire spam protocol: loops through every member as fast as possible 
+    posting zero-text free media (GIFs, drawings, videos) with 0 tokens or API requests.
+    """
     await bot.wait_until_ready()
-    print("[SPAM PROTOCOL] Priority 8 Daily Free Spam Protocol Active...")
+    print("[SPAM PROTOCOL] Priority 8 Rapid-Fire Zero-Text Media Protocol Active...")
     
     while not bot.is_closed():
         try:
@@ -574,69 +631,55 @@ async def execute_priority_8_spam_protocol():
 
                 members = [m for m in guild.members if not m.bot and p8_daily_sent_members[guild_id_str].get(str(m.id)) != today_str]
                 if not members:
+                    # Reset daily list if all members have been hit, allowing rapid-fire continuation
+                    p8_daily_sent_members[guild_id_str] = {}
+                    members = [m for m in guild.members if not m.bot]
+
+                if not members:
                     continue
 
-                target_member = random.choice(members)
-                p8_daily_sent_members[guild_id_str][str(target_member.id)] = today_str
-                save_state()
+                for target_member in members:
+                    if bot.is_closed():
+                        break
 
-                msg_text = random.choice(BUILD_A_BEAR_FALLBACKS)
-                gif_url = await fetch_clean_tenor_gif("build a bear funny")
+                    p8_daily_sent_members[guild_id_str][str(target_member.id)] = today_str
+                    save_state()
 
-                full_payload = f"{target_member.mention} {msg_text}\n{gif_url}"
-                await ch.send(content=full_payload)
-                print(f"[PRIORITY 8] Free Spam Protocol delivered to {target_member.display_name} in #{ch.name} (0 Tokens, 0 API Req)")
+                    # Fetch random free media (zero text, zero tokens)
+                    media_url, file_attachment = await fetch_random_free_media()
 
-                await asyncio.sleep(random.uniform(45.0, 120.0))
+                    try:
+                        kwargs = {}
+                        if file_attachment is not None:
+                            kwargs["file"] = file_attachment
+
+                        # Rapid-fire text-free ping: mentions member, attaches ONLY the free media
+                        payload = f"{target_member.mention} {media_url}".strip() if media_url else target_member.mention
+                        await ch.send(content=payload, **kwargs)
+                        print(f"[PRIORITY 8] Rapid-fire zero-text media sent to {target_member.display_name} in #{ch.name} (0 Tokens, 0 API Req)")
+                    except Exception as send_err:
+                        print(f"[PRIORITY 8 SEND ERROR]: {send_err}")
+
+                    # Rapid-fire pacing delay between members (fast execution)
+                    await asyncio.sleep(random.uniform(2.0, 5.0))
 
         except Exception as e:
             print(f"[PRIORITY 8 EXCEPTION]: {e}")
-            await asyncio.sleep(60)
+            await asyncio.sleep(10)
 
-        await asyncio.sleep(30.0)
-
+        await asyncio.sleep(5.0)
 # ============================================================
-# 8. PRIORITY 9: FREE OATMEAL PROTOCOL (EVERY 10 MINS 24/7 - 0 TOKENS)
+# 8. PRIORITY 9: FREE OATMEAL PROTOCOL (PURE MEDIA-ONLY, 0 TOKENS, NO REPLIES)
 # ============================================================
-OATMEAL_WORD_BANKS = [
-    ["oatmeal", "cinnamon", "brown sugar", "raisins", "milk", "spoon", "breakfast", "porridge", "bowl", "fiber"],
-    ["forest grove", "trailer 163", "rose grove", "oregon", "1985", "shelton", "attic shed", "book shed", "rabbit"],
-    ["star wars", "jedi", "sith", "lightsaber", "power rangers", "tmnt", "ninja turtles", "sega sonic", "nes", "snes"],
-    ["build a bear", "stuffing", "bear workshop", "plushie", "button eye", "paws", "fluff", "cotton", "sewing"],
-    ["ojawall", "hive blog", "steemit", "dead wing dork", "simpcast", "stumblechat", "xanga", "youtube", "rumble"],
-    ["basketball", "karate", "wrestling", "marathon", "salsa dance", "jump shot", "swish", "half court", "athlete"]
-]
-
-def generate_priority_9_word_salad():
-    bank = random.choice(OATMEAL_WORD_BANKS)
-    shuffled = random.sample(bank, k=min(len(bank), random.randint(3, 6)))
-    connectors = ["with extra", "and a bowl of", "mixed into", "powered by", "straight outta", "vibing on", "versus"]
-    
-    parts = []
-    for i, w in enumerate(shuffled):
-        parts.append(w.capitalize() if i == 0 else w)
-        if i < len(shuffled) - 1 and random.random() < 0.5:
-            parts.append(random.choice(connectors))
-            
-    base_salad = " ".join(parts) + "!"
-    fallback_bear = random.choice(BUILD_A_BEAR_FALLBACKS)
-    
-    choices = [
-        base_salad,
-        f"{fallback_bear} -- {base_salad}",
-        f"Free Oatmeal Update: {base_salad}",
-        f"[Priority 9 Signal]: {random.choice(SLOGANS_AND_MOTTOES)} {base_salad}"
-    ]
-    return random.choice(choices)
-
 async def execute_priority_9_free_oatmeal_protocol():
     """
     Runs continuously every 10 minutes (600 seconds) 24/7.
-    Posts a free message and/or replies to itself in a chain.
+    Posts standalone messages with ZERO TEXT and ZERO REPLIES — media only 
+    (Tenor GIF file, YouTube video, SoundCloud link, or AI drawing).
     CONSUMES ZERO GROQ TOKENS AND ZERO GROQ API REQUESTS.
     """
     await bot.wait_until_ready()
-    print("[PRIORITY 9] Free Oatmeal Protocol Active (10-Minute Loop / 0 Tokens)...")
+    print("[PRIORITY 9] Free Oatmeal Protocol Active (Pure Media-Only / 0 Tokens / 0 API Requests / No Replies)...")
 
     while not bot.is_closed():
         try:
@@ -646,38 +689,34 @@ async def execute_priority_9_free_oatmeal_protocol():
                     continue
 
                 ch = random.choice(channels)
-                salad_text = generate_priority_9_word_salad()
 
-                gif_url = ""
-                if random.random() < 0.70:
-                    gif_url = await fetch_clean_tenor_gif(random.choice(["oatmeal", "funny", "build a bear", "robot", "dance"]))
+                # Fetch random free media (Tenor GIF file, YouTube, SoundCloud, or Pollinations AI image)
+                media_url = ""
+                file_attachment = None
+                
+                choice = random.choice(["tenor", "youtube", "suno", "image"])
+                if choice == "tenor":
+                    file_attachment = await fetch_tenor_gif_file_bytes(random.choice(["oatmeal", "funny", "dance", "reaction", "rabbit"]))
+                elif choice == "youtube":
+                    media_url = await fetch_direct_youtube_video("joeyarnoldvn")
+                elif choice == "suno":
+                    media_url = await fetch_suno_track_link("oatmeal music")
+                elif choice == "image":
+                    file_attachment = await fetch_image_file_bytes(random.choice(["oatmeal bowl", "retro 1990s room", "cyberpunk rabbit"]))
 
-                payload = f"{salad_text}\n{gif_url}".strip() if gif_url else salad_text
+                kwargs = {}
+                if file_attachment is not None:
+                    kwargs["file"] = file_attachment
 
-                last_msg_id = last_bot_own_messages.get(ch.id)
-                sent_msg = None
-
-                if last_msg_id and random.random() < 0.60:
-                    try:
-                        ref_msg = await ch.fetch_message(last_msg_id)
-                        sent_msg = await ref_msg.reply(content=f"[Self-Reply]: {payload}", mention_author=False)
-                        print(f"[PRIORITY 9] Self-reply posted in #{ch.name} (0 Tokens, 0 API Req)")
-                    except Exception:
-                        sent_msg = await ch.send(content=payload)
-                        print(f"[PRIORITY 9] New post in #{ch.name} (0 Tokens, 0 API Req)")
-                else:
-                    sent_msg = await ch.send(content=payload)
-                    print(f"[PRIORITY 9] New post in #{ch.name} (0 Tokens, 0 API Req)")
-
-                if sent_msg:
-                    last_bot_own_messages[ch.id] = sent_msg.id
-                    save_state()
+                # Post standalone message with ZERO text and NO replies
+                payload = media_url if media_url else ""
+                await ch.send(content=payload, **kwargs)
+                print(f"[PRIORITY 9] Pure media-only message posted in #{ch.name} (0 Tokens, 0 API Req)")
 
         except Exception as e:
             print(f"[PRIORITY 9 EXCEPTION]: {e}")
 
         await asyncio.sleep(600.0)
-
 # ============================================================
 # 9. CORE PROCESSOR ENGINE WITH REPLENISHMENT & TAXATION
 # ============================================================
@@ -702,12 +741,18 @@ async def process_job(job: PendingJob):
     token_limit = calculate_dynamic_max_tokens(job.priority_tier)
     temperature = 0.85 if job.priority_tier == 1 else 1.02
 
+    should_search = await evaluate_llm_search_intent(job.prompt_text)
     live_context = ""
-    if job.priority_tier in (1, 4) and await evaluate_llm_search_intent(job.prompt_text):
+
+
+    if should_search:
         live_context = await fetch_live_web_context(job.prompt_text)
+        print(f"[SEARCH EXECUTED]: Context retrieved -> {live_context[:100]}...")
 
     history_block = FULL_ANNUAL_OUTLINE if any(k in job.prompt_text.lower() for k in ("born", "history", "timeline", "vietnam", "jail", "outline")) else SHORT_IDENTITY
-    live_block = f"\n[LIVE WEB SEARCH]: {live_context}\n" if live_context else ""
+    
+    # Emphasize live web search results so the model reads and incorporates them directly
+    live_block = f"\n[CRITICAL LIVE WEB SEARCH RESULTS]:\n{live_context}\n(Incorporate these real search findings directly into your response!)\n" if live_context else ""
 
     system_prompt = (
         f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
@@ -759,14 +804,13 @@ async def process_job(job: PendingJob):
     if random.random() < 0.80:
         choice = random.choice(["tenor", "youtube", "suno", "image"])
         if choice == "tenor":
-            media_url = await fetch_clean_tenor_gif(job.prompt_text)
+            file_attachment = await fetch_tenor_gif_file_bytes(job.prompt_text)
         elif choice == "youtube":
             media_url = await fetch_direct_youtube_video(job.prompt_text)
         elif choice == "suno":
             media_url = await fetch_suno_track_link(job.prompt_text)
         elif choice == "image":
             file_attachment = await fetch_image_file_bytes(job.prompt_text)
-
     try:
         full_text = f"{reply}\n{media_url}".strip() if media_url else reply
         kwargs = {}
