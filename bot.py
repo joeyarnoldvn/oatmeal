@@ -564,9 +564,6 @@ async def get_wild_unified_media(guild: discord.Guild = None) -> tuple[str, disc
 # ============================================================
 # 6. HELPERS, LLM SEARCH & COMPREHENSIVE MEDIA ENGINES
 # ============================================================
-# ============================================================
-# 6. HELPERS, LLM SEARCH & COMPREHENSIVE MEDIA ENGINES
-# ============================================================
 SEARCH_TRIGGER_PATTERNS = re.compile(
     r"\b(search|look\s*up|google|find|check|what\s+is|who\s+is|latest|news|twitter|x\.com|price)\b",
     re.IGNORECASE
@@ -713,83 +710,73 @@ async def fetch_image_file_bytes(prompt):
 # ============================================================
 async def execute_priority_8_spam_protocol():
     """
-    Priority 8 Rapid-Fire Wild Spam Protocol:
-    - Traverses every unique server member precisely once per day as fast as possible.
-    - Strictly alternates between mentioning members directly (Priority 3) and 
-      replying to recent channel messages (Priority 2 style).
-    - Uses wild queries from code, random tokens, numbers, and symbols to pull 
-      zero-token media with zero LLM API cost.
+    Priority 8 Random Interval Spam Protocol:
+    - Waits for a random duration between 0 seconds and 24 hours (86400 seconds) before each trigger.
+    - Alternates between direct mentions (Priority 3) and replying to historical channel messages (Priority 2).
+    - Uses wild queries to pull zero-token media with zero LLM API cost.
     """
     await bot.wait_until_ready()
-    print("[SPAM PROTOCOL] Priority 8 Rapid-Fire Wild Media Protocol Active (0 Tokens)...")
+    print("[SPAM PROTOCOL] Priority 8 Random Interval Protocol Active (0 to 24 Hours / 0 Tokens)...")
     
     alternate_mode = False
 
     while not bot.is_closed():
         try:
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            for guild in list(bot.guilds):
-                guild_id_str = str(guild.id)
-                if guild_id_str not in p8_daily_sent_members:
-                    p8_daily_sent_members[guild_id_str] = {}
+            # Wait a random interval between 0 seconds and 24 hours (86400 seconds)
+            wait_time = random.uniform(0.0, 86400.0)
+            print(f"[PRIORITY 8] Waiting {wait_time / 3600:.2f} hours ({wait_time:.1f}s) until next trigger.")
+            await asyncio.sleep(wait_time)
 
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                if not channels:
-                    continue
-                ch = random.choice(channels)
+            if bot.is_closed():
+                break
 
-                members = [m for m in guild.members if not m.bot and p8_daily_sent_members[guild_id_str].get(str(m.id)) != today_str]
-                if not members:
-                    p8_daily_sent_members[guild_id_str] = {}
-                    members = [m for m in guild.members if not m.bot]
+            guilds = list(bot.guilds)
+            if not guilds:
+                await asyncio.sleep(60)
+                continue
+            guild = random.choice(guilds)
 
-                if not members:
-                    continue
+            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+            if not channels:
+                continue
+            ch = random.choice(channels)
 
-                for target_member in members:
-                    if bot.is_closed():
-                        break
+            members = [m for m in guild.members if not m.bot]
+            if not members:
+                continue
+            target_member = random.choice(members)
 
-                    p8_daily_sent_members[guild_id_str][str(target_member.id)] = today_str
-                    save_state()
+            media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
 
-                    media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
+            try:
+                kwargs = {}
+                if file_attachment is not None:
+                    kwargs["file"] = file_attachment
+                if sticker_obj is not None:
+                    kwargs["stickers"] = [sticker_obj]
 
-                    try:
-                        kwargs = {}
-                        if file_attachment is not None:
-                            kwargs["file"] = file_attachment
-                        if sticker_obj is not None:
-                            kwargs["stickers"] = [sticker_obj]
+                payload = f"{target_member.mention} {media_url}".strip() if media_url else target_member.mention
 
-                        payload = f"{target_member.mention} {media_url}".strip() if media_url else target_member.mention
+                if alternate_mode:
+                    historical_msg = await next_historical_message(ch)
+                    if historical_msg:
+                        await historical_msg.reply(content=payload, mention_author=False, **kwargs)
+                        print(f"[PRIORITY 8] Random Wild Reply (P2) sent to {target_member.display_name} in #{ch.name}")
+                    else:
+                        await ch.send(content=payload, **kwargs)
+                        print(f"[PRIORITY 8] Random Wild Send sent to {target_member.display_name} in #{ch.name}")
+                else:
+                    await ch.send(content=payload, **kwargs)
+                    print(f"[PRIORITY 8] Random Wild Ping (P3) sent to {target_member.display_name} in #{ch.name}")
 
-                        if alternate_mode:
-                            # Use next_historical_message to properly crawl forward through history without looping
-                            historical_msg = await next_historical_message(ch)
+                alternate_mode = not alternate_mode
 
-                            if historical_msg:
-                                await historical_msg.reply(content=payload, mention_author=False, **kwargs)
-                                print(f"[PRIORITY 8] Wild Reply (P2) sent to {target_member.display_name} in #{ch.name}")
-                            else:
-                                await ch.send(content=payload, **kwargs)
-                                print(f"[PRIORITY 8] Wild Send sent to {target_member.display_name} in #{ch.name}")
-                        else:
-                            await ch.send(content=payload, **kwargs)
-                            print(f"[PRIORITY 8] Wild Ping (P3) sent to {target_member.display_name} in #{ch.name}")
-
-                        alternate_mode = not alternate_mode
-
-                    except Exception as send_err:
-                        print(f"[PRIORITY 8 SEND ERROR]: {send_err}")
-
-                    await asyncio.sleep(random.uniform(2.0, 4.0))
+            except Exception as send_err:
+                print(f"[PRIORITY 8 SEND ERROR]: {send_err}")
 
         except Exception as e:
             print(f"[PRIORITY 8 EXCEPTION]: {e}")
-            await asyncio.sleep(10)
-
-        await asyncio.sleep(5.0)
+            await asyncio.sleep(60)
 # ============================================================
 # 8. PRIORITY 9: FREE OATMEAL PROTOCOL (PURE MEDIA-ONLY, 0 TOKENS)
 # ============================================================
@@ -833,13 +820,24 @@ def extract_relevant_timeline_snippet(prompt_text: str, outline_text: str) -> st
     target_years = set()
     target_locations = set()
     
+    # Word-to-number mapping for ages written as words
+    word_numbers = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+        "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+        "nineteen": 19, "twenty": 20
+    }
+    
+    prompt_lower = prompt_text.lower()
+    
     # 1. Detect explicit 4-digit years (e.g., "1993", "2012")
     year_matches = re.findall(r'\b(19\d{2}|20\d{2})\b', prompt_text)
     for y in year_matches:
         target_years.add(y)
         
-    # 2. Detect age mentions (e.g., "when I was 8", "age 8") -> Birth year 1985 + Age N
-    age_matches = re.findall(r'(?:age|was|at)\s+(\d{1,2})|(\d{1,2})\s+(?:years old|yo)', prompt_text, re.IGNORECASE)
+    # 2. Detect numeric age mentions (e.g., "when I was 8", "age 8") -> Birth year 1985 + Age N    
+    age_matches = re.findall(r'(?:age|old|was|were|are|is|am|at|in|on|during)\s+(\d{1,2})|(\d{1,2})\s+(?:years old|yo)', prompt_text, re.IGNORECASE)
     for match in age_matches:
         age_str = match[0] or match[1]
         if age_str:
@@ -850,7 +848,14 @@ def extract_relevant_timeline_snippet(prompt_text: str, outline_text: str) -> st
             except ValueError:
                 pass
                 
-    # 3. Detect location keywords from your life outline
+    # 3. Detect word-based age mentions (e.g., "when you were seven")
+    for word, val in word_numbers.items():
+        if f"were {word}" in prompt_lower or f"was {word}" in prompt_lower or f"age {word}" in prompt_lower or f"at {word}" in prompt_lower:
+            calculated_year = str(1985 + val)
+            target_years.add(calculated_year)
+            print(f"[TIMELINE FILTER] Detected age word '{word}' -> calculated year {calculated_year}")
+
+    # 4. Detect location keywords from your life outline
     known_locations = [
         "forest grove", "oregon", "rose grove", "seattle", "los angeles", "california", "wolbi", "wcc", 
         "portland", "vietnam", "bac ninh", "saigon", "hanoi", "cambodia", "abc",
@@ -858,7 +863,6 @@ def extract_relevant_timeline_snippet(prompt_text: str, outline_text: str) -> st
         "new jersey", "west virginia", "quebec", "long beach", "hagg lake"
     ]
     
-    prompt_lower = prompt_text.lower()
     for loc in known_locations:
         if loc in prompt_lower:
             target_locations.add(loc)
@@ -869,11 +873,7 @@ def extract_relevant_timeline_snippet(prompt_text: str, outline_text: str) -> st
     
     for line in lines:
         line_lower = line.lower()
-        
-        # Check if line starts with a target year
         matched_year = any(line.startswith(f"{y}:") for y in target_years)
-        
-        # Check if line contains any target location
         matched_loc = any(loc in line_lower for loc in target_locations)
         
         if matched_year or matched_loc:
@@ -911,15 +911,13 @@ async def process_job(job: PendingJob):
     should_search = await evaluate_llm_search_intent(job.prompt_text)
     live_context = ""
 
-
     if should_search:
         live_context = await fetch_live_web_context(job.prompt_text)
         print(f"[SEARCH EXECUTED]: Context retrieved -> {live_context[:100]}...")
 
-    # Dynamically extract only the relevant year/age line from your timeline (0 extra outline bloat)
+    # Dynamically extract only the relevant year/age line from your timeline
     history_block = extract_relevant_timeline_snippet(job.prompt_text, FULL_ANNUAL_OUTLINE)
     
-    # Emphasize live web search results so the model reads and incorporates them directly
     live_block = f"\n[CRITICAL LIVE WEB SEARCH RESULTS]:\n{live_context}\n(Incorporate these real search findings directly into your response!)\n" if live_context else ""
 
     system_prompt = (
@@ -962,10 +960,14 @@ async def process_job(job: PendingJob):
         print(f"[API EXCEPTION P{job.priority_tier}]: {e}")
         update_plane_alpha_from_response(exception=e)
 
+    # Properly indented tracking and Priority 1 fallback protection
     track_token_usage_real(actual_tokens_used or 80, requests=1)
 
     if not reply:
-        reply = random.choice(BANTER_FALLBACK_RESPONSES)
+        if job.priority_tier == 1:
+            reply = f"I was thinking about that, but my digital circuits got tangled up talking about {job.prompt_text[:30]}..."
+        else:
+            reply = random.choice(BANTER_FALLBACK_RESPONSES)
 
     media_url = ""
     file_attachment = None
@@ -983,7 +985,10 @@ async def process_job(job: PendingJob):
             kwargs["stickers"] = [sticker_obj]
 
         sent_msg = None
-        if job.reference_message:
+        if job.reference_message and job.priority_tier == 5:
+            # Priority 5: Reply to the historical message without mentioning or saying the user's name
+            sent_msg = await job.reference_message.reply(content=full_text, mention_author=False, **kwargs)
+        elif job.reference_message:
             sent_msg = await job.reference_message.reply(content=full_text, mention_author=True, **kwargs)
         elif job.target_member:
             sent_msg = await job.channel.send(content=f"{job.target_member.mention} {full_text}", **kwargs)
@@ -1003,6 +1008,7 @@ async def process_job(job: PendingJob):
             priority2_replied_member_ids.add(p2_key(job.reference_message.guild.id, job.reference_message.author.id))
             save_state()
 
+
 async def delay_queue_worker():
     while True:
         job = await delay_queue.get()
@@ -1016,11 +1022,12 @@ async def delay_queue_worker():
 # ============================================================
 @bot.event
 async def on_ready():
-    print(f"Oatmeal AI logged in as {bot.user} with Master Synthesis V13.0 (Priority 9 Free Protocol Active)")
+    print(f"Oatmeal AI logged in as {bot.user} with Master Synthesis V13.0 (Priority 5 Reverse Protocol Active)")
     load_state()
     bot.loop.create_task(delay_queue_worker())
     bot.loop.create_task(hour_protocol_scheduler())
     bot.loop.create_task(talkback_protocol_scheduler())
+    bot.loop.create_task(execute_priority_5_reverse_loop_protocol())  # <-- Priority 5 Loop Active
     bot.loop.create_task(execute_priority_8_spam_protocol())
     bot.loop.create_task(execute_priority_9_free_oatmeal_protocol())
 
@@ -1114,6 +1121,88 @@ async def on_message(message):
                 author_id=message.author.id
             )
             await delay_queue.put(job)
+
+async def execute_priority_5_reverse_loop_protocol():
+    """
+    Priority 5 Inverse Chronological Never-Ending Loop Protocol:
+    - Waits for a random duration between 0 seconds and 24 hours (86400 seconds).
+    - Crawls backward (reverse chronological) through channel history endlessly.
+    - Sends a request to Groq for a simple sentence (no canned fallbacks).
+    - Attaches random media from the infinite pool.
+    - Replies to the target message without mentioning or saying the user's name.
+    """
+    await bot.wait_until_ready()
+    print("[PRIORITY 5] Reverse Chronological Endless Loop Protocol Active (0 to 24 Hours)...")
+
+    while not bot.is_closed():
+        try:
+            # Wait a random interval between 0 seconds and 24 hours (86400 seconds)
+            wait_time = random.uniform(0.0, 86400.0)
+            print(f"[PRIORITY 5] Waiting {wait_time / 3600:.2f} hours ({wait_time:.1f}s) until next reverse loop trigger.")
+            await asyncio.sleep(wait_time)
+
+            if bot.is_closed():
+                break
+
+            guilds = list(bot.guilds)
+            if not guilds:
+                await asyncio.sleep(60)
+                continue
+            guild = random.choice(guilds)
+
+            channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+            if not channels:
+                continue
+            ch = random.choice(channels)
+
+            # Get the previous historical message (reverse chronological)
+            target_msg = await previous_historical_message(ch)
+            if not target_msg:
+                await asyncio.sleep(60)
+                continue
+
+            # Enqueue a Priority 5 job into the delay queue so it goes through the main LLM processor
+            job = PendingJob(
+                priority_tier=5,
+                timestamp=time.time(),
+                channel=ch,
+                prompt_text="Say a random, unpredictable short sentence reflecting on the flow of time or your surroundings.",
+                reference_message=target_msg,
+                author_id=target_msg.author.id
+            )
+            await delay_queue.put(job)
+
+        except Exception as e:
+            print(f"[PRIORITY 5 EXCEPTION]: {e}")
+            await asyncio.sleep(60)
+
+async def previous_historical_message(channel):
+    """Priority 5 Inverse: Scans backward (reverse chronological) through channel history."""
+    cursor = channel_cursors.get(f"rev_{channel.id}", 0)
+    kwargs = {"limit": 50}
+    if cursor:
+        kwargs["before"] = discord.Object(id=cursor)
+    else:
+        # If no cursor set for this channel yet, start from the most recent messages
+        pass
+    
+    target = None
+    async for msg in channel.history(**kwargs):
+        # Update reverse cursor
+        channel_cursors[f"rev_{channel.id}"] = msg.id
+        
+        if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
+            continue
+            
+        target = msg
+        break
+
+    # If we hit the very beginning of history without finding a target, reset cursor to 0 to keep the loop endless
+    if not target:
+        channel_cursors[f"rev_{channel.id}"] = 0
+        
+    save_state()
+    return target
 
 async def next_historical_message(channel):
     cursor = channel_cursors.get(channel.id, 0)
