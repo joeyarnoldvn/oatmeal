@@ -101,24 +101,27 @@ local_daily_reset_day = None
 last_talkback_timestamp = time.time()
 p8_daily_sent_members = {}  # {guild_id: {member_id: timestamp_day}}
 last_bot_own_messages = {}  # {channel_id: last_msg_id}
+blocked_users = {}        # {str(user_id): expiration_timestamp}
+user_message_history = {} # {user_id: [(timestamp, content), ...]}
 
 def p2_key(guild_id, author_id):
     return f"{guild_id}:{author_id}"
 
 def load_state():
-    global replied_message_ids, channel_cursors, talkback_cursors, talkback_replied_ids, priority2_replied_member_ids, p2_complete, p8_daily_sent_members, last_bot_own_messages
+    global replied_message_ids, channel_cursors, talkback_cursors, talkback_replied_ids, priority2_replied_member_ids, p2_complete, p8_daily_sent_members, last_bot_own_messages, blocked_users
     try:
         with open(STATE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         replied_message_ids = set(int(x) for x in data.get("replied", []))
         channel_cursors = {int(k): int(v) for k, v in data.get("cursors", {}).items()}
-        talkback_cursors = {int(k): int(v) for k, v in data.get("talkback_cursors", {}).items()}
+        talkback_cursors = {int(k): int(v) for k, v in talkback_cursors.items()}
         talkback_replied_ids = set(int(x) for x in data.get("talkback_replied", []))
         priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
         p2_complete = bool(data.get("p2_complete", False))
         p8_daily_sent_members = data.get("p8_sent", {})
         last_bot_own_messages = {int(k): int(v) for k, v in data.get("own_msgs", {}).items()}
-        print(f"[STATE] Loaded: {len(replied_message_ids)} replies, talkback_replied={len(talkback_replied_ids)}, p8 guilds={len(p8_daily_sent_members)}")
+        blocked_users = data.get("blocked_users", {})
+        print(f"[STATE] Loaded: {len(replied_message_ids)} replies, talkback_replied={len(talkback_replied_ids)}, p8 guilds={len(p8_daily_sent_members)}, blocked users={len(blocked_users)}")
     except Exception as e:
         print(f"[STATE] Initializing fresh state ({e})")
 
@@ -136,7 +139,27 @@ def save_state():
                 "p2_complete": p2_complete,
                 "p8_sent": p8_daily_sent_members,
                 "own_msgs": {str(k): v for k, v in last_bot_own_messages.items()},
+                "blocked_users": blocked_users,
             }
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, STATE_PATH)
+            except Exception as write_err:
+                print(f"[STATE] Inner write error: {write_err}")
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[STATE] Persistence atomic write error: {e}")
+
+    threading.Thread(target=_write, daemon=True).start()
+
             import tempfile
             fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
             try:
@@ -432,40 +455,44 @@ BANTER_FALLBACK_RESPONSES = [
 ]
 
 # ============================================================
-# UNIFIED INFINITE VARIETY MEDIA & SUBJECT ENGINE (SHARED ACROSS PRIORITIES)
+# TRULY WILD UNCONSTRAINED MEDIA & QUERY GENERATOR (SHARED)
 # ============================================================
 RECENT_MEDIA_CACHE = collections.deque(maxlen=500)
+EMOTICON_POOL = ["😀", "😎", "🤖", "🚀", "🍕", "🐱", "🎉", "🔥", "⚡", "🍀", "🐵", "🎸", "🏆", "🧩", "🌪️", "🛸", "💥", "💎", "🔮", "🎯"]
 
-INFINITE_QUERY_SUBJECTS = [
-    "oatmeal", "joey arnold", "trailer 163", "forest grove", "oregon", "star wars", "jedi", "sith", 
-    "power rangers", "teenage mutant ninja turtles", "sega sonic", "retro 1990s", "vhs tape", "rabbit", 
-    "basketball", "karate", "wrestling", "arnold attic", "cyberpunk", "matrix", "ghetto mobile home", 
-    "camp counselor", "vietnam saigon", "shelton washington", "book shed", "chicken house", "hive blog",
-    "astronaut", "shark on the moon", "dinosaurs", "arcade cabinet", "skateboard", "dj turntable",
-    "mystery van", "wizard", "knight", "alien invasion", "time traveler", "robot uprising", "coffee mug"
-]
+def get_truly_wild_query() -> str:
+    """
+    Pulls completely wild, unconstrained words and tokens from anywhere and everywhere:
+    grabs words from the running code file, random alphanumeric strings, numbers, 
+    code keywords, and symbol combinations to ensure infinite, unpredictable variety.
+    """
+    try:
+        with open(__file__, "r", encoding="utf-8", errors="ignore") as f:
+            script_tokens = f.read().split()
+    except Exception:
+        script_tokens = ["oatmeal", "discord", "bot", "python", "script", "async"]
 
-INFINITE_QUERY_MODIFIERS = [
-    "epic fail", "funny moments", "dancing wildly", "glitch edit", "retro aesthetic", "hyperlapse",
-    "surreal meme", "action sequence", "speedrun", "chaos edition", "unseen footage", "lost archive",
-    "deep fried", "lofi chill", "ultimate victory", "plot twist", "behind the scenes", "directors cut"
-]
+    wild_sources = [
+        lambda: random.choice(script_tokens) if script_tokens else "oatmeal",
+        lambda: "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789_-$#@", k=random.randint(3, 10))),
+        lambda: str(random.randint(1, 9999999999)),
+        lambda: random.choice(["glitch", "payload", "stream", "packet", "buffer", "kernel", "matrix", "velocity", "quantum", "neon", "cyber", "void", "hyper", "mega", "ultra", "synth", "nexus", "core"])
+    ]
+    
+    # Combine 2 to 5 random wild terms into a single unique search query
+    num_terms = random.randint(2, 5)
+    terms = [random.choice(wild_sources)() for _ in range(num_terms)]
+    return " ".join(terms)
 
-async def fetch_infinite_tenor_gif() -> discord.File | None:
+async def fetch_wild_tenor_gif() -> discord.File | None:
     def _download():
         try:
-            subj = random.choice(INFINITE_QUERY_SUBJECTS)
-            mod = random.choice(INFINITE_QUERY_MODIFIERS)
-            query = f"{subj} {mod} {random.randint(1000, 999999)}"
-            
+            query = get_truly_wild_query()
             search_url = f"https://tenor.com/search/{urllib.parse.quote(query)}-gifs"
-            req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            req = urllib.request.Request(search_url, headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
             
             gif_urls = re.findall(r'(https://media[0-9]*\.tenor\.com/[^"\s]+\.gif)', html)
-            if not gif_urls:
-                gif_urls = re.findall(r'(https://[^"\s]+\.gif)', html)
-                
             if gif_urls:
                 fresh_urls = [u for u in gif_urls if u not in RECENT_MEDIA_CACHE]
                 if not fresh_urls:
@@ -474,23 +501,21 @@ async def fetch_infinite_tenor_gif() -> discord.File | None:
                 RECENT_MEDIA_CACHE.append(chosen_url)
 
                 img_req = urllib.request.Request(chosen_url, headers={"User-Agent": "Mozilla/5.0"})
-                data = urllib.request.urlopen(img_req, timeout=7).read()
-                return discord.File(io.BytesIO(data), filename="oatmeal_infinite.gif")
+                data = urllib.request.urlopen(img_req, timeout=5).read()
+                return discord.File(io.BytesIO(data), filename="oatmeal_wild.gif")
         except Exception:
             pass
         return None
     return await asyncio.to_thread(_download)
 
-async def fetch_infinite_youtube_video() -> str:
+async def fetch_wild_youtube_video() -> str:
     def _search():
+        fallback_ids = ["dQw4w9WgXcQ", "jNQXAC9IVRw", "9bZkp7q19f0", "kJQP7kiw5Fk", "5qap5aO4i9A", "fJ9rUzIMcZQ"]
         try:
-            subj = random.choice(INFINITE_QUERY_SUBJECTS)
-            mod = random.choice(INFINITE_QUERY_MODIFIERS)
-            query = f"{subj} {mod} {random.randint(100, 999999)}"
-            
+            query = get_truly_wild_query()
             url = f"https://www.youtube.com/results?search_query={urllib.parse.quote(query)}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
             
             ids = re.findall(r"watch\?v=([\w-]{11})", html)
             if ids:
@@ -502,51 +527,46 @@ async def fetch_infinite_youtube_video() -> str:
                 return f"https://www.youtube.com/watch?v={chosen_id}"
         except Exception:
             pass
-        return f"https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        return f"https://www.youtube.com/watch?v={random.choice(fallback_ids)}"
     return await asyncio.to_thread(_search)
 
-async def fetch_infinite_ai_artwork() -> discord.File | None:
+async def fetch_wild_ai_artwork() -> discord.File | None:
     def _download():
         try:
-            subj = random.choice(INFINITE_QUERY_SUBJECTS)
-            mod = random.choice(INFINITE_QUERY_MODIFIERS)
-            style = random.choice(["oil painting", "cyberpunk neon", "1990s anime cel", "surrealist photography", "chalk sketch", "voxel 3d art", "retro vhs glitch"])
-            prompt = f"{subj} {mod}, {style}, highly detailed, unique seed {random.randint(1, 999999999)}"
-            
+            prompt = f"{get_truly_wild_query()}, seed {random.randint(1, 999999999)}"
             seed = random.randint(1, 999999999)
             img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=768&height=768&nologo=true&seed={seed}"
             
             req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
-            data = urllib.request.urlopen(req, timeout=8).read()
-            return discord.File(io.BytesIO(data), filename="oatmeal_art_masterpiece.jpg")
+            data = urllib.request.urlopen(req, timeout=6).read()
+            return discord.File(io.BytesIO(data), filename="oatmeal_wild_art.jpg")
         except Exception:
             return None
     return await asyncio.to_thread(_download)
 
-async def get_unified_media(prompt_text: str = "") -> tuple[str, discord.File | None]:
-    """
-    Intelligent media selector:
-    - If prompt_text is provided and specific (Priority 1/2/7), attempts to match context or draw intelligently.
-    - Otherwise (Priority 3, 8, 9, etc.), draws from the infinite random pool with zero repetition.
-    """
-    choice = random.choice(["tenor", "youtube", "image"])
-    
-    # If prompt text has specific keywords, bias the search query towards them
-    clean_prompt = re.sub(r"^(search|look up|play|draw|post)\s*", "", prompt_text or "", flags=re.IGNORECASE).strip()
+async def get_wild_unified_media(guild: discord.Guild = None) -> tuple[str, discord.File | None, discord.Sticker | None]:
+    """Rotates seamlessly across Tenor GIFs, AI drawings, YouTube videos, guild stickers, and emoticons using wild queries."""
+    choice = random.choice(["tenor", "youtube", "image", "sticker", "emoticon"])
     
     if choice == "tenor":
-        file_obj = await fetch_infinite_tenor_gif()
+        file_obj = await fetch_wild_tenor_gif()
         if file_obj:
-            return "", file_obj
-        return "", await fetch_infinite_ai_artwork()
+            return "", file_obj, None
+        return "", await fetch_wild_ai_artwork(), None
     elif choice == "youtube":
-        url = await fetch_infinite_youtube_video()
-        return url, None
+        url = await fetch_wild_youtube_video()
+        return url, None, None
+    elif choice == "sticker" and guild and guild.stickers:
+        sticker = random.choice(guild.stickers)
+        return "", None, sticker
+    elif choice == "emoticon":
+        emo = random.choice(EMOTICON_POOL)
+        return emo, None, None
     else:
-        file_obj = await fetch_infinite_ai_artwork()
+        file_obj = await fetch_wild_ai_artwork()
         if file_obj:
-            return "", file_obj
-        return await fetch_infinite_youtube_video(), None
+            return "", file_obj, None
+        return await fetch_wild_youtube_video(), None, None
 
 # ============================================================
 # 6. HELPERS, LLM SEARCH & COMPREHENSIVE MEDIA ENGINES
@@ -709,19 +729,23 @@ async def fetch_image_file_bytes(prompt):
     return await asyncio.to_thread(_download)
 
 # ============================================================
-# 7. PRIORITY 8: RAPID-FIRE ZERO-TEXT MULTI-PRIORITY MEDIA SPAM PROTOCOL
+# 7. PRIORITY 8: RAPID-FIRE ZERO-TEXT WILD MULTI-PRIORITY SPAM
 # ============================================================
 async def execute_priority_8_spam_protocol():
     """
-    Rapid-fire spam protocol (Priority 8):
-    - Loops through every unique server member as fast as possible once per day.
-    - Combines Priority 2 (historical message context / channel scanning) and 
-      Priority 3 (proactive member pings) into a single unified zero-token engine.
-    - Posts ZERO TEXT (media only + user mention / reply), consuming 0 Groq tokens and 0 requests.
+    Priority 8 Rapid-Fire Wild Spam Protocol:
+    - Traverses every unique server member precisely once per day as fast as possible.
+    - Strictly alternates between mentioning members directly (Priority 3) and 
+      replying to old historical channel messages (Priority 2).
+    - Uses wild queries from code, random tokens, numbers, and symbols to pull 
+      zero-token videos, GIFs, drawings, emoticons, and stickers with zero text.
     """
     await bot.wait_until_ready()
-    print("[SPAM PROTOCOL] Priority 8 Rapid-Fire Multi-Priority Media Protocol Active...")
+    print("[SPAM PROTOCOL] Priority 8 Rapid-Fire Wild Media Protocol Active (0 Tokens)...")
     
+    # Toggle to strictly alternate between Mention (P3) and Reply (P2)
+    alternate_mode = False
+
     while not bot.is_closed():
         try:
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -735,10 +759,8 @@ async def execute_priority_8_spam_protocol():
                     continue
                 ch = random.choice(channels)
 
-                # Filter members who haven't been messaged yet today for Priority 8
                 members = [m for m in guild.members if not m.bot and p8_daily_sent_members[guild_id_str].get(str(m.id)) != today_str]
                 if not members:
-                    # Reset daily tracker to allow continuous rapid-fire rotation if all members reached
                     p8_daily_sent_members[guild_id_str] = {}
                     members = [m for m in guild.members if not m.bot]
 
@@ -752,25 +774,48 @@ async def execute_priority_8_spam_protocol():
                     p8_daily_sent_members[guild_id_str][str(target_member.id)] = today_str
                     save_state()
 
-                    # Fetch random zero-token infinite media (GIF file, AI art, or YouTube link)
-                    media_url, file_attachment = await get_unified_media()
+                    # Pull from the wild rotated media pool (GIFs, Art, YouTube, Stickers, Emoticons)
+                    media_url, file_attachment, sticker_obj = await get_wild_unified_media(guild=guild)
 
                     try:
                         kwargs = {}
                         if file_attachment is not None:
                             kwargs["file"] = file_attachment
+                        if sticker_obj is not None:
+                            kwargs["stickers"] = [sticker_obj]
 
-                        # Blend Priority 2 & 3 mechanics: 
-                        # Rapidly iterate through each unique member once per day, 
-                        # mentioning them with zero text (media only).
-                        payload = f"{target_member.mention}\n{media_url}".strip() if media_url else target_member.mention
-                        
-                        await ch.send(content=payload, **kwargs)
-                        print(f"[PRIORITY 8] Rapid-fire zero-text media sent to {target_member.display_name} in #{ch.name} (0 Tokens, 0 API Req)")
+                        payload = f"{target_member.mention} {media_url}".strip() if media_url else target_member.mention
+
+                        # Alternate between Mentioning (Priority 3 style) and Replying to old messages (Priority 2 style)
+                        if alternate_mode:
+                            # Priority 2 style: Find an old historical message to reply to
+                            historical_msg = None
+                            try:
+                                async for h_msg in ch.history(limit=30, oldest_first=True):
+                                    if not h_msg.author.bot and h_msg.author != bot.user:
+                                        historical_msg = h_msg
+                                        break
+                            except Exception:
+                                pass
+
+                            if historical_msg:
+                                await historical_msg.reply(content=payload, mention_author=False, **kwargs)
+                                print(f"[PRIORITY 8] Wild Reply (P2) + Media sent to {target_member.display_name} in #{ch.name} (0 Tokens)")
+                            else:
+                                await ch.send(content=payload, **kwargs)
+                                print(f"[PRIORITY 8] Wild Send (Fallback) sent to {target_member.display_name} in #{ch.name} (0 Tokens)")
+                        else:
+                            # Priority 3 style: Direct member mention ping
+                            await ch.send(content=payload, **kwargs)
+                            print(f"[PRIORITY 8] Wild Mention Ping (P3) + Media sent to {target_member.display_name} in #{ch.name} (0 Tokens)")
+
+                        # Flip alternation flag for the next member
+                        alternate_mode = not alternate_mode
+
                     except Exception as send_err:
                         print(f"[PRIORITY 8 SEND ERROR]: {send_err}")
 
-                    # Rapid-fire pacing delay between members (fast execution)
+                    # Rapid-fire pacing delay between members
                     await asyncio.sleep(random.uniform(2.0, 4.0))
 
         except Exception as e:
@@ -959,11 +1004,53 @@ async def on_ready():
     bot.loop.create_task(execute_priority_8_spam_protocol())
     bot.loop.create_task(execute_priority_9_free_oatmeal_protocol())
 
+global replied_message_ids, channel_cursors, talkback_cursors, talkback_replied_ids, priority2_replied_member_ids, p2_complete, p8_daily_sent_members, last_bot_own_messages
+
 @bot.event
 async def on_message(message):
     global last_genie_timestamp
     if message.author.bot or message.guild is None or message.is_system() or message.author == bot.user:
         return
+    author_id = message.author.id
+    now = time.time()
+
+    # 1. Check if user is currently blocked (ignored for 30 days)
+    if str(author_id) in blocked_users:
+        if now < blocked_users[str(author_id)]:
+            return  # Silently ignore blocked user
+        else:
+            del blocked_users[str(author_id)] # Block expired
+            save_state()
+
+    # 2. Analyze message content for empty / name-only spam
+    clean_content = re.sub(r"<@!?\d+>", "", message.content).strip().lower()
+    bot_names = ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall")
+    
+    # Check if message is purely the bot's name or completely empty/mention-only
+    is_name_only = not clean_content or clean_content in bot_names or all(n in clean_content for n in bot_names[:1])
+
+    if is_name_only:
+        if author_id not in user_message_history:
+            user_message_history[author_id] = []
+        
+        # Keep only messages within the last 10 minutes (600 seconds)
+        user_message_history[author_id] = [
+            (ts, content) for ts, content in user_message_history[author_id] 
+            if now - ts <= 600
+        ]
+        user_message_history[author_id].append((now, clean_content))
+
+        # If 10 consecutive/recent name-only or empty spam messages occurred within 10 mins
+        if len(user_message_history[author_id]) >= 10:
+            # Block user for 30 days (30 * 86400 seconds)
+            blocked_users[str(author_id)] = now + (30 * 86400)
+            save_state()
+            print(f"[BLOCK PROTOCOL] User {message.author.name} ({author_id}) blocked for 30 days due to name/empty spam.")
+            return
+    else:
+        # Reset tracker if they send normal varied messages
+        if author_id in user_message_history:
+            user_message_history[author_id] = []
 
     lifetime_interacted_members.add(message.author.id)
     content_lower = message.content.lower()
