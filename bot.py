@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 42.0 (Massive Archival Engine & Stable Photo Edition)
+Master Production Version 43.0 (Archival Engine & Direct REST Groq Edition)
 
-- Massive multi-batch historical archival engine for Priority 9 (scans 100+ messages per tick using cursor pagination)
-- Permanent Wikimedia & Pixabay photo embeds (zero broken Imgur links)
+- Massive multi-batch historical archival engine for Priority 9 (scans up to 100 messages per tick, works across all years)
+- Permanent Wikimedia & Pixabay photo embeds (zero broken image links)
 - Full dynamic token and frequency scaling across all 9 priority coroutines
-- High-quality LLM text generation with zero unnecessary fallbacks
+- Robust Groq REST client integration avoiding SDK mismatches
+- Zero fallback text spam: LLM generates rich, high-quality archival and interactive text
 """
 
 import os
@@ -28,7 +29,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
 import discord
-from openai import OpenAI
 
 # ============================================================
 # 1. RENDER HEALTH CHECK SERVER
@@ -37,7 +37,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V42.0 -- Archival Engine & Media Operating")
+        self.wfile.write(b"Oatmeal AI V43.0 -- Archival Engine & Media Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -61,8 +61,7 @@ GROQ_API_KEY  = os.environ.get("GROQ_API_KEY")
 if not DISCORD_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY environment variables")
 
-ai_client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_API_KEY)
-MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+MODEL_NAME = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 STATE_PATH = os.environ.get("STATE_PATH", "/tmp/oatmeal_state.json")
 
 intents = discord.Intents.default()
@@ -149,7 +148,7 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. MASTER TRAFFIC ENGINE – DYNAMIC GOVERNOR
+# 4. DIRECT GROQ REST CLIENT & MASTER TRAFFIC GOVERNOR
 # ============================================================
 GROQ_REMAINING_TPM = 8000
 GROQ_REMAINING_RPD = 1000
@@ -184,42 +183,35 @@ def check_and_reset_daily_counters():
         local_daily_reset_day = today
         print(f"[DAILY RESET] UTC Date: {today}")
 
-def update_plane_alpha_from_response(raw_response=None, exception=None):
-    global GROQ_REMAINING_TPM, GROQ_REMAINING_RPD, GROQ_RATE_LIMITED_UNTIL, DAILY_EXHAUSTED_UNTIL, local_daily_tokens
-    check_and_reset_daily_counters()
-    headers = {}
-    if raw_response and hasattr(raw_response, "headers"):
-        headers = {k.lower(): v for k, v in raw_response.headers.items()}
-    elif exception and hasattr(exception, "response") and exception.response:
-        try:
-            headers = {k.lower(): v for k, v in exception.response.headers.items()}
-        except Exception: pass
-
-    if "x-ratelimit-remaining-tokens" in headers:
-        try: GROQ_REMAINING_TPM = int(headers["x-ratelimit-remaining-tokens"])
-        except Exception: pass
-    if "x-ratelimit-remaining-requests" in headers:
-        try: GROQ_REMAINING_RPD = int(headers["x-ratelimit-remaining-requests"])
-        except Exception: pass
-
-    err_str = str(exception or "").lower()
-    if "429" in err_str or "rate limit" in err_str or "tpd" in err_str:
-        match_used = re.search(r"used\s+(\d+)", err_str)
-        if match_used:
-            local_daily_tokens = int(match_used.group(1))
-            print(f"[RE-SYNC] Ground truth daily tokens -> {local_daily_tokens}/200000")
-
-        match_time = re.search(r"try again in\s+([\d\.]+)([smh])", err_str)
-        retry_after = 45.0
-        if match_time:
-            val = float(match_time.group(1))
-            unit = match_time.group(2)
-            mult = 1.0 if unit == "s" else (60.0 if unit == "m" else 3600.0)
-            retry_after = val * mult
-
-        GROQ_RATE_LIMITED_UNTIL = max(GROQ_RATE_LIMITED_UNTIL, time.monotonic() + retry_after + 8.0)
-        if "tpd" in err_str or local_daily_tokens >= 192000:
-            DAILY_EXHAUSTED_UNTIL = max(DAILY_EXHAUSTED_UNTIL, time.monotonic() + max(retry_after, 4200))
+def call_groq_rest(messages: List[Dict[str, str]], max_tokens: int = 300, temperature: float = 0.9) -> Tuple[str, int, Dict[str, Any]]:
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+        "User-Agent": "OatmealAI/43.0"
+    }
+    payload = {
+        "model": MODEL_NAME,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature
+    }
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+            body = json.loads(resp.read().decode("utf-8", "ignore"))
+            text = body.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            usage = body.get("usage", {})
+            total_tokens = usage.get("total_tokens", max_tokens // 2)
+            return text, total_tokens, resp_headers
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", "ignore")
+        print(f"[GROQ HTTP ERROR {e.code}] {err_body}")
+        raise RuntimeError(f"Groq API HTTP {e.code}: {err_body}")
+    except Exception as e:
+        print(f"[GROQ EXCEPTION] {e}")
+        raise
 
 def track_token_usage_real(tokens: int, requests: int = 1):
     global local_daily_tokens, local_daily_requests
@@ -290,15 +282,15 @@ def calculate_dynamic_max_tokens(priority_tier: int) -> int:
 
     engine = get_traffic_engine_metrics(priority_tier)
     weight = engine["weight_multiplier"]
-    base = {1: 520, 4: 180, 5: 110, 6: 100, 8: 28, 9: 320}.get(priority_tier, 90)
+    base = {1: 520, 4: 180, 5: 110, 6: 100, 8: 28, 9: 450}.get(priority_tier, 90)
     m = get_trajectory_metrics()
     usage = m["usage"]
     compression = max(0.2, (1.0 - usage) ** 1.2)
     headroom = max(60, GROQ_REMAINING_TPM - 280)
 
     allowed = int(base * compression * weight)
-    hard = {1: 900, 4: 240, 5: 140, 6: 130, 8: 32, 9: 600}.get(priority_tier, 120)
-    return max(32, min(allowed, hard, headroom))
+    hard = {1: 900, 4: 240, 5: 140, 6: 130, 8: 32, 9: 800}.get(priority_tier, 120)
+    return max(40, min(allowed, hard, headroom))
 
 # ============================================================
 # 5. FULL 1985–2026 TIMELINE + PERSONALITY & IDENTITY
@@ -447,7 +439,7 @@ WORD_NUMBERS = {
 }
 
 # ============================================================
-# 6. ANTI-SPAM MULTI-PURPOSE ELITE MEDIA ENGINE
+# 6. ELITE MEDIA ENGINE & STABLE PHOTO EMBEDS
 # ============================================================
 SEED_WORDS = [
     "star wars", "90s nostalgia", "power rangers", "ninja turtles", "vhs tape",
@@ -535,7 +527,7 @@ async def fetch_pollinations(prompt: str = None) -> Optional[discord.File]:
         return None
 
 async def fetch_embed_photo() -> str:
-    # PERMANENT CDN PHOTO EMBEDS: 100% stable Wikimedia Commons & Pixabay URLs
+    # 100% stable permanent Wikimedia Commons and Pixabay CDN image URLs (fixed photo embed problem)
     samples = [
         "https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg",
         "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png",
@@ -564,27 +556,6 @@ async def fetch_web_link() -> str:
     ]
     return random.choice(links)
 
-async def generate_token_assisted_media_prompt(chat_context: str) -> str:
-    try:
-        def _call():
-            return ai_client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "Output ONLY a 2 to 4 word visual search query representing the user's topic. No punctuation."},
-                    {"role": "user", "content": f"Topic: {chat_context[:100]}"}
-                ],
-                max_tokens=15,
-                temperature=0.7
-            )
-        res = await asyncio.to_thread(_call)
-        if res.choices and res.choices[0].message.content:
-            query = res.choices[0].message.content.strip()
-            track_token_usage_real(res.usage.total_tokens if hasattr(res, "usage") else 12)
-            return query
-    except Exception as e:
-        print(f"[TOKEN ASSISTED MEDIA EXCEPTION] {e}")
-    return random.choice(SEED_WORDS)
-
 async def get_wild_media_hybrid(
     guild: Optional[discord.Guild] = None,
     priority_tier: int = 0,
@@ -594,16 +565,9 @@ async def get_wild_media_hybrid(
     chat_lower = chat_context.lower()
     
     if "gif" in chat_lower or "animation" in chat_lower:
-        query_prompt = chat_context
-        if allow_tokens and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4):
-            query_prompt = await generate_token_assisted_media_prompt(chat_context)
-        url = await fetch_tenor_gif(query_prompt)
+        url = await fetch_tenor_gif(chat_context)
         if url:
             return url, None, None
-
-    query_prompt = None
-    if allow_tokens and chat_context and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4, 7, 8):
-        query_prompt = await generate_token_assisted_media_prompt(chat_context)
 
     if priority_tier in (2, 7):
         choices = ["tenor", "image", "youtube", "embed_photo", "emoticon"]
@@ -611,9 +575,6 @@ async def get_wild_media_hybrid(
     elif priority_tier == 3:
         choices = ["sticker", "emoticon", "image", "tenor", "youtube"]
         weights = [40,        3,         25,      20,      12]
-    elif priority_tier == 6:
-        choices = ["youtube", "image", "tenor", "emoticon", "sticker", "ascii", "embed_photo", "audio", "weblink"]
-        weights = [28,       28,      26,      1,         1,         6,       6,             2,       2]
     else:
         choices = ["youtube", "image", "tenor", "emoticon", "sticker", "ascii", "embed_photo", "audio", "weblink"]
         weights = [32,       28,      24,      1,         1,         6,       5,             2,       1]
@@ -621,26 +582,19 @@ async def get_wild_media_hybrid(
     choice = random.choices(choices, weights=weights, k=1)[0]
 
     if choice == "youtube":
-        return await fetch_youtube(query_prompt), None, None
+        return await fetch_youtube(chat_context), None, None
     elif choice == "image":
-        f = await fetch_pollinations(query_prompt)
+        f = await fetch_pollinations(chat_context)
         if f: return "", f, None
     elif choice == "tenor":
-        url = await fetch_tenor_gif(query_prompt)
+        url = await fetch_tenor_gif(chat_context)
         if url: return url, None, None
     elif choice == "emoticon":
-        available_emoticons = [e for e in EMOTICON_POOL if e not in recent_emoticons]
-        if not available_emoticons:
-            available_emoticons = EMOTICON_POOL
-        emo = random.choice(available_emoticons)
-        recent_emoticons.append(emo)
+        emo = random.choice(EMOTICON_POOL)
         return emo, None, None
     elif choice == "sticker" and guild and guild.stickers:
-        available_stickers = [s for s in guild.stickers if str(s.id) not in recent_sticker_ids]
-        if available_stickers:
-            st = random.choice(available_stickers)
-            recent_sticker_ids.append(str(st.id))
-            return "", None, st
+        st = random.choice(guild.stickers)
+        return "", None, st
     elif choice == "ascii":
         return random.choice(ASCII_ART_POOL), None, None
     elif choice == "embed_photo":
@@ -650,14 +604,10 @@ async def get_wild_media_hybrid(
     elif choice == "weblink":
         return await fetch_web_link(), None, None
 
-    url = await fetch_tenor_gif(query_prompt)
+    url = await fetch_tenor_gif(chat_context)
     if url:
         return url, None, None
-    
-    available_emoticons = [e for e in EMOTICON_POOL if e not in recent_emoticons]
-    emo = random.choice(available_emoticons or EMOTICON_POOL)
-    recent_emoticons.append(emo)
-    return emo, None, None
+    return random.choice(EMOTICON_POOL), None, None
 
 async def build_message_payload(reply: str, media_url: str, file_obj: Optional[discord.File], sticker: Optional[discord.Sticker], mention_prefix: str = "") -> Tuple[str, Dict[str, Any]]:
     clean_reply = sanitize_reply_text(reply)
@@ -676,7 +626,7 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
             content = f"{content}\n{media_url}".strip() if content else media_url
         else:
             resolved_media = await resolve_media_url(media_url)
-            if resolved_media and (resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or "c.tenor.com" in resolved_media or "giphy.com" in resolved_media or "imgur.com" in resolved_media or "pixabay.com" in resolved_media or "wikimedia.org" in resolved_media):
+            if resolved_media and (resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or "c.tenor.com" in resolved_media or "pixabay.com" in resolved_media or "wikimedia.org" in resolved_media):
                 embed = discord.Embed(color=0x2b2d31)
                 embed.set_image(url=resolved_media)
                 kwargs["embed"] = embed
@@ -695,7 +645,7 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
     return content, kwargs
 
 # ============================================================
-# 7. SURGICAL TIMELINE EXTRACTION + MULTI-ENGINE LIVE SEARCH
+# 7. SURGICAL TIMELINE EXTRACTION + LIVE SEARCH
 # ============================================================
 def extract_relevant_context(prompt: str) -> str:
     if not prompt:
@@ -743,27 +693,14 @@ async def fetch_bitcoin_price() -> str:
     try:
         req = urllib.request.Request(
             "[https://api.coinbase.com/v2/prices/BTC-USD/spot](https://api.coinbase.com/v2/prices/BTC-USD/spot)",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            headers={"User-Agent": "Mozilla/5.0"}
         )
         data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode())
         amount = data.get("data", {}).get("amount")
         if amount:
             return f"Bitcoin is currently around ${float(amount):,.2f} USD."
-    except Exception as e:
-        print(f"[BITCOIN COINBASE EXCEPTION] {e}")
-
-    try:
-        req = urllib.request.Request(
-            "[https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd](https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd)",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        )
-        data = json.loads(urllib.request.urlopen(req, timeout=3).read().decode())
-        price = data.get("bitcoin", {}).get("usd")
-        if price:
-            return f"Bitcoin is currently around ${float(price):,.2f} USD."
-    except Exception as e:
-        print(f"[BITCOIN COINGECKO EXCEPTION] {e}")
-
+    except Exception:
+        pass
     return ""
 
 async def fetch_live_context(query: str) -> str:
@@ -779,43 +716,14 @@ async def fetch_live_context(query: str) -> str:
     try:
         encoded = urllib.parse.quote(clean)
         url = f"[https://html.duckduckgo.com/html/?q=](https://html.duckduckgo.com/html/?q=){encoded}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
         snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
         cleaned = [re.sub(r"<.*?>", "", s).strip() for s in snippets[:4] if s.strip()]
         if cleaned:
             return " | ".join(cleaned)[:600]
-    except Exception as e:
-        print(f"[SEARCH ENGINE 1 EXCEPTION] {e}")
-
-    try:
-        encoded = urllib.parse.quote(clean)
-        url = "[https://lite.duckduckgo.com/lite/](https://lite.duckduckgo.com/lite/)"
-        data = f"q={encoded}".encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Content-Type": "application/x-www-form-request"
-        })
-        html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
-        snippets = re.findall(r'<td class="result-snippet">(.*?)</td>', html, re.DOTALL)
-        cleaned = [re.sub(r"<.*?>", "", s).strip() for s in snippets[:4] if s.strip()]
-        if cleaned:
-            return " | ".join(cleaned)[:600]
-    except Exception as e:
-        print(f"[SEARCH ENGINE 2 EXCEPTION] {e}")
-
-    try:
-        encoded = urllib.parse.quote(clean)
-        url = f"[https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=](https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=){encoded}&format=json"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-        data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
-        results = data.get("query", {}).get("search", [])
-        snippets = [re.sub(r"<.*?>", "", r.get("snippet", "")).strip() for r in results[:3] if r.get("snippet")]
-        if snippets:
-            return " | ".join(snippets)[:600]
-    except Exception as e:
-        print(f"[SEARCH ENGINE 3 EXCEPTION] {e}")
-
+    except Exception:
+        pass
     return ""
 
 # ============================================================
@@ -899,30 +807,20 @@ async def process_job(job: PendingJob):
 
         typing_task = asyncio.create_task(_keep_typing())
         try:
-            def _call():
-                return ai_client.chat.completions.with_raw_response.create(
-                    model=MODEL_NAME,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": job.prompt_text or "Thought?"},
-                    ],
-                    temperature=temperature,
-                    max_tokens=token_limit,
-                )
+            messages_payload = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": job.prompt_text or "Thought?"}
+            ]
             async with groq_api_lock:
-                raw = await asyncio.to_thread(_call)
+                reply, actual_tokens, headers = await asyncio.to_thread(
+                    call_groq_rest, messages_payload, token_limit, temperature
+                )
                 last_api_call_timestamp = time.monotonic()
-            update_plane_alpha_from_response(raw_response=raw)
-            resp = raw.parse()
-            if resp.choices and resp.choices[0].message.content:
-                reply = resp.choices[0].message.content.strip()
-                if any(b in reply.lower() for b in ("as an ai", "i cannot", "i'm sorry, but i can't")):
-                    reply = ""
-            if hasattr(resp, "usage") and resp.usage:
-                actual_tokens = getattr(resp.usage, "total_tokens", 0)
+            
+            if any(b in reply.lower() for b in ("as an ai", "i cannot", "i'm sorry, but i can't")):
+                reply = ""
         except Exception as e:
             print(f"[API EXCEPTION P{job.priority_tier}] {e}")
-            update_plane_alpha_from_response(exception=e)
         finally:
             typing_task.cancel()
 
@@ -1248,10 +1146,10 @@ async def execute_priority_6_drops():
 
 async def execute_priority_9():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 9: Massive Multi-Batch Archival Engine")
+    print("[COROUTINE INITIALIZED] Priority 9: Massive Multi-Batch Archival Engine (All Years Scanned)")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(9)
-        delay = random.uniform(60, 120) * engine["freq_multiplier"]
+        delay = random.uniform(45, 90) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -1259,9 +1157,7 @@ async def execute_priority_9():
 
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me].read_message_history]
-                if not channels:
-                    channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels:
                     continue
                 random.shuffle(channels)
@@ -1335,7 +1231,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V42.0 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V43.0 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
