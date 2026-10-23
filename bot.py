@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 36.1 (Clean Embed Media & Link-Hiding Edition)
+Master Production Version 36.2 (Priority 2 Media-Only & 1% Link Frequency Edition)
 
+- Priority 2 strictly restricted to media-only posts (zero text/banter)
+- Web links restricted to <=1% frequency in the hybrid media generator (99% GIFs/images/stickers/emoticons)
+- Multi-source search engine active exclusively in Priorities 1 and 4
 - Tenor link URL hiding via clean Discord embeds (`resolve_media_url` integration)
 - Fully flexible, dynamic hybrid media generator (zero-token internet word-mesh + token-assisted AI prompts)
-- Zero-token local text engine replacing static fallbacks with varied non-repeating Joey banter
-- Multi-provider media pipelines: Tenor GIFs, YouTube videos, Pollinations AI, Guild Stickers & Emojis
 - Anti-repetition state tracking (recent media URLs, sticker IDs, and text hashes)
-- Priority 4 Live Chat Reaction Genie tuned for immediate response
-- Multi-source search engine (DuckDuckGo HTML + DuckDuckGo Lite + Wikipedia API)
 - Master Traffic Engine with continuous coroutine pacing & sequential zero-token cutover
 - Infinite forward chronological self-mirrors (P7 media + P8 text) starting from oldest bot message
 - Priority 9 periodic chat recap ("Oatmeal Recap." format)
@@ -45,7 +44,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V36.1 -- Clean Embed Media Engine Operating")
+        self.wfile.write(b"Oatmeal AI V36.2 -- Priority Media Engine Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -580,14 +579,14 @@ async def get_wild_media_hybrid(
     if allow_tokens and chat_context and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4):
         query_prompt = await generate_token_assisted_media_prompt(chat_context)
 
-    weights = [35, 25, 20, 10, 10]
-    choice = random.choices(["tenor", "youtube", "image", "sticker", "emoticon"], weights=weights, k=1)[0]
+    # 99% Visual Media (Tenor GIFs, Pollinations images, Guild stickers, Emojis) vs 1% Web/YouTube links
+    choices = ["tenor", "image", "sticker", "emoticon", "youtube"]
+    weights = [45, 30, 15, 9, 1]
+    choice = random.choices(choices, weights=weights, k=1)[0]
 
     if choice == "tenor":
         url = await fetch_tenor_gif(query_prompt)
         if url: return url, None, None
-    elif choice == "youtube":
-        return await fetch_youtube(query_prompt), None, None
     elif choice == "image":
         f = await fetch_pollinations(query_prompt)
         if f: return "", f, None
@@ -599,6 +598,8 @@ async def get_wild_media_hybrid(
             return "", None, st
     elif choice == "emoticon":
         return random.choice(EMOTICON_POOL), None, None
+    elif choice == "youtube":
+        return await fetch_youtube(query_prompt), None, None
 
     url = await fetch_tenor_gif(query_prompt)
     return url or random.choice(EMOTICON_POOL), None, None
@@ -616,7 +617,6 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
 
     if media_url:
         resolved_media = await resolve_media_url(media_url)
-        # Hide raw link text by embedding Tenor/image media cleanly via embed
         if "tenor.com" in media_url or resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
             embed = discord.Embed(color=0x2b2d31)
             embed.set_image(url=resolved_media)
@@ -895,7 +895,7 @@ async def process_job(job: PendingJob):
 # ============================================================
 async def execute_priority_2():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 2: Forward Historical Backlog")
+    print("[COROUTINE INITIALIZED] Priority 2: Forward Historical Backlog (Media Only)")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(2)
         delay = random.uniform(30, 160) * engine["freq_multiplier"] * random.uniform(1.8, 3.2)
@@ -933,13 +933,14 @@ async def execute_priority_2():
 
                     if target:
                         url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=2)
-                        content_val, kwargs_send = await build_message_payload(get_zero_token_text(), url, file_obj, sticker)
+                        # Priority 2 is strictly media only (empty text string)
+                        content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
                         try:
                             await target.reply(content=content_val, mention_author=False, **kwargs_send)
                             replied_message_ids.add(target.id)
                             priority2_replied_member_ids.add(p2_key(guild.id, target.author.id))
                             save_state()
-                            print(f"[P2 DISPATCH] Responded to message {target.id} in #{ch.name}")
+                            print(f"[P2 DISPATCH] Responded with media only to message {target.id} in #{ch.name}")
                         except Exception as e:
                             print(f"[P2 SEND EXCEPTION] {e}")
                         break
@@ -1298,7 +1299,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V36.1 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V36.2 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
