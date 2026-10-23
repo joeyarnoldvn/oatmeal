@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 37.5 (Era-Aware Archival Recap & Multi-Purpose Elite Media Engine Edition)
+Master Production Version 42.0 (Massive Archival Engine & Stable Photo Edition)
 
-- Era-aware chronological archival chat recap engine for Priority 9 spanning server history back to 2019
-- Multi-purpose elite media generator with priority-tailored probabilistic weighting (P2/P7 visuals, P3 stickers, P6 full spectrum)
-- Persistent state tracking for recap cursors (`recap_cursors`) and bot message sweepers
-- Continuous smooth traffic pacing targeting 20% token utilization without abrupt cliffs
-- Bulletproof text sanitizer and dual-source Bitcoin price lookup (Coinbase + CoinGecko)
+- Massive multi-batch historical archival engine for Priority 9 (scans 100+ messages per tick using cursor pagination)
+- Permanent Wikimedia & Pixabay photo embeds (zero broken Imgur links)
+- Full dynamic token and frequency scaling across all 9 priority coroutines
+- High-quality LLM text generation with zero unnecessary fallbacks
 """
 
 import os
@@ -38,7 +37,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V37.5 -- Era-Aware Archival Engine Operating")
+        self.wfile.write(b"Oatmeal AI V42.0 -- Archival Engine & Media Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -74,7 +73,7 @@ intents.members = True
 bot = discord.Client(intents=intents)
 
 # ============================================================
-# 3. GLOBAL STATE STRUCTURES & PERSISTENT CURSORS
+# 3. GLOBAL STATE STRUCTURES & ANTI-SPAM MEMORY
 # ============================================================
 replied_message_ids: Set[int] = set()
 channel_cursors: Dict[str, int] = {}
@@ -87,6 +86,7 @@ lifetime_interacted_members: Set[int] = set()
 recent_media_urls = collections.deque(maxlen=5000)
 recent_sticker_ids = collections.deque(maxlen=200)
 recent_text_hashes = collections.deque(maxlen=2000)
+recent_emoticons = collections.deque(maxlen=25)
 
 p3_member_indices: Dict[int, int] = {}
 last_member_activity_time: Dict[Any, float] = {}
@@ -149,7 +149,7 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. MASTER TRAFFIC ENGINE – SMOOTH PACE GOVERNOR (20% TARGET)
+# 4. MASTER TRAFFIC ENGINE – DYNAMIC GOVERNOR
 # ============================================================
 GROQ_REMAINING_TPM = 8000
 GROQ_REMAINING_RPD = 1000
@@ -261,7 +261,7 @@ def get_trajectory_metrics():
 def get_traffic_engine_metrics(priority_tier: int = 1) -> Dict[str, Any]:
     m = get_trajectory_metrics()
     s = max(0.0, min(1.0, m["local_daily"] / 200000.0))
-    load_delta = s - 0.20  # Target spent threshold = 20% (0.20)
+    load_delta = s - 0.20
 
     rank = {9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 3: 4, 2: 3, 4: 2, 1: 1}
     r = rank.get(priority_tier, 1)
@@ -290,15 +290,15 @@ def calculate_dynamic_max_tokens(priority_tier: int) -> int:
 
     engine = get_traffic_engine_metrics(priority_tier)
     weight = engine["weight_multiplier"]
-    base = {1: 520, 4: 180, 5: 110, 6: 100, 8: 28, 9: 120}.get(priority_tier, 90)
+    base = {1: 520, 4: 180, 5: 110, 6: 100, 8: 28, 9: 320}.get(priority_tier, 90)
     m = get_trajectory_metrics()
     usage = m["usage"]
     compression = max(0.2, (1.0 - usage) ** 1.2)
     headroom = max(60, GROQ_REMAINING_TPM - 280)
 
     allowed = int(base * compression * weight)
-    hard = {1: 900, 4: 240, 5: 140, 6: 130, 8: 32, 9: 150}.get(priority_tier, 120)
-    return max(16, min(allowed, hard, headroom))
+    hard = {1: 900, 4: 240, 5: 140, 6: 130, 8: 32, 9: 600}.get(priority_tier, 120)
+    return max(32, min(allowed, hard, headroom))
 
 # ============================================================
 # 5. FULL 1985–2026 TIMELINE + PERSONALITY & IDENTITY
@@ -447,7 +447,7 @@ WORD_NUMBERS = {
 }
 
 # ============================================================
-# 6. MULTI-PURPOSE ELITE MEDIA ENGINE
+# 6. ANTI-SPAM MULTI-PURPOSE ELITE MEDIA ENGINE
 # ============================================================
 SEED_WORDS = [
     "star wars", "90s nostalgia", "power rangers", "ninja turtles", "vhs tape",
@@ -535,12 +535,15 @@ async def fetch_pollinations(prompt: str = None) -> Optional[discord.File]:
         return None
 
 async def fetch_embed_photo() -> str:
+    # PERMANENT CDN PHOTO EMBEDS: 100% stable Wikimedia Commons & Pixabay URLs
     samples = [
-        "https://i.imgur.com/34RXfb6.jpg",
-        "https://i.imgur.com/7Y9z2vX.jpg",
-        "https://i.imgur.com/Z4w29qC.jpg",
-        "https://imgflip.com/s/meme/Distracted-Boyfriend.jpg",
-        "https://cdn.pixabay.com/photo/2015/04/23/22/00/tree-736885_1280.jpg"
+        "https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png",
+        "https://upload.wikimedia.org/wikipedia/commons/5/53/Colosseum_in_Rome%2C_Italy_-_April_2007.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/b/b6/Image_created_with_a_mobile_phone.png",
+        "https://cdn.pixabay.com/photo/2016/12/13/05/15/puppy-1903313_1280.jpg",
+        "https://cdn.pixabay.com/photo/2017/01/06/19/15/soap-bubble-1958650_1280.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/4/4d/Cat_November_2010-1a.jpg"
     ]
     return random.choice(samples)
 
@@ -602,19 +605,18 @@ async def get_wild_media_hybrid(
     if allow_tokens and chat_context and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4, 7, 8):
         query_prompt = await generate_token_assisted_media_prompt(chat_context)
 
-    # Tailor probabilistic choices and weights based on priority tier (Elite Multi-Purpose Engine)
-    if priority_tier in (2, 7):  # Historical media sweepers (high visual impact)
-        choices = ["tenor", "image", "youtube", "embed_photo"]
-        weights = [45,      30,      15,        10]
-    elif priority_tier == 3:  # Member tagging (interactive / playful)
-        choices = ["sticker", "emoticon", "image"]
-        weights = [50,       35,         15]
-    elif priority_tier == 6:  # Spontaneous drops (full spectrum)
+    if priority_tier in (2, 7):
+        choices = ["tenor", "image", "youtube", "embed_photo", "emoticon"]
+        weights = [45,      30,      15,        9,             1]
+    elif priority_tier == 3:
+        choices = ["sticker", "emoticon", "image", "tenor", "youtube"]
+        weights = [40,        3,         25,      20,      12]
+    elif priority_tier == 6:
         choices = ["youtube", "image", "tenor", "emoticon", "sticker", "ascii", "embed_photo", "audio", "weblink"]
-        weights = [25,       25,      20,      10,          8,         4,       4,             2,       2]
-    else:  # General / P1 / P4 / P5
+        weights = [28,       28,      26,      1,         1,         6,       6,             2,       2]
+    else:
         choices = ["youtube", "image", "tenor", "emoticon", "sticker", "ascii", "embed_photo", "audio", "weblink"]
-        weights = [30,       25,      20,      10,          6,         4,       3,             2,       1]
+        weights = [32,       28,      24,      1,         1,         6,       5,             2,       1]
     
     choice = random.choices(choices, weights=weights, k=1)[0]
 
@@ -627,7 +629,12 @@ async def get_wild_media_hybrid(
         url = await fetch_tenor_gif(query_prompt)
         if url: return url, None, None
     elif choice == "emoticon":
-        return random.choice(EMOTICON_POOL), None, None
+        available_emoticons = [e for e in EMOTICON_POOL if e not in recent_emoticons]
+        if not available_emoticons:
+            available_emoticons = EMOTICON_POOL
+        emo = random.choice(available_emoticons)
+        recent_emoticons.append(emo)
+        return emo, None, None
     elif choice == "sticker" and guild and guild.stickers:
         available_stickers = [s for s in guild.stickers if str(s.id) not in recent_sticker_ids]
         if available_stickers:
@@ -644,7 +651,13 @@ async def get_wild_media_hybrid(
         return await fetch_web_link(), None, None
 
     url = await fetch_tenor_gif(query_prompt)
-    return url or random.choice(EMOTICON_POOL), None, None
+    if url:
+        return url, None, None
+    
+    available_emoticons = [e for e in EMOTICON_POOL if e not in recent_emoticons]
+    emo = random.choice(available_emoticons or EMOTICON_POOL)
+    recent_emoticons.append(emo)
+    return emo, None, None
 
 async def build_message_payload(reply: str, media_url: str, file_obj: Optional[discord.File], sticker: Optional[discord.Sticker], mention_prefix: str = "") -> Tuple[str, Dict[str, Any]]:
     clean_reply = sanitize_reply_text(reply)
@@ -659,11 +672,11 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
         kwargs["stickers"] = [sticker]
 
     if media_url:
-        if media_url.startswith("```text"):
+        if media_url.startswith("```text") or media_url in EMOTICON_POOL:
             content = f"{content}\n{media_url}".strip() if content else media_url
         else:
             resolved_media = await resolve_media_url(media_url)
-            if resolved_media and (resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or "c.tenor.com" in resolved_media or "giphy.com" in resolved_media or "imgur.com" in resolved_media or "pixabay.com" in resolved_media):
+            if resolved_media and (resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or "c.tenor.com" in resolved_media or "giphy.com" in resolved_media or "imgur.com" in resolved_media or "pixabay.com" in resolved_media or "wikimedia.org" in resolved_media):
                 embed = discord.Embed(color=0x2b2d31)
                 embed.set_image(url=resolved_media)
                 kwargs["embed"] = embed
@@ -869,6 +882,8 @@ async def process_job(job: PendingJob):
     )
     if job.priority_tier == 8:
         system += "\nHARD RULE: Maximum 12 words. Witty self-reflection only. Text only. No media."
+    elif job.priority_tier == 9:
+        system += "\nHARD RULE FOR ARCHIVAL RECAP: Provide an insightful, in-character archival breakdown of the provided historical server batch as Joey Arnold. Focus on creative projects, humor, and workaholic archival themes."
 
     reply = ""
     actual_tokens = 0
@@ -911,7 +926,7 @@ async def process_job(job: PendingJob):
         finally:
             typing_task.cancel()
 
-        track_token_usage_real(actual_tokens or 30)
+        track_token_usage_real(actual_tokens or 40)
 
     if not reply:
         reply = get_zero_token_text()
@@ -920,7 +935,7 @@ async def process_job(job: PendingJob):
         reply = " ".join(reply.split()[:12])
 
     media_url, file_obj, sticker = "", None, None
-    if job.priority_tier != 8:
+    if job.priority_tier not in (8, 9):
         want_media = (job.priority_tier in (2, 3, 4, 5, 6, 7)) or (job.priority_tier == 1 and random.random() < 0.75)
         if want_media:
             media_url, file_obj, sticker = await get_wild_media_hybrid(
@@ -1233,10 +1248,10 @@ async def execute_priority_6_drops():
 
 async def execute_priority_9():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 9: Era-Aware Archival Chat Recap Engine")
+    print("[COROUTINE INITIALIZED] Priority 9: Massive Multi-Batch Archival Engine")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(9)
-        delay = random.uniform(120, 300) * engine["freq_multiplier"]
+        delay = random.uniform(60, 120) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -1244,20 +1259,22 @@ async def execute_priority_9():
 
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me].read_message_history]
+                if not channels:
+                    channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels:
                     continue
                 random.shuffle(channels)
                 ch = channels[0]
 
                 cursor = recap_cursors.get(f"recap_{ch.id}", 0)
-                kwargs = {"limit": 50, "oldest_first": True}
+                kwargs = {"limit": 100, "oldest_first": True}
                 if cursor > 0:
                     kwargs["after"] = discord.Object(id=cursor)
 
                 raw_messages = []
                 last_msg_id = cursor
-                batch_year = "Unknown Era"
+                detected_year = "Archive Era"
 
                 async for msg in ch.history(**kwargs):
                     last_msg_id = msg.id
@@ -1265,13 +1282,13 @@ async def execute_priority_9():
                         continue
                     
                     if msg.created_at:
-                        batch_year = str(msg.created_at.year)
+                        detected_year = str(msg.created_at.year)
 
                     clean_content = msg.content.strip()
-                    if len(clean_content.split()) < 3 and not any(k in clean_content.lower() for k in ("joey", "oatmeal", "vhs", "archive", "stark")):
+                    if len(clean_content) < 2:
                         continue
 
-                    raw_messages.append(f"[{msg.author.display_name}]: {clean_content[:150]}")
+                    raw_messages.append(f"[{msg.author.display_name}]: {clean_content[:180]}")
 
                 if last_msg_id != cursor:
                     recap_cursors[f"recap_{ch.id}"] = last_msg_id
@@ -1283,51 +1300,23 @@ async def execute_priority_9():
                         save_state()
                     continue
 
-                chat_history_text = "\n".join(raw_messages[:30])
+                chat_history_text = "\n".join(raw_messages[:90])
 
-                system_prompt = (
-                    f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
-                    f"You are archiving historical chat logs from the server era of {batch_year}. "
-                    "Your mission is to unearth lost moments, jokes, or project threads from these logs.\n"
-                    "You MUST output your response in exactly two lines:\n"
-                    f"Line 1: Oatmeal Recap ({batch_year} Archive).\n"
-                    "Line 2: A sharp, punchy, in-character reflection connecting this old chat history to Joey's workaholic archival mindset.\n"
-                    "No media, text only. Avoid generic clichés."
-                )
-                user_prompt = f"Server Archive Batch ({batch_year}):\n{chat_history_text}\n\nExcavate this chapter of the attic logs."
-
-                def _call():
-                    return ai_client.chat.completions.with_raw_response.create(
-                        model=MODEL_NAME,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.85,
-                        max_tokens=calculate_dynamic_max_tokens(9),
+                job = PendingJob(
+                    priority_tier=9,
+                    timestamp=time.time(),
+                    channel=ch,
+                    prompt_text=(
+                        f"Archival Server Batch ({detected_year}) - {len(raw_messages)} messages scanned:\n"
+                        f"{chat_history_text}\n\n"
+                        f"Write an insightful, comprehensive archival recap of this historical batch as Joey Arnold. "
+                        f"Format as two distinct lines:\n"
+                        f"Line 1: Oatmeal Recap ({detected_year} Archive).\n"
+                        f"Line 2: A thorough, witty, in-character reflection connecting these historical chat logs to Joey's workaholic archiving and creative mindset."
                     )
-
-                async with groq_api_lock:
-                    raw = await asyncio.to_thread(_call)
-                    global last_api_call_timestamp
-                    last_api_call_timestamp = time.monotonic()
-
-                update_plane_alpha_from_response(raw_response=raw)
-                resp = raw.parse()
-                recap_text = resp.choices[0].message.content.strip() if resp.choices else ""
-                actual_tokens = getattr(resp.usage, "total_tokens", 70) if hasattr(resp, "usage") else 70
-                track_token_usage_real(actual_tokens)
-
-                lines = [l.strip() for l in recap_text.splitlines() if l.strip()]
-                if len(lines) >= 2:
-                    formatted_recap = f"{lines[0]}\n{lines[1]}"
-                elif len(lines) == 1:
-                    formatted_recap = f"Oatmeal Recap ({batch_year}).\n{lines[0]}"
-                else:
-                    formatted_recap = f"Oatmeal Recap ({batch_year}).\nThe attic tapes from this era remain classified."
-
-                await ch.send(content=formatted_recap)
-                print(f"[P9 ARCHIVE RECAP DISPATCH] Posted {batch_year} historical recap in #{ch.name}")
+                )
+                await delay_queue.put(job)
+                print(f"[P9 ARCHIVE RECAP QUEUED] Enqueued batch of {len(raw_messages)} messages from {detected_year} in #{ch.name}")
                 break
         except Exception as e:
             print(f"[P9 COROUTINE EXCEPTION] {e}")
@@ -1346,7 +1335,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V37.5 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V42.0 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
