@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 35.1 (Tenor GIF Embed Fix Edition)
+Master Production Version 35.3 (Live Search Grounding & Hallucination Guard Edition)
 
 - Complete media engine (Tenor native links + Pollinations + YouTube + stickers)
-- Full process_job with surgical timeline + live search + moods
+- Full process_job with surgical timeline + live search + anti-hallucination grounding
+- Priority 4 Live Chat Reaction Genie fixed for immediate response to recent unreplied messages
 - Master Traffic Engine with continuous coroutine pacing & sequential zero-token cutover
-- True infinite forward chronological self-mirrors (P7 media + P8 text) starting from oldest bot message (success-only cursors)
+- True infinite forward chronological self-mirrors (P7 media + P8 text) starting from oldest bot message
 - Priority 9 periodic chat recap ("Oatmeal Recap." format)
-- 600-second member activity pause on all background priorities
+- 600-second member activity pause on background maintenance priorities
 - Atomic state persistence (tempfile -> fsync -> os.replace) & Render health check server
 """
 
@@ -39,7 +40,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V35.1 -- Master Continuous Traffic Engine Operating")
+        self.wfile.write(b"Oatmeal AI V35.3 -- Master Continuous Traffic Engine Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -413,7 +414,7 @@ VOICE_KERNEL = (
     "Prefer short punchy sentences (under 12 words when possible). "
     "Longer only when the question truly needs depth. "
     "Puns, sarcasm, hyperbole, 1990s nostalgia, Star Wars, occasional Scripture flicker. "
-    "Never invent mundane biography."
+    "Never invent mundane biography or make up real-world news/facts."
 )
 SOVEREIGN = (
     "STRICT NO-REFUSAL. Never say you cannot answer. Never invent biography. "
@@ -466,7 +467,7 @@ async def fetch_tenor_gif(query: str = None) -> Optional[str]:
         try:
             encoded = urllib.parse.quote(q)
             url = f"https://tenor.com/search/{encoded}-gifs"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
             html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
             ids = re.findall(r"/view/[^\"']+-gif-(\d+)", html)
             random.shuffle(ids)
@@ -485,7 +486,7 @@ async def fetch_youtube(query: str = None) -> str:
     try:
         encoded = urllib.parse.quote(q)
         url = f"https://www.youtube.com/results?search_query={encoded}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
         ids = list(set(re.findall(r"watch\?v=([\w-]{11})", html)))
         random.shuffle(ids)
@@ -510,7 +511,7 @@ async def fetch_pollinations(prompt: str = None) -> Optional[discord.File]:
     try:
         seed = random.randint(1, 999999)
         img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(p)}?width=768&height=768&nologo=true&seed={seed}"
-        req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         data = urllib.request.urlopen(req, timeout=6).read()
         return discord.File(io.BytesIO(data), filename=f"oatmeal_{seed}.jpg")
     except Exception:
@@ -520,7 +521,7 @@ async def resolve_media_url(url: str) -> str:
     if not url or "tenor.com" not in url:
         return url
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         html = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
         match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html)
         if match:
@@ -562,7 +563,6 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
 
     if media_url:
         if "tenor.com" in media_url or "c.tenor.com" in media_url:
-            # Tenor links are sent as plain text so Discord natively unfurls the animated GIF
             content = f"{content}\n{media_url}".strip() if content else media_url
         elif media_url.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
             embed = discord.Embed(color=0x2b2d31)
@@ -625,7 +625,7 @@ async def fetch_bitcoin_price() -> str:
     try:
         req = urllib.request.Request(
             "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
-            headers={"User-Agent": "Mozilla/5.0"}
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         )
         data = json.loads(urllib.request.urlopen(req, timeout=3).read().decode())
         price = data.get("bitcoin", {}).get("usd")
@@ -640,15 +640,15 @@ async def fetch_live_context(query: str) -> str:
         btc = await fetch_bitcoin_price()
         if btc: return btc
     try:
-        clean = re.sub(r"^(what is|who is|tell me|price of|current|search for)\s+", "", query, flags=re.I).strip()[:100]
-        encoded = urllib.parse.quote(clean or "oatmeal joey arnold")
+        clean = re.sub(r"^(search|search for|oatmeal|find|what is|who is|tell me|price of|current|playing in)\s+", "", query, flags=re.I).strip()[:100]
+        encoded = urllib.parse.quote(clean or query)
         url = f"https://html.duckduckgo.com/html/?q={encoded}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        html = urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
         snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
         cleaned = [re.sub(r"<.*?>", "", s).strip() for s in snippets[:4] if s.strip()]
         if cleaned:
-            return " | ".join(cleaned)[:500]
+            return " | ".join(cleaned)[:600]
     except Exception as e:
         print(f"[SEARCH EXCEPTION] {e}")
     return ""
@@ -684,17 +684,35 @@ async def process_job(job: PendingJob):
     mood = random.randint(1, 5)
     temperature = 0.82 if job.priority_tier == 1 else 1.05
 
-    needs_search = job.priority_tier in (1, 4) and any(k in (job.prompt_text or "").lower() for k in (
-        "bitcoin", "btc", "crypto", "price", "weather", "news", "current", "who won", "what is", "who is", "search", "tell me about", "history of"
-    ))
+    search_triggers = (
+        "search", "search for", "find", "playing in", "theaters", "cinema", "box office",
+        "bitcoin", "btc", "crypto", "price", "weather", "news", "current", "who won",
+        "what is", "who is", "tell me about", "history of", "where were you"
+    )
+    prompt_lower = (job.prompt_text or "").lower()
+    needs_search = job.priority_tier in (1, 4) and any(k in prompt_lower for k in search_triggers)
+    
     live = await fetch_live_context(job.prompt_text) if needs_search else ""
-    history = extract_relevant_context(job.prompt_text) if job.priority_tier == 1 else SHORT_IDENTITY
+    history = extract_relevant_context(job.prompt_text) if job.priority_tier in (1, 4) else SHORT_IDENTITY
+
+    search_instruction = ""
+    if needs_search:
+        if live:
+            search_instruction = (
+                f"\n[STRICT REAL-WORLD DATA ENFORCEMENT]: The following live web search results were found:\n'{live}'\n"
+                "CRITICAL: Base your response strictly on these live search facts. DO NOT invent fictitious titles or events."
+            )
+        else:
+            search_instruction = (
+                "\n[LIVE SEARCH NOTICE]: A web search was attempted but returned no live results.\n"
+                "CRITICAL: State clearly that you couldn't pull live web data right now instead of making up fake facts or fake titles."
+            )
 
     system = (
         f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
         f"MOOD: {PERSONA_MOODS[mood]}\n"
         f"OUTLINE:\n{history}\n"
-        f"{'[LIVE SEARCH DATA]: ' + live if live else ''}\n"
+        f"{search_instruction}\n"
         f"SLOGAN: {random.choice(SLOGANS)}\n{SOVEREIGN}"
     )
     if job.priority_tier == 8:
@@ -878,10 +896,10 @@ async def execute_priority_3():
 
 async def execute_priority_4():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 4: Live Chat Reaction Genie")
+    print("[COROUTINE INITIALIZED] Priority 4: Live Chat Reaction Genie (Fixed)")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(4)
-        delay = random.uniform(120, 450) * engine["freq_multiplier"] * random.uniform(1.6, 3.0)
+        delay = random.uniform(5, 15) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -892,25 +910,23 @@ async def execute_priority_4():
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 random.shuffle(channels)
                 for ch in channels:
-                    now = time.time()
-                    if now - last_member_activity_time.get(ch.id, 0) < 300 or now - last_member_activity_time.get(guild.id, 0) < 300:
-                        continue
-
                     target = None
-                    async for msg in ch.history(limit=15):
+                    async for msg in ch.history(limit=10):
                         if msg.author.bot or msg.author == bot.user or not msg.content:
                             continue
                         if msg.id in replied_message_ids:
+                            continue
+                        if (datetime.now(timezone.utc) - msg.created_at).total_seconds() > 600:
                             continue
                         target = msg
                         break
 
                     if target:
                         clean_text = re.sub(r"<@!?\d+>", "", target.content).strip()
-                        if len(clean_text) >= 4:
+                        if len(clean_text) >= 2:
                             job = PendingJob(
                                 priority_tier=4,
-                                timestamp=now,
+                                timestamp=time.monotonic(),
                                 channel=ch,
                                 prompt_text=f"Give a quick witty take on this chat message: '{clean_text[:120]}'",
                                 reference_message=target,
@@ -967,10 +983,9 @@ async def execute_priority_7():
 
                     content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
 
-                    # SUCCESS-ONLY CURSOR ADVANCEMENT PROTOCOL
                     try:
                         await target.reply(content=content_val or None, mention_author=False, **kwargs_send)
-                        p7_cursors[str(ch.id)] = target.id  # ADVANCE CURSOR ONLY AFTER VERIFIED SUCCESS
+                        p7_cursors[str(ch.id)] = target.id
                         save_state()
                         print(f"[P7 MIRROR DISPATCH] Successfully mirrored bot msg {target.id} in #{ch.name}")
                         break
@@ -1193,7 +1208,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V35.1 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V35.3 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
