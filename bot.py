@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 35.3 (Live Search Grounding & Hallucination Guard Edition)
+Master Production Version 36.1 (Clean Embed Media & Link-Hiding Edition)
 
-- Complete media engine (Tenor native links + Pollinations + YouTube + stickers)
-- Full process_job with surgical timeline + live search + anti-hallucination grounding
-- Priority 4 Live Chat Reaction Genie fixed for immediate response to recent unreplied messages
+- Tenor link URL hiding via clean Discord embeds (`resolve_media_url` integration)
+- Fully flexible, dynamic hybrid media generator (zero-token internet word-mesh + token-assisted AI prompts)
+- Zero-token local text engine replacing static fallbacks with varied non-repeating Joey banter
+- Multi-provider media pipelines: Tenor GIFs, YouTube videos, Pollinations AI, Guild Stickers & Emojis
+- Anti-repetition state tracking (recent media URLs, sticker IDs, and text hashes)
+- Priority 4 Live Chat Reaction Genie tuned for immediate response
+- Multi-source search engine (DuckDuckGo HTML + DuckDuckGo Lite + Wikipedia API)
 - Master Traffic Engine with continuous coroutine pacing & sequential zero-token cutover
-- True infinite forward chronological self-mirrors (P7 media + P8 text) starting from oldest bot message
+- Infinite forward chronological self-mirrors (P7 media + P8 text) starting from oldest bot message
 - Priority 9 periodic chat recap ("Oatmeal Recap." format)
 - 600-second member activity pause on background maintenance priorities
 - Atomic state persistence (tempfile -> fsync -> os.replace) & Render health check server
@@ -18,6 +22,7 @@ import re
 import io
 import json
 import time
+import hashlib
 import asyncio
 import threading
 import random
@@ -40,7 +45,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V35.3 -- Master Continuous Traffic Engine Operating")
+        self.wfile.write(b"Oatmeal AI V36.1 -- Clean Embed Media Engine Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -76,13 +81,16 @@ intents.members = True
 bot = discord.Client(intents=intents)
 
 # ============================================================
-# 3. GLOBAL STATE STRUCTURES
+# 3. GLOBAL STATE STRUCTURES & ANTI-REPETITION TRACKERS
 # ============================================================
 replied_message_ids: Set[int] = set()
 channel_cursors: Dict[str, int] = {}
 priority2_replied_member_ids: Set[str] = set()
 lifetime_interacted_members: Set[int] = set()
+
 recent_media_urls = collections.deque(maxlen=5000)
+recent_sticker_ids = collections.deque(maxlen=200)
+recent_text_hashes = collections.deque(maxlen=2000)
 
 p3_member_indices: Dict[int, int] = {}
 p7_cursors: Dict[str, int] = {}
@@ -410,6 +418,11 @@ SLOGANS = [
 ]
 
 PRONOUN_BRIDGE = "You speak entirely in first person as Joey. Never say 'as an AI' or narrate yourself as a bot."
+FORBIDDEN_PHRASES = (
+    "STRICT FORBIDDEN PHRASES: NEVER say 'oh honey', 'oh, honey', 'sweetheart', 'darling', 'dear', "
+    "'my child', 'as an AI', or 'I cannot access live feeds'. "
+    "Speak as Joey Arnold: authentic 90s Oregon energy, raw, humorous, direct."
+)
 VOICE_KERNEL = (
     "Prefer short punchy sentences (under 12 words when possible). "
     "Longer only when the question truly needs depth. "
@@ -421,24 +434,29 @@ SOVEREIGN = (
     "Stay in character as Oatmeal Joey Arnold. The archives are real."
 )
 
-BANTER = [
+ZERO_TOKEN_BANTER_POOL = [
+    "What in the Oatmeal.",
+    "Back in Rose Grove trailer 163, we didn't have optical fibers, we had pure grit.",
+    "The 44 Arnold Attic VHS tapes remain undefeated.",
+    "Animals are dying.",
+    "I'm a nerd stuck in the body of a basketball athlete.",
+    "Ojawall is the wall.",
+    "L4OJ – Live For Only Jesus.",
     "Ra Ra is judging you.",
-    "Oatmeal data streams infinite.",
     "The attic remembers.",
     "One more try at America.",
-    "Animals are dying.",
-    "What in the Oatmeal.",
     "Workaholic mode activated.",
-    "Back in trailer 163 we didn't have fancy fiber optics, we had pure grit and VCR static.",
-    "The 44 Arnold Attic tapes remain undefeated.",
+    "If they can lie about me, they can lie about you.",
     "May the Force be with your breakfast bowl.",
-    "I am a nerd stuck in the body of a basketball legend.",
     "Somebody check on the gerbils.",
     "Life moves pretty fast. If you don't stop and archive once in a while, you could miss it.",
-    "Ojawall is eternal.",
     "That sounds like Oatmeal Fake News to me.",
-    "Nobody puts Baby in a trailer park.",
     "Just another day editing home movies on a Panasonic camcorder.",
+    "Hope Over Dope.",
+    "Joy Over Circumstances.",
+    "Make the world greener, one oatmeal at a time.",
+    "I know what you are but what am I.",
+    "Nostalgia hits harder than a SNES cartridge push.",
 ]
 
 EMOTICON_POOL = ["🥣", "🔥", "😂", "🫡", "🚀", "📼", "🎬", "🏀", "✨", "👀", "🧠", "🌌", "💪"]
@@ -452,17 +470,39 @@ WORD_NUMBERS = {
 }
 
 # ============================================================
-# 6. MEDIA ENGINE
+# 6. DYNAMIC HYBRID MEDIA ENGINE & TENOR RESOLVER
 # ============================================================
+SEED_WORDS = [
+    "star wars", "90s nostalgia", "power rangers", "ninja turtles", "vhs tape",
+    "arcade cabinet", "retro basketball", "matrix dodge", "robin williams",
+    "austin powers", "napoleon dynamite", "cat vibing", "shaq dunk", "spongebob fail",
+    "crt monitor", "classic arcade", "oatmeal bowl", "space galaxy", "pixel art"
+]
+
+def get_zero_token_text() -> str:
+    for _ in range(20):
+        candidate = random.choice(ZERO_TOKEN_BANTER_POOL)
+        h = hashlib.md5(candidate.encode("utf-8")).hexdigest()
+        if h not in recent_text_hashes:
+            recent_text_hashes.append(h)
+            return candidate
+    return random.choice(ZERO_TOKEN_BANTER_POOL)
+
+async def resolve_media_url(url: str) -> str:
+    if not url or "tenor.com" not in url:
+        return url
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        html = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
+        match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+    return url
+
 async def fetch_tenor_gif(query: str = None) -> Optional[str]:
-    queries = [
-        "funny reaction", "mind blown", "laughing hard", "90s nostalgia", "fail",
-        "confused", "excited", "facepalm", "celebration", "awkward", "surprise",
-        "robin williams", "star wars", "power rangers", "napoleon dynamite", "cat vibing",
-        "matrix dodging", "austin powers", "shaq dancing", "sponge bob failing", "michael jordan shrug",
-        "retro computer", "vhs static", "arcade cabinet", "ninja turtles eating pizza"
-    ]
-    q = query or random.choice(queries)
+    q = query or f"{random.choice(SEED_WORDS)} {random.choice(['funny', 'reaction', 'retro', 'fail'])}"
     for _ in range(3):
         try:
             encoded = urllib.parse.quote(q)
@@ -481,8 +521,7 @@ async def fetch_tenor_gif(query: str = None) -> Optional[str]:
     return None
 
 async def fetch_youtube(query: str = None) -> str:
-    queries = ["oatmeal joey arnold", "arnold attic movies", "power rangers 1996", "star wars review 90s", "retro commercials vhs", "basketball highlights jordan"]
-    q = query or random.choice(queries)
+    q = query or f"{random.choice(SEED_WORDS)} {random.choice(['trailer', 'clip', '1990s', 'review'])}"
     try:
         encoded = urllib.parse.quote(q)
         url = f"https://www.youtube.com/results?search_query={encoded}"
@@ -500,14 +539,7 @@ async def fetch_youtube(query: str = None) -> str:
     return "https://www.youtube.com/results?search_query=joeyarnoldvn"
 
 async def fetch_pollinations(prompt: str = None) -> Optional[discord.File]:
-    prompts = [
-        "surreal 1990s bedroom with vhs tapes and neon lights",
-        "oatmeal bowl floating in outer space star wars style",
-        "retro arcade room glowing with CRT monitors",
-        "ninja turtles eating pizza in an old attic",
-        "power rangers posing on top of an Oregon mountain"
-    ]
-    p = prompt or random.choice(prompts)
+    p = prompt or f"surreal 1990s {random.choice(SEED_WORDS)} neon retro aesthetic"
     try:
         seed = random.randint(1, 999999)
         img_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(p)}?width=768&height=768&nologo=true&seed={seed}"
@@ -517,37 +549,58 @@ async def fetch_pollinations(prompt: str = None) -> Optional[discord.File]:
     except Exception:
         return None
 
-async def resolve_media_url(url: str) -> str:
-    if not url or "tenor.com" not in url:
-        return url
+async def generate_token_assisted_media_prompt(chat_context: str) -> str:
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-        html = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
-        match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html)
-        if match:
-            return match.group(1)
-    except Exception:
-        pass
-    return url
+        def _call():
+            return ai_client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "Output ONLY a 2 to 4 word visual search query representing the user's topic. No punctuation."},
+                    {"role": "user", "content": f"Topic: {chat_context[:100]}"}
+                ],
+                max_tokens=15,
+                temperature=0.7
+            )
+        res = await asyncio.to_thread(_call)
+        if res.choices and res.choices[0].message.content:
+            query = res.choices[0].message.content.strip()
+            track_token_usage_real(res.usage.total_tokens if hasattr(res, "usage") else 12)
+            return query
+    except Exception as e:
+        print(f"[TOKEN ASSISTED MEDIA EXCEPTION] {e}")
+    return random.choice(SEED_WORDS)
 
-async def get_wild_media(guild: Optional[discord.Guild] = None, priority_tier: int = 0) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
+async def get_wild_media_hybrid(
+    guild: Optional[discord.Guild] = None,
+    priority_tier: int = 0,
+    chat_context: str = "",
+    allow_tokens: bool = False
+) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
+    query_prompt = None
+    if allow_tokens and chat_context and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4):
+        query_prompt = await generate_token_assisted_media_prompt(chat_context)
+
     weights = [35, 25, 20, 10, 10]
     choice = random.choices(["tenor", "youtube", "image", "sticker", "emoticon"], weights=weights, k=1)[0]
 
     if choice == "tenor":
-        url = await fetch_tenor_gif()
+        url = await fetch_tenor_gif(query_prompt)
         if url: return url, None, None
     elif choice == "youtube":
-        return await fetch_youtube(), None, None
+        return await fetch_youtube(query_prompt), None, None
     elif choice == "image":
-        f = await fetch_pollinations()
+        f = await fetch_pollinations(query_prompt)
         if f: return "", f, None
     elif choice == "sticker" and guild and guild.stickers:
-        return "", None, random.choice(list(guild.stickers))
+        available_stickers = [s for s in guild.stickers if str(s.id) not in recent_sticker_ids]
+        if available_stickers:
+            st = random.choice(available_stickers)
+            recent_sticker_ids.append(str(st.id))
+            return "", None, st
     elif choice == "emoticon":
         return random.choice(EMOTICON_POOL), None, None
 
-    url = await fetch_tenor_gif("reaction")
+    url = await fetch_tenor_gif(query_prompt)
     return url or random.choice(EMOTICON_POOL), None, None
 
 async def build_message_payload(reply: str, media_url: str, file_obj: Optional[discord.File], sticker: Optional[discord.Sticker], mention_prefix: str = "") -> Tuple[str, Dict[str, Any]]:
@@ -562,22 +615,22 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
         kwargs["stickers"] = [sticker]
 
     if media_url:
-        if "tenor.com" in media_url or "c.tenor.com" in media_url:
-            content = f"{content}\n{media_url}".strip() if content else media_url
-        elif media_url.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+        resolved_media = await resolve_media_url(media_url)
+        # Hide raw link text by embedding Tenor/image media cleanly via embed
+        if "tenor.com" in media_url or resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
             embed = discord.Embed(color=0x2b2d31)
-            embed.set_image(url=media_url)
+            embed.set_image(url=resolved_media)
             kwargs["embed"] = embed
         else:
             content = f"{content}\n{media_url}".strip() if content else media_url
 
     if not content and not kwargs:
-        content = "🥣"
+        content = get_zero_token_text()
 
     return content, kwargs
 
 # ============================================================
-# 7. SURGICAL TIMELINE EXTRACTION + LIVE SEARCH
+# 7. SURGICAL TIMELINE EXTRACTION + MULTI-ENGINE LIVE SEARCH
 # ============================================================
 def extract_relevant_context(prompt: str) -> str:
     if not prompt:
@@ -636,12 +689,17 @@ async def fetch_bitcoin_price() -> str:
     return ""
 
 async def fetch_live_context(query: str) -> str:
-    if any(k in query.lower() for k in ("bitcoin", "btc", "crypto price")):
+    query_lower = query.lower().strip()
+    if any(k in query_lower for k in ("bitcoin", "btc", "crypto price")):
         btc = await fetch_bitcoin_price()
         if btc: return btc
+
+    clean = re.sub(r"^(search|search for|oatmeal|find|what is|who is|tell me|price of|current|playing in|the news|news)\s*", "", query, flags=re.I).strip()
+    if not clean or len(clean) < 3:
+        clean = "latest world news breaking headlines"
+
     try:
-        clean = re.sub(r"^(search|search for|oatmeal|find|what is|who is|tell me|price of|current|playing in)\s+", "", query, flags=re.I).strip()[:100]
-        encoded = urllib.parse.quote(clean or query)
+        encoded = urllib.parse.quote(clean)
         url = f"https://html.duckduckgo.com/html/?q={encoded}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
         html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
@@ -650,7 +708,36 @@ async def fetch_live_context(query: str) -> str:
         if cleaned:
             return " | ".join(cleaned)[:600]
     except Exception as e:
-        print(f"[SEARCH EXCEPTION] {e}")
+        print(f"[SEARCH ENGINE 1 EXCEPTION] {e}")
+
+    try:
+        encoded = urllib.parse.quote(clean)
+        url = f"https://lite.duckduckgo.com/lite/"
+        data = f"q={encoded}".encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Content-Type": "application/x-www-form-request"
+        })
+        html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
+        snippets = re.findall(r'<td class="result-snippet">(.*?)</td>', html, re.DOTALL)
+        cleaned = [re.sub(r"<.*?>", "", s).strip() for s in snippets[:4] if s.strip()]
+        if cleaned:
+            return " | ".join(cleaned)[:600]
+    except Exception as e:
+        print(f"[SEARCH ENGINE 2 EXCEPTION] {e}")
+
+    try:
+        encoded = urllib.parse.quote(clean)
+        url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded}&format=json"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
+        results = data.get("query", {}).get("search", [])
+        snippets = [re.sub(r"<.*?>", "", r.get("snippet", "")).strip() for r in results[:3] if r.get("snippet")]
+        if snippets:
+            return " | ".join(snippets)[:600]
+    except Exception as e:
+        print(f"[SEARCH ENGINE 3 EXCEPTION] {e}")
+
     return ""
 
 # ============================================================
@@ -687,7 +774,7 @@ async def process_job(job: PendingJob):
     search_triggers = (
         "search", "search for", "find", "playing in", "theaters", "cinema", "box office",
         "bitcoin", "btc", "crypto", "price", "weather", "news", "current", "who won",
-        "what is", "who is", "tell me about", "history of", "where were you"
+        "what is", "who is", "tell me about", "history of", "where were you", "headlines"
     )
     prompt_lower = (job.prompt_text or "").lower()
     needs_search = job.priority_tier in (1, 4) and any(k in prompt_lower for k in search_triggers)
@@ -700,16 +787,16 @@ async def process_job(job: PendingJob):
         if live:
             search_instruction = (
                 f"\n[STRICT REAL-WORLD DATA ENFORCEMENT]: The following live web search results were found:\n'{live}'\n"
-                "CRITICAL: Base your response strictly on these live search facts. DO NOT invent fictitious titles or events."
+                "CRITICAL: Summarize and deliver these real facts directly in character as Joey Arnold. DO NOT invent fake titles or fake events."
             )
         else:
             search_instruction = (
                 "\n[LIVE SEARCH NOTICE]: A web search was attempted but returned no live results.\n"
-                "CRITICAL: State clearly that you couldn't pull live web data right now instead of making up fake facts or fake titles."
+                "CRITICAL: Plainly state in your own words as Joey that you could not pull live data right now. NEVER invent fake news, fake titles, or say 'oh honey'."
             )
 
     system = (
-        f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
+        f"{PRONOUN_BRIDGE}\n{FORBIDDEN_PHRASES}\n{VOICE_KERNEL}\n"
         f"MOOD: {PERSONA_MOODS[mood]}\n"
         f"OUTLINE:\n{history}\n"
         f"{search_instruction}\n"
@@ -721,47 +808,48 @@ async def process_job(job: PendingJob):
     reply = ""
     actual_tokens = 0
 
-    async def _keep_typing():
+    if token_limit > 0:
+        async def _keep_typing():
+            try:
+                while True:
+                    async with job.channel.typing():
+                        await asyncio.sleep(8.5)
+            except asyncio.CancelledError:
+                pass
+
+        typing_task = asyncio.create_task(_keep_typing())
         try:
-            while True:
-                async with job.channel.typing():
-                    await asyncio.sleep(8.5)
-        except asyncio.CancelledError:
-            pass
+            def _call():
+                return ai_client.chat.completions.with_raw_response.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": job.prompt_text or "Thought?"},
+                    ],
+                    temperature=temperature,
+                    max_tokens=token_limit,
+                )
+            async with groq_api_lock:
+                raw = await asyncio.to_thread(_call)
+                last_api_call_timestamp = time.monotonic()
+            update_plane_alpha_from_response(raw_response=raw)
+            resp = raw.parse()
+            if resp.choices and resp.choices[0].message.content:
+                reply = resp.choices[0].message.content.strip()
+                if any(b in reply.lower() for b in ("as an ai", "i cannot", "i'm sorry, but i can't")):
+                    reply = ""
+            if hasattr(resp, "usage") and resp.usage:
+                actual_tokens = getattr(resp.usage, "total_tokens", 0)
+        except Exception as e:
+            print(f"[API EXCEPTION P{job.priority_tier}] {e}")
+            update_plane_alpha_from_response(exception=e)
+        finally:
+            typing_task.cancel()
 
-    typing_task = asyncio.create_task(_keep_typing())
-    try:
-        def _call():
-            return ai_client.chat.completions.with_raw_response.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": job.prompt_text or "Thought?"},
-                ],
-                temperature=temperature,
-                max_tokens=token_limit,
-            )
-        async with groq_api_lock:
-            raw = await asyncio.to_thread(_call)
-            last_api_call_timestamp = time.monotonic()
-        update_plane_alpha_from_response(raw_response=raw)
-        resp = raw.parse()
-        if resp.choices and resp.choices[0].message.content:
-            reply = resp.choices[0].message.content.strip()
-            if any(b in reply.lower() for b in ("as an ai", "i cannot", "i'm sorry, but i can't")):
-                reply = ""
-        if hasattr(resp, "usage") and resp.usage:
-            actual_tokens = getattr(resp.usage, "total_tokens", 0)
-    except Exception as e:
-        print(f"[API EXCEPTION P{job.priority_tier}] {e}")
-        update_plane_alpha_from_response(exception=e)
-    finally:
-        typing_task.cancel()
-
-    track_token_usage_real(actual_tokens or 30)
+        track_token_usage_real(actual_tokens or 30)
 
     if not reply:
-        reply = random.choice(BANTER)
+        reply = get_zero_token_text()
 
     if job.priority_tier == 8:
         reply = " ".join(reply.split()[:12])
@@ -770,9 +858,11 @@ async def process_job(job: PendingJob):
     if job.priority_tier != 8:
         want_media = (job.priority_tier in (2, 3, 4, 5, 6, 7)) or (job.priority_tier == 1 and random.random() < 0.75)
         if want_media:
-            media_url, file_obj, sticker = await get_wild_media(
-                getattr(job.channel, "guild", None),
-                priority_tier=job.priority_tier
+            media_url, file_obj, sticker = await get_wild_media_hybrid(
+                guild=getattr(job.channel, "guild", None),
+                priority_tier=job.priority_tier,
+                chat_context=job.prompt_text,
+                allow_tokens=(token_limit > 0)
             )
 
     sent_ok = False
@@ -842,8 +932,8 @@ async def execute_priority_2():
                         break
 
                     if target:
-                        url, file_obj, sticker = await get_wild_media(guild, priority_tier=2)
-                        content_val, kwargs_send = await build_message_payload("🥣", url, file_obj, sticker)
+                        url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=2)
+                        content_val, kwargs_send = await build_message_payload(get_zero_token_text(), url, file_obj, sticker)
                         try:
                             await target.reply(content=content_val, mention_author=False, **kwargs_send)
                             replied_message_ids.add(target.id)
@@ -885,7 +975,7 @@ async def execute_priority_3():
                 if not channels:
                     continue
                 ch = random.choice(channels)
-                url, file_obj, sticker = await get_wild_media(guild, priority_tier=3)
+                url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=3)
                 content_val, kwargs = await build_message_payload("", url, file_obj, sticker, mention_prefix=target.mention)
 
                 await ch.send(content=content_val, **kwargs)
@@ -977,7 +1067,7 @@ async def execute_priority_7():
                     if not target:
                         continue
 
-                    url, file_obj, sticker = await get_wild_media(guild, priority_tier=7)
+                    url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=7)
                     if not (url or file_obj or sticker):
                         continue
 
@@ -1101,7 +1191,7 @@ async def execute_priority_6_drops():
                 if not channels:
                     continue
                 ch = random.choice(channels)
-                url, file_obj, sticker = await get_wild_media(guild, priority_tier=6)
+                url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=6)
                 content_val, kwargs = await build_message_payload("", url, file_obj, sticker)
 
                 if content_val or kwargs:
@@ -1208,7 +1298,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V35.3 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V36.1 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
