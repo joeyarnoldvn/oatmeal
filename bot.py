@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot
-Master Production Version 17.0
+Master Production Version 17.1 (Render Hotfix)
 
 - True infinite forward chronological self-mirrors (P7 media + P8 text)
 - Traffic Engine: Frequency first → Weight after 8× → Zero-Token Mode
@@ -37,7 +37,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V17.0 – Traffic Engine + Infinite Mirror")
+        # Fixed: Converted to standard ASCII hyphen and encoded properly
+        self.wfile.write("Oatmeal AI V17.1 - Traffic Engine + Infinite Mirror".encode("utf-8"))
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -985,7 +986,7 @@ async def delay_queue_worker():
 
 @bot.event
 async def on_ready():
-    print(f"Oatmeal AI V17.0 logged in as {bot.user}")
+    print(f"Oatmeal AI V17.1 logged in as {bot.user}")
     load_state()
     bot.loop.create_task(delay_queue_worker())
     bot.loop.create_task(execute_priority_2())
