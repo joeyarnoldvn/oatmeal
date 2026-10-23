@@ -1,13 +1,12 @@
-#!/usr/bin/env python3
+#!/usr/init/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 47.1 (Fixed Search URLs, Enhanced Priorities 1 & 4 Search & Robust Media Engine)
+Master Production Version 54.0 (Native Discord History Sweepers for Priorities 7-9 & Per-Member P2 Limit)
 
-- Fixed corrupted markdown URLs in Coinbase, CoinGecko, Wikipedia, and DuckDuckGo search requests.
-- Enhanced search triggers and execution for Priorities 1 & 4 (keywords: GOOGLE, SEARCH, LOOK, FIND, LOCATE, DUCKDUCKGO, BITCOIN, PRICE, etc.).
-- Implemented dual-mode MEDIA Engine (CUSTOM vs RANDOM) supporting all 9 media categories.
-- Enhanced Coroutine Correction exponential backoff (2X delay up to 20 retries) to eliminate fallback/duplicate spam.
-- Model pinned to openai/gpt-oss-120b.
+- Implemented native Discord forward-chronological history cursors for Priorities 7-9 to sweep through thousands of messages back to the beginning (2019+).
+- Priority 2 strictly limits replies to one message per member.
+- Dynamic 0-100% token spending & frequency governance.
+- 2X exponential backoff retry engine & clean search URLs.
 """
 
 import os
@@ -38,7 +37,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V47.1 -- Fixed Search & Robust Media Engine")
+        self.wfile.write(b"Oatmeal AI V54.0 -- Native History Sweepers Active")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -76,6 +75,7 @@ bot = discord.Client(intents=intents)
 # 3. GLOBAL STATE STRUCTURES & ANTI-SPAM MEMORY
 # ============================================================
 replied_message_ids: Set[int] = set()
+p2_replied_member_ids: Set[int] = set()
 channel_cursors: Dict[str, int] = {}
 bot_media_cursors: Dict[str, int] = {}
 bot_text_cursors: Dict[str, int] = {}
@@ -98,19 +98,20 @@ blocked_users: Dict[str, float] = {}
 user_message_history: Dict[int, List[Tuple[float, str]]] = {}
 
 def load_state():
-    global replied_message_ids, channel_cursors, blocked_users
-    global bot_media_cursors, bot_text_cursors, recap_cursors
+    global replied_message_ids, p2_replied_member_ids, channel_cursors
+    global bot_media_cursors, bot_text_cursors, recap_cursors, blocked_users
     try:
         if os.path.exists(STATE_PATH):
             with open(STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             replied_message_ids = set(int(x) for x in data.get("replied", []))
+            p2_replied_member_ids = set(int(x) for x in data.get("p2_replied_members", []))
             channel_cursors = {str(k): int(v) for k, v in data.get("cursors", {}).items()}
             bot_media_cursors = {str(k): int(v) for k, v in data.get("bot_media_cursors", {}).items()}
             bot_text_cursors = {str(k): int(v) for k, v in data.get("bot_text_cursors", {}).items()}
             recap_cursors = {str(k): int(v) for k, v in data.get("recap_cursors", {}).items()}
             blocked_users = {str(k): float(v) for k, v in data.get("blocked_users", {}).items()}
-            print(f"[STATE] Loaded {len(replied_message_ids)} replied message IDs | Recap Cursors: {len(recap_cursors)}")
+            print(f"[STATE] Loaded {len(replied_message_ids)} replied IDs | P2 Members: {len(p2_replied_member_ids)} | P7 Cursors: {len(bot_media_cursors)}")
     except Exception as e:
         print(f"[STATE] Fresh start initialized: {e}")
 
@@ -121,6 +122,7 @@ def save_state():
             os.makedirs(dir_name, exist_ok=True)
             data = {
                 "replied": list(replied_message_ids)[-50000:],
+                "p2_replied_members": list(p2_replied_member_ids)[-10000:],
                 "cursors": channel_cursors,
                 "bot_media_cursors": bot_media_cursors,
                 "bot_text_cursors": bot_text_cursors,
@@ -142,8 +144,20 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. DIRECT GROQ REST CLIENT & TRAFFIC ENGINE GOVERNOR
+# 4. PRIORITY SPENDING HIERARCHY (DSN & DSL) & TRAFFIC GOVERNOR
 # ============================================================
+PRIORITY_SPECS = {
+    1: {"dsn": 1000, "dsl": 8000, "type": "MEDIA/TEXT", "search": True},
+    4: {"dsn": 950,  "dsl": 2000, "type": "MEDIA/TEXT", "search": True},
+    6: {"dsn": 0,    "dsl": 700,  "type": "MEDIA-ONLY", "search": False},
+    7: {"dsn": 0,    "dsl": 400,  "type": "MEDIA-ONLY", "search": False},
+    8: {"dsn": 800,  "dsl": 1000, "type": "TEXT ONLY",  "search": False},
+    9: {"dsn": 1000, "dsl": 3000, "type": "TEXT ONLY",  "search": False},
+    2: {"dsn": 0,    "dsl": 700,  "type": "MEDIA-ONLY", "search": False},
+    5: {"dsn": 0,    "dsl": 700,  "type": "MEDIA-ONLY", "search": False},
+    3: {"dsn": 0,    "dsl": 700,  "type": "MEDIA-ONLY", "search": False},
+}
+
 GROQ_REMAINING_TPM = 8000
 GROQ_REMAINING_RPD = 1000
 GROQ_RATE_LIMITED_UNTIL = 0.0
@@ -182,7 +196,7 @@ def call_groq_rest(messages: List[Dict[str, str]], max_tokens: int = 300, temper
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
-        "User-Agent": "OatmealAI/47.1"
+        "User-Agent": "OatmealAI/54.0"
     }
     payload = {
         "model": MODEL_NAME,
@@ -195,7 +209,11 @@ def call_groq_rest(messages: List[Dict[str, str]], max_tokens: int = 300, temper
         with urllib.request.urlopen(req, timeout=30) as resp:
             resp_headers = {k.lower(): v for k, v in resp.headers.items()}
             body = json.loads(resp.read().decode("utf-8", "ignore"))
-            text = body.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            msg_obj = body.get("choices", [{}])[0].get("message", {})
+            text = msg_obj.get("content", "")
+            if not text and "tool_calls" in msg_obj:
+                text = "What in the Oatmeal tool call."
+            text = text.strip()
             usage = body.get("usage", {})
             total_tokens = usage.get("total_tokens", max_tokens // 2)
             return text, total_tokens, resp_headers
@@ -245,58 +263,60 @@ def get_trajectory_metrics():
     }
 
 def get_traffic_engine_metrics(priority_tier: int = 1) -> Dict[str, Any]:
-    """
-    TRAFFIC ENGINE HIERARCHY PREFERENCES (Most frequent to least frequent exact order):
-    1. PRIORITY 1 ("MEDIA/TEXT" "SEARCH")
-    2. PRIORITY 4 ("MEDIA/TEXT" "SEARCH")
-    3. PRIORITY 6 ("MEDIA-ONLY")
-    4. PRIORITY 7 ("MEDIA-ONLY")
-    5. PRIORITY 8 ("TEXT ONLY")
-    6. PRIORITY 9 ("TEXT ONLY")
-    7. PRIORITY 2 ("MEDIA-ONLY")
-    8. PRIORITY 5 ("MEDIA-ONLY")
-    9. PRIORITY 3 ("MEDIA-ONLY")
-    """
     m = get_trajectory_metrics()
     s = max(0.0, min(1.0, m["local_daily"] / 200000.0))
-    load_delta = s - 0.20
+    scaling_step = round(s * 100.0) / 100.0
 
     rank_order = {1: 1, 4: 2, 6: 3, 7: 4, 8: 5, 9: 6, 2: 7, 5: 8, 3: 9}
     r = rank_order.get(priority_tier, 5)
 
-    sens = 0.4 + (r * 0.35)
-    effective_load = max(0.0, min(1.0, s + load_delta * sens * 1.5))
+    effective_load = max(0.0, min(1.0, scaling_step + (scaling_step * 0.25 * (r / 9.0))))
 
-    if effective_load <= 0.20:
-        freq_mult = max(0.25, 0.5 + (effective_load / 0.20) * 1.5) * (r * 0.4 + 0.6)
+    if effective_load <= 0.30:
+        freq_mult = max(0.35, 0.7 + (effective_load / 0.30) * 0.8) * (r * 0.15 + 0.85)
     else:
-        excess = (effective_load - 0.20) / 0.80
-        freq_mult = (2.0 + (excess ** 1.3) * 20.0) * (r * 0.5 + 0.5)
+        excess = (effective_load - 0.30) / 0.70
+        freq_mult = (1.5 + (excess ** 1.2) * 2.0) * (r * 0.1 + 0.9)
 
-    weight_mult = max(0.05, 1.0 - (effective_load * 0.80))
+    if priority_tier in (7, 8, 9):
+        freq_mult = min(freq_mult, 1.5)
+    else:
+        freq_mult = min(freq_mult, 3.0)
+
+    weight_mult = max(0.10, 1.0 - (effective_load * 0.75))
 
     return {
         "freq_multiplier": freq_mult,
         "weight_multiplier": weight_mult,
         "spent_pct": s,
+        "scaling_step": scaling_step,
         "effective_load": effective_load
     }
 
 def calculate_dynamic_max_tokens(priority_tier: int) -> int:
+    spec = PRIORITY_SPECS.get(priority_tier, {"dsn": 500, "dsl": 1000})
+    dsl = spec["dsl"]
+    dsn = spec["dsn"]
+    
     if priority_tier in (2, 3, 5, 7):
         return 0
 
     engine = get_traffic_engine_metrics(priority_tier)
     weight = engine["weight_multiplier"]
-    base = {1: 380, 4: 140, 6: 80, 8: 45, 9: 120}.get(priority_tier, 70)
+    
+    base = min(dsl, max(dsn // 4, 70))
+    if priority_tier == 1:
+        base = min(800, dsl // 2)
+    elif priority_tier == 4:
+        base = min(300, dsl // 2)
+
     m = get_trajectory_metrics()
     usage = m["usage"]
-    compression = max(0.2, (1.0 - usage) ** 1.2)
-    headroom = max(60, GROQ_REMAINING_TPM - 280)
-
+    compression = max(0.25, (1.0 - usage) ** 1.1)
+    
     allowed = int(base * compression * weight)
-    hard = {1: 650, 4: 180, 6: 100, 8: 60, 9: 150}.get(priority_tier, 100)
-    return max(0, min(allowed, hard, headroom))
+    hard_cap = min(dsl, GROQ_REMAINING_TPM - 200)
+    return max(20, min(allowed, hard_cap))
 
 # ============================================================
 # 5. FULL 1985–2026 TIMELINE + PERSONALITY & IDENTITY
@@ -334,7 +354,7 @@ FULL_ANNUAL_OUTLINE = """
 2014: Taught at multiple places. Lived at Leaf Pagoda, Dai Trinh hostel, Remi Cafe, District 7, Mr. Ribs, Circle K, and Old Ink tattoos apartment.
 2015: Lived at Old Ink tattoos apartment until November. Taught English at 23/9 Park on Phạm Ngũ Lão. Taught Lego Mark at McDonald’s. Visa problem in December.
 2016: Lived at Anna Barbie Hostel. Endorsed Trump. Saw Alex Jones and Kung Fu Panda 3. Last Vietnam Thanksgiving.
-2017: Slept at Opera Tea Club. YouTube ban. Flew home to Oregon on Thanksgiving Day. Saw The Simpsons, Power Rangers, and Blossom. Got Bitcoin. Joined Discord and Steemit. Began blogging on Hive and Steemit.
+2017: Slept at Opera Tea Club. YouTube ban. Flew home on Thanksgiving Day. Saw The Simpsons, Power Rangers, and Blossom. Got Bitcoin. Joined Discord and Steemit. Began blogging on Hive and Steemit.
 2018: Moved to Shelton, Washington. Built the Book Shed with Tom Taylor and Larry Mitchell. Worked at a music store.
 2019: Visited Vancouver BC and Seattle. Created the Oatmeal World Discord server. Youth Pastor Assistant. Practiced driving. Met Roy Merrick on Infocomms.
 2020: Clam digging at Round Tree Farm. Tore down a fence. Saw The Expanse, The 100, The Boys, Suits, Star Trek: Picard, and Outlander.
@@ -389,7 +409,8 @@ PRONOUN_BRIDGE = "You speak entirely in first person as Joey. Never say 'as an A
 FORBIDDEN_PHRASES = (
     "STRICT FORBIDDEN PHRASES: NEVER say 'oh honey', 'oh, honey', 'sweetheart', 'darling', 'dear', "
     "'my child', 'as an AI', or 'I cannot access live feeds'. "
-    "Speak as Joey Arnold: authentic 90s Oregon energy, raw, humorous, direct."
+    "Speak as Joey Arnold: authentic 90s Oregon energy, raw, humorous, direct. "
+    "NEVER output JSON tool calls, function calls, or tool syntax. Output plain text only."
 )
 VOICE_KERNEL = (
     "Prefer short punchy sentences (under 12 words when possible). "
@@ -469,7 +490,36 @@ def sanitize_reply_text(text: str) -> str:
     return text
 
 # ============================================================
-# 6. ROBUST DUAL-MODE MEDIA ENGINE (9 CATEGORIES)
+# 6. ZERO-TOKEN / LOW-TOKEN TIMELINE MATCHER
+# ============================================================
+def try_zero_token_timeline_response(prompt: str) -> Optional[str]:
+    if not prompt:
+        return None
+    prompt_lower = prompt.lower()
+    
+    match = re.search(r"\b(19\d{2}|20\d{2})\b", prompt)
+    if match:
+        year = match.group(1)
+        for line in FULL_ANNUAL_OUTLINE.strip().splitlines():
+            if line.startswith(f"{year}:"):
+                content = line[len(year)+1:].strip()
+                return f"Back in {year}, {content}"
+
+    locations = ["california", "vietnam", "saigon", "forest grove", "shelton", "portland", "hawaii", "new york", "west virginia"]
+    for loc in locations:
+        if loc in prompt_lower:
+            matching_lines = []
+            for line in FULL_ANNUAL_OUTLINE.strip().splitlines():
+                if loc in line.lower():
+                    matching_lines.append(line)
+            if matching_lines:
+                chosen = random.choice(matching_lines)
+                return f"Ah, talking about {loc.title()}? {chosen}"
+
+    return None
+
+# ============================================================
+# 7. ROBUST DUAL-MODE MEDIA ENGINE WITH RETRY & CATEGORY ROTATION
 # ============================================================
 async def resolve_media_url(url: str) -> str:
     if not url or "tenor.com" not in url:
@@ -484,7 +534,6 @@ async def resolve_media_url(url: str) -> str:
         pass
     return url
 
-# Category 1: Videos (YouTube, TikTok, etc.)
 async def fetch_video_media(query: str = None) -> str:
     rand_chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
     base_q = query or random.choice(SEED_WORDS)
@@ -505,7 +554,6 @@ async def fetch_video_media(query: str = None) -> str:
         pass
     return f"https://www.youtube.com/results?search_query=joeyarnoldvn+{rand_chars}"
 
-# Category 2: GIFs (Tenor.com)
 async def fetch_gif_media(query: str = None) -> Optional[str]:
     rand_chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=4))
     base_q = query or random.choice(SEED_WORDS)
@@ -527,13 +575,12 @@ async def fetch_gif_media(query: str = None) -> Optional[str]:
             await asyncio.sleep(0.1)
     return "https://tenor.com/view/cat-vibing-gif-22441235"
 
-# Category 3: Photos (Picsum, Wikimedia, etc.)
 async def fetch_photo_media() -> str:
     try:
         query = random.choice(SEED_WORDS)
         encoded = urllib.parse.quote(query)
         url = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch={encoded}&gsrnamespace=6&gsrlimit=10&prop=imageinfo&iiprop=url&format=json"
-        req = urllib.request.Request(url, headers={"User-Agent": "OatmealAI/47.1"})
+        req = urllib.request.Request(url, headers={"User-Agent": "OatmealAI/54.0"})
         data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
         pages = data.get("query", {}).get("pages", {})
         urls = []
@@ -557,7 +604,6 @@ async def fetch_photo_media() -> str:
         recent_media_urls.append(fallback_url)
     return fallback_url
 
-# Category 4: Drawings (Pollinations AI)
 async def fetch_drawing_media(prompt: str = None) -> Optional[discord.File]:
     rand_chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
     base_p = prompt or f"surreal 1990s {random.choice(SEED_WORDS)} neon retro aesthetic illustration with Joey Arnold cinematic lighting"
@@ -571,7 +617,6 @@ async def fetch_drawing_media(prompt: str = None) -> Optional[discord.File]:
     except Exception:
         return None
 
-# Category 5: Audio / Soundtracks / Podcasts
 async def fetch_audio_media() -> str:
     rand_chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
     track_id = "".join(random.choices(string.ascii_lowercase + string.ascii_uppercase + string.digits, k=22))
@@ -587,10 +632,9 @@ async def fetch_audio_media() -> str:
         return cand
     return cand
 
-# Category 6: Web Links
 async def fetch_weblink_media() -> str:
     try:
-        req = urllib.request.Request("https://en.wikipedia.org/api/rest_v1/page/random/summary", headers={"User-Agent": "OatmealAI/47.1"})
+        req = urllib.request.Request("https://en.wikipedia.org/api/rest_v1/page/random/summary", headers={"User-Agent": "OatmealAI/54.0"})
         data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
         wiki_url = data.get("content_urls", {}).get("desktop", {}).get("page")
         if wiki_url and wiki_url not in recent_media_urls:
@@ -600,7 +644,6 @@ async def fetch_weblink_media() -> str:
         pass
     return "https://archive.org/details/softwarelibrary_msdos_games"
 
-# Category 7: ASCII Art
 async def fetch_ascii_art() -> str:
     ascii_pool = [
         "```text\n  /\\_/\\\n ( o.o )\n  > ^ <   Oatmeal Cat\n```",
@@ -610,12 +653,10 @@ async def fetch_ascii_art() -> str:
     ]
     return random.choice(ascii_pool)
 
-# Category 8: Emoticons
 async def fetch_emoticon() -> str:
     emoticons = ["¯\\_(ツ)_/¯", "(▀̿ĹM▀̿ ̿)", "( ͡° ͜ʖ ͡°)", "ʕ•ᴥ•ʔ", "(=^ ^=)", "\\m/(>_<)\\m/", "(╯°□°)╯︵ ┻━┻", "V(^_^)V", "<(^_^)>"]
     return random.choice(emoticons)
 
-# Category 9: Stickers
 async def fetch_guild_sticker(guild: Optional[discord.Guild]) -> Optional[discord.Sticker]:
     if guild and guild.stickers:
         try:
@@ -628,14 +669,15 @@ async def get_wild_media_hybrid(
     guild: Optional[discord.Guild] = None,
     priority_tier: int = 0,
     chat_context: str = "",
-    mode: str = "RANDOM"
+    mode: str = "RANDOM",
+    category_override: Optional[int] = None
 ) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
-    if random.random() < 0.05:
+    if random.random() < 0.05 and not category_override:
         st = await fetch_guild_sticker(guild)
         if st:
             return "", None, st
 
-    cat_choice = random.randint(1, 8)
+    cat_choice = category_override if category_override is not None else random.randint(1, 8)
     if cat_choice == 1:
         return await fetch_video_media(chat_context if mode == "CUSTOM" else None), None, None
     elif cat_choice == 2:
@@ -727,7 +769,7 @@ def extract_relevant_context(prompt: str) -> str:
     return SHORT_IDENTITY
 
 # ============================================================
-# 7. FIXED REAL-WORLD SEARCH ENGINE (PRIORITIES 1 & 4)
+# 8. CLEAN REAL-WORLD SEARCH & API ENGINE (PRIORITIES 1 & 4)
 # ============================================================
 async def fetch_bitcoin_price() -> str:
     try:
@@ -805,15 +847,37 @@ async def fetch_live_context(query: str) -> str:
     return "No direct web search snippets found."
 
 # ============================================================
-# 8. JOB PROCESSOR & COROUTINE CORRECTION
+# 9. JOB PROCESSOR WITH 2X EXPONENTIAL BACKOFF & SEARCH PRECEDENCE
 # ============================================================
 async def process_job(job: PendingJob):
-    """
-    COROUTINE CORRECTION & TRAFFIC ENGINE:
-    Slows down exponentially (2X backoff up to 20 retries) when duplicates, empty responses,
-    or fallback banter are encountered, preventing rapid-fire spamming.
-    """
     global last_api_call_timestamp
+
+    prompt_lower = (job.prompt_text or "").lower()
+    search_triggers = (
+        "search", "search for", "google", "look", "find", "locate", "duckduckgo",
+        "playing in", "theaters", "cinema", "box office", "bitcoin", "btc", "crypto",
+        "price", "weather", "news", "current", "who won", "what is", "who is",
+        "tell me about", "history of", "where were you", "headlines", "when", "how", "why"
+    )
+    needs_search = job.priority_tier in (1, 4) and (any(k in prompt_lower for k in search_triggers) or "?" in prompt_lower or len(prompt_lower) > 3)
+
+    if job.priority_tier in (1, 4) and not needs_search:
+        zero_token_reply = try_zero_token_timeline_response(job.prompt_text)
+        if zero_token_reply:
+            print(f"[ZERO-TOKEN TIMELINE MATCH] Resolved prompt without API tokens: {job.prompt_text}")
+            try:
+                mention_prefix = job.target_member.mention if job.target_member else ""
+                content_val, kwargs = await build_message_payload(zero_token_reply, "", None, None, mention_prefix=mention_prefix)
+                if job.reference_message:
+                    await job.reference_message.reply(content=content_val or None, mention_author=(job.priority_tier == 1), **kwargs)
+                else:
+                    await job.channel.send(content=content_val or None, **kwargs)
+                if job.reference_message:
+                    replied_message_ids.add(job.reference_message.id)
+                    save_state()
+                return
+            except Exception as e:
+                print(f"[ZERO-TOKEN DISPATCH EXCEPTION] {e}")
 
     max_retries = 20
     base_delay = 1.0
@@ -845,15 +909,6 @@ async def process_job(job: PendingJob):
         mood = random.randint(1, 5)
         temperature = 0.88 if job.priority_tier == 1 else 1.05
 
-        search_triggers = (
-            "search", "search for", "google", "look", "find", "locate", "duckduckgo",
-            "playing in", "theaters", "cinema", "box office", "bitcoin", "btc", "crypto",
-            "price", "weather", "news", "current", "who won", "what is", "who is",
-            "tell me about", "history of", "where were you", "headlines", "when", "how", "why"
-        )
-        prompt_lower = (job.prompt_text or "").lower()
-        needs_search = job.priority_tier in (1, 4) and (any(k in prompt_lower for k in search_triggers) or "?" in prompt_lower)
-        
         live = await fetch_live_context(job.prompt_text) if needs_search else ""
         history = extract_relevant_context(job.prompt_text) if job.priority_tier in (1, 4) else SHORT_IDENTITY
 
@@ -925,8 +980,8 @@ async def process_job(job: PendingJob):
 
         immune = (job.priority_tier in (1, 4) and job.reference_message is not None and not is_fallback)
         if (is_fallback or is_duplicate_text) and not immune and attempt < max_retries - 1:
-            backoff = base_delay * (2 ** attempt)
-            print(f"[COROUTINE CORRECTION] Duplicate/Fallback detected on P{job.priority_tier} (Attempt {attempt+1}/{max_retries}). Backing off by {backoff:.2f}s...")
+            backoff = base_delay * (2.0 ** attempt)
+            print(f"[RETRY ENGINE 2X BACKOFF] P{job.priority_tier} retry {attempt+1}/{max_retries}. Backing off by {backoff:.2f}s...")
             await asyncio.sleep(backoff)
             continue
 
@@ -947,13 +1002,17 @@ async def process_job(job: PendingJob):
 
         media_mode = "CUSTOM" if job.priority_tier in (1, 4) else "RANDOM"
         media_url, file_obj, sticker = "", None, None
-        want_media = (job.priority_tier in (2, 3, 5, 6, 7)) or (job.priority_tier in (1, 4) and random.random() < 0.6)
+        
+        want_media = False if needs_search else ((job.priority_tier in (2, 3, 5, 6, 7)) or (job.priority_tier in (1, 4) and random.random() < 0.10))
+        
         if want_media and job.priority_tier not in (8, 9):
+            category_override = (attempt % 8) + 1
             media_url, file_obj, sticker = await get_wild_media_hybrid(
                 guild=getattr(job.channel, "guild", None),
                 priority_tier=job.priority_tier,
                 chat_context=job.prompt_text,
-                mode=media_mode
+                mode=media_mode,
+                category_override=category_override
             )
 
         try:
@@ -966,30 +1025,45 @@ async def process_job(job: PendingJob):
                 await job.channel.send(content=content_val or None, **kwargs)
             else:
                 await job.channel.send(content=content_val or None, **kwargs)
-        except Exception as e:
-            print(f"[DISPATCH EXCEPTION P{job.priority_tier}] {e}")
 
-        if job.reference_message:
-            replied_message_ids.add(job.reference_message.id)
-            save_state()
-        break
+            if job.reference_message:
+                replied_message_ids.add(job.reference_message.id)
+                save_state()
+            break
+        except Exception as e:
+            print(f"[DISPATCH / EMBED EXCEPTION P{job.priority_tier}] (Attempt {attempt+1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                backoff = base_delay * (2.0 ** attempt)
+                print(f"[RETRY ENGINE 2X BACKOFF] Backing off by {backoff:.2f}s and rotating options...")
+                await asyncio.sleep(backoff)
+                continue
+            else:
+                print(f"[RETRY ENGINE GIVEUP] Max retries ({max_retries}) reached for job P{job.priority_tier}.")
+                try:
+                    if job.reference_message:
+                        await job.reference_message.reply(content=sanitize_reply_text(reply), mention_author=False)
+                    else:
+                        await job.channel.send(content=sanitize_reply_text(reply))
+                except Exception:
+                    pass
+                break
 
 # ============================================================
-# 9. BACKGROUND COROUTINE LOOPS (PRIORITIES 2 THROUGH 9)
+# 10. NATIVE DISCORD HISTORY CURSOR SWEEPERS (PRIORITIES 2 & 7-9)
 # ============================================================
 async def execute_priority_2():
-    """PRIORITY 2: MEDIA-ONLY Forward-Chronological Unique Message Media Replies"""
+    """PRIORITY 2: Forward-Chronological Unique Message Media Replies (One per member limit)"""
     await bot.wait_until_ready()
     print("[COROUTINE INITIALIZED] Priority 2: Forward-Chronological Unique Message Media Replies")
     while not bot.is_closed():
-        engine = get_traffic_engine_metrics(2)
-        delay = random.uniform(40, 120) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
-        if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
-            continue
-
         try:
+            engine = get_traffic_engine_metrics(2)
+            delay = random.uniform(40, 120) * engine["freq_multiplier"]
+            await asyncio.sleep(delay)
+
+            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
+                continue
+
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels: continue
@@ -1008,6 +1082,8 @@ async def execute_priority_2():
                         continue
                     if msg.id in replied_message_ids:
                         continue
+                    if msg.author.id in p2_replied_member_ids:
+                        continue
                     target_msg = msg
                     break
 
@@ -1021,24 +1097,26 @@ async def execute_priority_2():
                     try:
                         await target_msg.reply(content=content_val or None, mention_author=False, **kwargs_send)
                         replied_message_ids.add(target_msg.id)
+                        p2_replied_member_ids.add(target_msg.author.id)
                         save_state()
-                        print(f"[P2 DISPATCH] Random media reply to unique msg {target_msg.id} in #{ch.name}")
+                        print(f"[P2 DISPATCH] Random media reply to unique msg {target_msg.id} by member {target_msg.author} in #{ch.name}")
                     except Exception as e:
                         print(f"[P2 SEND EXCEPTION] {e}")
                     break
         except Exception as e:
             print(f"[P2 COROUTINE EXCEPTION] {e}")
+            await asyncio.sleep(15.0)
 
 async def execute_priority_3():
     """PRIORITY 3: MEDIA-ONLY Alphabetical Unique Member Tagging"""
     await bot.wait_until_ready()
     print("[COROUTINE INITIALIZED] Priority 3: Alphabetical Unique Member Tagging (Media-Only)")
     while not bot.is_closed():
-        engine = get_traffic_engine_metrics(3)
-        delay = random.uniform(80, 200) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
         try:
+            engine = get_traffic_engine_metrics(3)
+            delay = random.uniform(80, 200) * engine["freq_multiplier"]
+            await asyncio.sleep(delay)
+
             for guild in list(bot.guilds):
                 members = sorted([m for m in guild.members if not m.bot], key=lambda x: x.name.lower())
                 if not members:
@@ -1061,20 +1139,21 @@ async def execute_priority_3():
                 break
         except Exception as e:
             print(f"[P3 COROUTINE EXCEPTION] {e}")
+            await asyncio.sleep(15.0)
 
 async def execute_priority_4():
     """PRIORITY 4: Live Chat Reaction Genie with Search Capabilities"""
     await bot.wait_until_ready()
     print("[COROUTINE INITIALIZED] Priority 4: Live Chat Reaction Genie")
     while not bot.is_closed():
-        engine = get_traffic_engine_metrics(4)
-        delay = random.uniform(3, 10) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
-        if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
-            continue
-
         try:
+            engine = get_traffic_engine_metrics(4)
+            delay = random.uniform(3, 10) * engine["freq_multiplier"]
+            await asyncio.sleep(delay)
+
+            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
+                continue
+
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels: continue
@@ -1107,17 +1186,18 @@ async def execute_priority_4():
                         break
         except Exception as e:
             print(f"[P4 COROUTINE EXCEPTION] {e}")
+            await asyncio.sleep(10.0)
 
 async def execute_priority_6_drops():
     """PRIORITY 6: MEDIA-ONLY Spontaneous Infinite Media Drops"""
     await bot.wait_until_ready()
     print("[COROUTINE INITIALIZED] Priority 6: Spontaneous Infinite Media Drops (Media-Only)")
     while not bot.is_closed():
-        engine = get_traffic_engine_metrics(6)
-        delay = random.uniform(20, 60) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
         try:
+            engine = get_traffic_engine_metrics(6)
+            delay = random.uniform(20, 60) * engine["freq_multiplier"]
+            await asyncio.sleep(delay)
+
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not channels:
@@ -1132,119 +1212,116 @@ async def execute_priority_6_drops():
                 break
         except Exception as e:
             print(f"[P6 COROUTINE EXCEPTION] {e}")
+            await asyncio.sleep(15.0)
 
 async def execute_priority_7():
-    """PRIORITY 7: MEDIA-ONLY Bot Media Sweeper"""
+    """PRIORITY 7: MEDIA-ONLY Bot Media Sweeper (Forward-Chronological History Cursor Sweep for Bot Messages)"""
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 7: Bot Media Sweeper (Media-Only)")
+    print("[COROUTINE INITIALIZED] Priority 7: Bot Media Sweeper (Native History Cursor Sweep)")
     while not bot.is_closed():
-        engine = get_traffic_engine_metrics(7)
-        delay = random.uniform(25, 75) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
         try:
+            engine = get_traffic_engine_metrics(7)
+            delay = random.uniform(25, 45) * engine["freq_multiplier"]
+            await asyncio.sleep(delay)
+
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels: continue
                 random.shuffle(channels)
                 ch = channels[0]
 
-                cursor = bot_media_cursors.get(f"bot_media_fwd_{ch.id}", 0)
+                cursor = bot_media_cursors.get(f"p7_bot_media_{ch.id}", 0)
                 kwargs = {"limit": 50, "oldest_first": True}
-                if cursor > 0:
+                if cursor:
                     kwargs["after"] = discord.Object(id=cursor)
 
                 target_msg = None
                 async for msg in ch.history(**kwargs):
-                    bot_media_cursors[f"bot_media_fwd_{ch.id}"] = msg.id
+                    bot_media_cursors[f"p7_bot_media_{ch.id}"] = msg.id
                     if msg.author == bot.user and not msg.pinned:
                         target_msg = msg
                         break
 
                 if not target_msg and cursor != 0:
-                    bot_media_cursors[f"bot_media_fwd_{ch.id}"] = 0
+                    bot_media_cursors[f"p7_bot_media_{ch.id}"] = 0
                     continue
 
-                if not target_msg:
-                    continue
-
-                url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=7, mode="RANDOM")
-                content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
-
-                try:
-                    await target_msg.reply(content=content_val or None, mention_author=False, **kwargs_send)
-                    save_state()
-                    print(f"[P7 BOT-MEDIA-SWEEPER] Media reply to bot msg {target_msg.id} in #{ch.name}")
-                except Exception as ex:
-                    print(f"[P7 REPLY EXCEPTION] {ex}")
-                break
+                if target_msg:
+                    url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=7, mode="RANDOM")
+                    content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
+                    try:
+                        await target_msg.reply(content=content_val or None, mention_author=False, **kwargs_send)
+                        print(f"[P7 BOT-MEDIA-SWEEPER] Media reply to past bot msg {target_msg.id} in #{ch.name}")
+                    except Exception as ex:
+                        print(f"[P7 REPLY EXCEPTION] {ex}")
+                    break
         except Exception as e:
             print(f"[P7 COROUTINE EXCEPTION] {e}")
+            await asyncio.sleep(15.0)
 
 async def execute_priority_8():
-    """PRIORITY 8: TEXT ONLY Bot Text Sweeper"""
+    """PRIORITY 8: TEXT ONLY Bot Text Sweeper (Forward-Chronological History Cursor Sweep for Bot Text Messages)"""
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 8: Bot Text Sweeper (Text-Only)")
+    print("[COROUTINE INITIALIZED] Priority 8: Bot Text Sweeper (Native History Cursor Sweep)")
     while not bot.is_closed():
-        engine = get_traffic_engine_metrics(8)
-        delay = random.uniform(30, 90) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
         try:
+            engine = get_traffic_engine_metrics(8)
+            delay = random.uniform(30, 50) * engine["freq_multiplier"]
+            await asyncio.sleep(delay)
+
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels: continue
                 random.shuffle(channels)
                 ch = channels[0]
 
-                cursor = bot_text_cursors.get(f"bot_text_fwd_{ch.id}", 0)
+                cursor = bot_text_cursors.get(f"p8_bot_text_{ch.id}", 0)
                 kwargs = {"limit": 50, "oldest_first": True}
-                if cursor > 0:
+                if cursor:
                     kwargs["after"] = discord.Object(id=cursor)
 
                 target_msg = None
                 async for msg in ch.history(**kwargs):
-                    bot_text_cursors[f"bot_text_fwd_{ch.id}"] = msg.id
+                    bot_text_cursors[f"p8_bot_text_{ch.id}"] = msg.id
                     if msg.author == bot.user and not msg.pinned and len(msg.content or "") > 2:
                         target_msg = msg
                         break
 
                 if not target_msg and cursor != 0:
-                    bot_text_cursors[f"bot_text_fwd_{ch.id}"] = 0
+                    bot_text_cursors[f"p8_bot_text_{ch.id}"] = 0
                     continue
 
-                if not target_msg:
-                    continue
-
-                safe = re.sub(r"https?://\S+", "[media]", target_msg.content or "Oatmeal")[:60]
-                job = PendingJob(
-                    priority_tier=8,
-                    timestamp=time.time(),
-                    channel=ch,
-                    prompt_text=f"Deep archival backlog reflection on past bot message: '{safe}'",
-                    reference_message=target_msg,
-                    p8_channel_id=str(ch.id),
-                    p8_message_id=target_msg.id
-                )
-                await delay_queue.put(job)
-                save_state()
-                break
+                if target_msg:
+                    safe = re.sub(r"https?://\S+", "[media]", target_msg.content or "Oatmeal")[:60]
+                    job = PendingJob(
+                        priority_tier=8,
+                        timestamp=time.time(),
+                        channel=ch,
+                        prompt_text=f"Deep archival backlog reflection on past bot message: '{safe}'",
+                        reference_message=target_msg,
+                        p8_channel_id=str(ch.id),
+                        p8_message_id=target_msg.id
+                    )
+                    await delay_queue.put(job)
+                    print(f"[P8 BOT-TEXT-SWEEPER] Queued reflection for past bot msg {target_msg.id} in #{ch.name}")
+                    break
         except Exception as e:
             print(f"[P8 COROUTINE EXCEPTION] {e}")
+            await asyncio.sleep(15.0)
 
 async def execute_priority_9():
-    """PRIORITY 9: TEXT ONLY Periodic Chat Recap"""
+    """PRIORITY 9: TEXT ONLY Periodic Chat Recap (Forward-Chronological History Cursor Sweep)"""
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 9: Periodic Chat Recap (Text-Only)")
+    print("[COROUTINE INITIALIZED] Priority 9: Periodic Chat Recap (Native History Cursor Sweep)")
     while not bot.is_closed():
-        engine = get_traffic_engine_metrics(9)
-        delay = random.uniform(400, 800) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
-        if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
-            continue
-
         try:
+            engine = get_traffic_engine_metrics(9)
+            delay = random.uniform(60, 180) * engine["freq_multiplier"]
+            await asyncio.sleep(delay)
+
+            if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
+                continue
+
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels:
@@ -1252,42 +1329,54 @@ async def execute_priority_9():
                 random.shuffle(channels)
                 ch = channels[0]
 
+                cursor = recap_cursors.get(f"p9_recap_{ch.id}", 0)
+                kwargs = {"limit": 40, "oldest_first": True}
+                if cursor:
+                    kwargs["after"] = discord.Object(id=cursor)
+
                 chat_lines = []
-                async for msg in ch.history(limit=40):
+                last_msg_id = cursor
+                async for msg in ch.history(**kwargs):
+                    last_msg_id = msg.id
                     if msg.author.bot or not msg.content:
                         continue
                     chat_lines.append(f"{msg.author.display_name}: {msg.content}")
 
+                if last_msg_id != cursor:
+                    recap_cursors[f"p9_recap_{ch.id}"] = last_msg_id
+                    save_state()
+
                 if not chat_lines:
                     continue
 
-                chat_history_text = "\n".join(reversed(chat_lines))
+                chat_history_text = "\n".join(chat_lines[-30:])
 
                 job = PendingJob(
                     priority_tier=9,
                     timestamp=time.time(),
                     channel=ch,
                     prompt_text=(
-                        f"Recent chat history:\n{chat_history_text}\n\n"
-                        "Summarize this chat."
+                        f"Recent historical chat archive segment:\n{chat_history_text}\n\n"
+                        "Summarize this chat segment."
                     )
                 )
                 await delay_queue.put(job)
-                print(f"[P9 ARCHIVE RECAP QUEUED] Enqueued recap in #{ch.name}")
+                print(f"[P9 ARCHIVE RECAP QUEUED] Enqueued historical recap segment in #{ch.name}")
                 break
         except Exception as e:
             print(f"[P9 COROUTINE EXCEPTION] {e}")
+            await asyncio.sleep(20.0)
 
 async def execute_priority_5_reverse():
     """PRIORITY 5: MEDIA-ONLY Reverse History Sweep"""
     await bot.wait_until_ready()
     print("[COROUTINE INITIALIZED] Priority 5: Reverse History Sweep (Media-Only)")
     while not bot.is_closed():
-        engine = get_traffic_engine_metrics(5)
-        delay = random.uniform(50, 120) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
         try:
+            engine = get_traffic_engine_metrics(5)
+            delay = random.uniform(50, 120) * engine["freq_multiplier"]
+            await asyncio.sleep(delay)
+
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels:
@@ -1309,19 +1398,24 @@ async def execute_priority_5_reverse():
                 break
         except Exception as e:
             print(f"[P5 COROUTINE EXCEPTION] {e}")
+            await asyncio.sleep(15.0)
 
 async def delay_queue_worker():
     while True:
-        job = await delay_queue.get()
-        while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or (get_trajectory_metrics()["usage"] > 0.95 and job.priority_tier != 1):
-            await asyncio.sleep(5)
-        await process_job(job)
-        delay_queue.task_done()
+        try:
+            job = await delay_queue.get()
+            while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or (get_trajectory_metrics()["usage"] > 0.98 and job.priority_tier != 1):
+                await asyncio.sleep(3)
+            await process_job(job)
+            delay_queue.task_done()
+        except Exception as e:
+            print(f"[DELAY QUEUE WORKER EXCEPTION] {e}")
+            await asyncio.sleep(2.0)
 
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V47.1 Fixed Search & Media Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V54.0 Native Cursors & Hardened Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
@@ -1337,12 +1431,6 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    """
-    PRIORITY 1:
-    1. When a member (minus itself) replies to the bot.
-    2. When a member (minus itself) mentions the bot's username (Oatmeal AI#4059 or bot.user)
-       or mentions the bot's nicknames (OATMEAL, JOEY, ARNOLD, JOEYARNOLDVN, OJAWALL - not case-sensitive).
-    """
     if message.author.bot or message.guild is None or message.is_system() or message.author == bot.user:
         return
 
