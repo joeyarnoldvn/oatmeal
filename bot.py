@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 44.2 (Bugfix & URL Sanitization Edition)
+Master Production Version 45.0 (GPT-OSS-120B & 10X Speed Edition)
 
-- Fixed corrupted markdown URL strings in Coinbase, CoinGecko, and DuckDuckGo API requests.
-- Optimized 9-tier priority traffic governor, token scaling, and robust cursor persistence.
-- Diversified media engine (YouTube, Tenor GIF, Pollinations AI, Wikimedia/Pixabay photos, audio, web links, stickers).
-- Strict non-refusal persona and archival workflow intact.
+- Model updated to openai/gpt-oss-120b (removed all Llama references).
+- Priority 9 restored to the exact two-line chat recap format ("Oatmeal Recap.\n[Summary]").
+- Priorities 7 & 8 configured to run at 10X the speed of Priorities 2, 3, and 5.
+- Fixed empty message dispatch bugs and cleaned up all URL strings.
+- Robust 9-tier priority traffic governor, token scaling, and cursor persistence.
 """
 
 import os
@@ -36,7 +37,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V44.2 -- Archival Engine & Media Operating")
+        self.wfile.write(b"Oatmeal AI V45.0 -- Archival Engine & Media Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -60,7 +61,7 @@ GROQ_API_KEY  = os.environ.get("GROQ_API_KEY")
 if not DISCORD_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY environment variables")
 
-MODEL_NAME = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 STATE_PATH = os.environ.get("STATE_PATH", "/tmp/oatmeal_state.json")
 
 intents = discord.Intents.default()
@@ -186,7 +187,7 @@ def call_groq_rest(messages: List[Dict[str, str]], max_tokens: int = 300, temper
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
-        "User-Agent": "OatmealAI/44.2"
+        "User-Agent": "OatmealAI/45.0"
     }
     payload = {
         "model": MODEL_NAME,
@@ -280,14 +281,14 @@ def calculate_dynamic_max_tokens(priority_tier: int) -> int:
 
     engine = get_traffic_engine_metrics(priority_tier)
     weight = engine["weight_multiplier"]
-    base = {1: 380, 4: 140, 5: 90, 6: 80, 8: 24, 9: 350}.get(priority_tier, 70)
+    base = {1: 380, 4: 140, 5: 90, 6: 80, 8: 24, 9: 120}.get(priority_tier, 70)
     m = get_trajectory_metrics()
     usage = m["usage"]
     compression = max(0.2, (1.0 - usage) ** 1.2)
     headroom = max(60, GROQ_REMAINING_TPM - 280)
 
     allowed = int(base * compression * weight)
-    hard = {1: 650, 4: 180, 5: 120, 6: 100, 8: 28, 9: 600}.get(priority_tier, 100)
+    hard = {1: 650, 4: 180, 5: 120, 6: 100, 8: 28, 9: 150}.get(priority_tier, 100)
     return max(30, min(allowed, hard, headroom))
 
 # ============================================================
@@ -446,11 +447,11 @@ def get_zero_token_text() -> str:
 
 def sanitize_reply_text(text: str) -> str:
     if not text:
-        return ""
+        return "🥣"
     text = re.sub(r'https?://\S+', '', text)
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
     text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    return text if text else "🥣"
 
 async def resolve_media_url(url: str) -> str:
     if not url or "tenor.com" not in url:
@@ -610,6 +611,9 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
                 if f:
                     kwargs["file"] = f
 
+    if not content and not kwargs:
+        content = "🥣"
+
     return content, kwargs
 
 def extract_relevant_context(prompt: str) -> str:
@@ -764,7 +768,12 @@ async def process_job(job: PendingJob):
     if job.priority_tier == 8:
         system += "\nHARD RULE: Maximum 10 words. Witty self-reflection only. Text only."
     elif job.priority_tier == 9:
-        system += "\nHARD RULE FOR ARCHIVAL RECAP: Provide an insightful, concise archival breakdown of the server batch as Joey Arnold."
+        system += (
+            "\nYou are generating a chat recap. You MUST output your response in exactly two lines:\n"
+            "Line 1: Oatmeal Recap.\n"
+            "Line 2: A short, punchy, in-character summary of the recent server chat above.\n"
+            "No media, text only."
+        )
 
     reply = ""
     actual_tokens = 0
@@ -804,6 +813,14 @@ async def process_job(job: PendingJob):
 
     if job.priority_tier == 8:
         reply = " ".join(reply.split()[:10])
+    elif job.priority_tier == 9:
+        lines = [l.strip() for l in reply.splitlines() if l.strip()]
+        if len(lines) >= 2:
+            reply = f"Oatmeal Recap.\n{lines[1]}"
+        elif len(lines) == 1:
+            reply = f"Oatmeal Recap.\n{lines[0]}"
+        else:
+            reply = "Oatmeal Recap.\nNothing much happening in the attic right now."
 
     media_url, file_obj, sticker = "", None, None
     if job.priority_tier not in (8, 9):
@@ -875,9 +892,9 @@ async def execute_priority_2():
 
                 if target:
                     url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=2)
-                    content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
+                    content_val, kwargs_send = await build_message_payload("🥣", url, file_obj, sticker)
                     try:
-                        await target.reply(content=content_val or None, mention_author=False, **kwargs_send)
+                        await target.reply(content=content_val, mention_author=False, **kwargs_send)
                         replied_message_ids.add(target.id)
                         priority2_replied_member_ids.add(p2_key(guild.id, target.author.id))
                         save_state()
@@ -911,7 +928,7 @@ async def execute_priority_3():
                 url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=3)
                 content_val, kwargs = await build_message_payload("", url, file_obj, sticker, mention_prefix=target.mention)
 
-                await ch.send(content=content_val or None, **kwargs)
+                await ch.send(content=content_val, **kwargs)
                 print(f"[P3 DISPATCH] Tagged member {target.display_name} with media in #{ch.name}")
                 break
         except Exception as e:
@@ -964,11 +981,12 @@ async def execute_priority_4():
 
 async def execute_priority_7():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 7: Forward-Chronological Bot Media Sweeper")
+    print("[COROUTINE INITIALIZED] Priority 7: Forward-Chronological Bot Media Sweeper (10X Speed)")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(7)
-        delay = random.uniform(20, 70) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
+        # 10X faster than P2/P3/P5 (which range 35-250s, so P7 ranges 3.5-25s divided by 10 -> 0.35 to 2.5s base, or adjusted via freq_multiplier / 10)
+        delay = random.uniform(3.5, 9.0) * (engine["freq_multiplier"] / 10.0)
+        await asyncio.sleep(max(1.0, delay))
 
         try:
             for guild in list(bot.guilds):
@@ -997,9 +1015,9 @@ async def execute_priority_7():
                     continue
 
                 url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=7)
-                content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
+                content_val, kwargs_send = await build_message_payload("🥣", url, file_obj, sticker)
 
-                await target_msg.reply(content=content_val or None, mention_author=False, **kwargs_send)
+                await target_msg.reply(content=content_val, mention_author=False, **kwargs_send)
                 save_state()
                 print(f"[P7 BOT-MEDIA-SWEEPER] Replied to bot message {target_msg.id} in #{ch.name}")
                 break
@@ -1008,11 +1026,12 @@ async def execute_priority_7():
 
 async def execute_priority_8():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 8: Forward-Chronological Bot Text Sweeper")
+    print("[COROUTINE INITIALIZED] Priority 8: Forward-Chronological Bot Text Sweeper (10X Speed)")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(8)
-        delay = random.uniform(25, 90) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
+        # 10X faster than P2/P3/P5
+        delay = random.uniform(4.0, 10.0) * (engine["freq_multiplier"] / 10.0)
+        await asyncio.sleep(max(1.0, delay))
 
         try:
             for guild in list(bot.guilds):
@@ -1095,10 +1114,10 @@ async def execute_priority_6_drops():
                     continue
                 ch = random.choice(channels)
                 url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=6)
-                content_val, kwargs = await build_message_payload("", url, file_obj, sticker)
+                content_val, kwargs = await build_message_payload("🥣", url, file_obj, sticker)
 
                 if content_val or kwargs:
-                    await ch.send(content=content_val or None, **kwargs)
+                    await ch.send(content=content_val, **kwargs)
                     print(f"[P6 DISPATCH] Spontaneous media drop posted in #{ch.name}")
                 break
         except Exception as e:
@@ -1106,10 +1125,10 @@ async def execute_priority_6_drops():
 
 async def execute_priority_9():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 9: Massive Multi-Batch Archival Engine")
+    print("[COROUTINE INITIALIZED] Priority 9: Periodic Chat Recap")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(9)
-        delay = random.uniform(50, 100) * engine["freq_multiplier"]
+        delay = random.uniform(3600, 7200) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -1123,52 +1142,28 @@ async def execute_priority_9():
                 random.shuffle(channels)
                 ch = channels[0]
 
-                cursor = recap_cursors.get(f"recap_{ch.id}", 0)
-                kwargs = {"limit": 100, "oldest_first": True}
-                if cursor > 0:
-                    kwargs["after"] = discord.Object(id=cursor)
-
-                raw_messages = []
-                last_msg_id = cursor
-                detected_year = "Archive Era"
-
-                async for msg in ch.history(**kwargs):
-                    last_msg_id = msg.id
+                chat_lines = []
+                async for msg in ch.history(limit=40):
                     if msg.author.bot or not msg.content:
                         continue
-                    if msg.created_at:
-                        detected_year = str(msg.created_at.year)
-                    clean_content = msg.content.strip()
-                    if len(clean_content) < 2:
-                        continue
-                    raw_messages.append(f"[{msg.author.display_name}]: {clean_content[:150]}")
+                    chat_lines.append(f"{msg.author.display_name}: {msg.content}")
 
-                if last_msg_id != cursor:
-                    recap_cursors[f"recap_{ch.id}"] = last_msg_id
-                    save_state()
-
-                if len(raw_messages) < 5:
-                    if cursor != 0:
-                        recap_cursors[f"recap_{ch.id}"] = 0
-                        save_state()
+                if not chat_lines:
                     continue
 
-                chat_history_text = "\n".join(raw_messages[:80])
+                chat_history_text = "\n".join(reversed(chat_lines))
 
                 job = PendingJob(
                     priority_tier=9,
                     timestamp=time.time(),
                     channel=ch,
                     prompt_text=(
-                        f"Archival Server Batch ({detected_year}) - {len(raw_messages)} messages scanned:\n"
-                        f"{chat_history_text}\n\n"
-                        f"Write a concise, insightful archival recap as Joey Arnold in two lines:\n"
-                        f"Line 1: Oatmeal Recap ({detected_year} Archive).\n"
-                        f"Line 2: Witty reflection connecting these historical logs to Joey's workaholic archiving."
+                        f"Recent chat history:\n{chat_history_text}\n\n"
+                        "Summarize this chat."
                     )
                 )
                 await delay_queue.put(job)
-                print(f"[P9 ARCHIVE RECAP QUEUED] Enqueued batch from {detected_year} in #{ch.name}")
+                print(f"[P9 ARCHIVE RECAP QUEUED] Enqueued recap in #{ch.name}")
                 break
         except Exception as e:
             print(f"[P9 COROUTINE EXCEPTION] {e}")
@@ -1184,7 +1179,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V44.2 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V45.0 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
