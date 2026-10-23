@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 46.1 (Coroutine Correction & Adaptive Traffic Engine)
+Master Production Version 46.2 (Strict Coroutine Correction & Traffic Engine)
 
-- Implemented strict Coroutine Correction retry loop with 2X exponential backoff (up to 20 retries) for duplicates and fallbacks.
+- Fully repaired Coroutine Correction retry loop with 2X exponential backoff (up to 20 retries) to eliminate fallback and duplicate spam.
 - Sanitized all malformed markdown URLs in search and crypto APIs.
-- Integrated adaptive traffic engine frequency and weight governance across all background priorities.
+- Enforced strict priority hierarchy order (1, 4, 6, 7, 8, 9, 2, 5, 3) and precise Priority 1/2/3 rules.
 - Model pinned to openai/gpt-oss-120b.
 """
 
@@ -37,7 +37,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V46.1 -- Coroutine Correction & Traffic Engine")
+        self.wfile.write(b"Oatmeal AI V46.2 -- Coroutine Correction & Traffic Engine")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -79,7 +79,6 @@ channel_cursors: Dict[str, int] = {}
 bot_media_cursors: Dict[str, int] = {}
 bot_text_cursors: Dict[str, int] = {}
 recap_cursors: Dict[str, int] = {}
-priority2_replied_member_ids: Set[str] = set()
 lifetime_interacted_members: Set[int] = set()
 
 recent_media_urls = collections.deque(maxlen=10000)
@@ -97,12 +96,9 @@ local_daily_reset_day = None
 blocked_users: Dict[str, float] = {}
 user_message_history: Dict[int, List[Tuple[float, str]]] = {}
 
-def p2_key(guild_id: int, author_id: int) -> str:
-    return f"{guild_id}:{author_id}"
-
 def load_state():
-    global replied_message_ids, channel_cursors, priority2_replied_member_ids
-    global blocked_users, bot_media_cursors, bot_text_cursors, recap_cursors
+    global replied_message_ids, channel_cursors, blocked_users
+    global bot_media_cursors, bot_text_cursors, recap_cursors
     try:
         if os.path.exists(STATE_PATH):
             with open(STATE_PATH, "r", encoding="utf-8") as f:
@@ -112,9 +108,8 @@ def load_state():
             bot_media_cursors = {str(k): int(v) for k, v in data.get("bot_media_cursors", {}).items()}
             bot_text_cursors = {str(k): int(v) for k, v in data.get("bot_text_cursors", {}).items()}
             recap_cursors = {str(k): int(v) for k, v in data.get("recap_cursors", {}).items()}
-            priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
             blocked_users = {str(k): float(v) for k, v in data.get("blocked_users", {}).items()}
-            print(f"[STATE] Loaded {len(replied_message_ids)} replies | Recap Cursors: {len(recap_cursors)}")
+            print(f"[STATE] Loaded {len(replied_message_ids)} replied message IDs | Recap Cursors: {len(recap_cursors)}")
     except Exception as e:
         print(f"[STATE] Fresh start initialized: {e}")
 
@@ -129,7 +124,6 @@ def save_state():
                 "bot_media_cursors": bot_media_cursors,
                 "bot_text_cursors": bot_text_cursors,
                 "recap_cursors": recap_cursors,
-                "p2_done_members": list(priority2_replied_member_ids),
                 "blocked_users": blocked_users,
             }
             fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
@@ -147,7 +141,7 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. DIRECT GROQ REST CLIENT & ADAPTIVE TRAFFIC GOVERNOR
+# 4. DIRECT GROQ REST CLIENT & TRAFFIC ENGINE GOVERNOR
 # ============================================================
 GROQ_REMAINING_TPM = 8000
 GROQ_REMAINING_RPD = 1000
@@ -187,7 +181,7 @@ def call_groq_rest(messages: List[Dict[str, str]], max_tokens: int = 300, temper
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
-        "User-Agent": "OatmealAI/46.1"
+        "User-Agent": "OatmealAI/46.2"
     }
     payload = {
         "model": MODEL_NAME,
@@ -250,23 +244,35 @@ def get_trajectory_metrics():
     }
 
 def get_traffic_engine_metrics(priority_tier: int = 1) -> Dict[str, Any]:
+    """
+    TRAFFIC ENGINE HIERARCHY PREFERENCES (Most frequent to least frequent):
+    1. PRIORITY 1
+    2. PRIORITY 4
+    3. PRIORITY 6
+    4. PRIORITY 7
+    5. PRIORITY 8
+    6. PRIORITY 9
+    7. PRIORITY 2
+    8. PRIORITY 5
+    9. PRIORITY 3
+    """
     m = get_trajectory_metrics()
     s = max(0.0, min(1.0, m["local_daily"] / 200000.0))
     load_delta = s - 0.20
 
-    rank = {9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 3: 4, 2: 3, 4: 2, 1: 1}
-    r = rank.get(priority_tier, 1)
+    rank_order = {1: 1, 4: 2, 6: 3, 7: 4, 8: 5, 9: 6, 2: 7, 5: 8, 3: 9}
+    r = rank_order.get(priority_tier, 5)
 
-    sens = 0.5 + (r * 0.35)
-    effective_load = max(0.0, min(1.0, s + load_delta * sens * 1.6))
+    sens = 0.4 + (r * 0.35)
+    effective_load = max(0.0, min(1.0, s + load_delta * sens * 1.5))
 
     if effective_load <= 0.20:
-        freq_mult = max(0.3, 0.6 + (effective_load / 0.20) * 1.5)
+        freq_mult = max(0.25, 0.5 + (effective_load / 0.20) * 1.5) * (r * 0.4 + 0.6)
     else:
         excess = (effective_load - 0.20) / 0.80
-        freq_mult = 2.0 + (excess ** 1.2) * 18.0
+        freq_mult = (2.0 + (excess ** 1.3) * 20.0) * (r * 0.5 + 0.5)
 
-    weight_mult = max(0.1, 1.0 - (effective_load * 0.75))
+    weight_mult = max(0.05, 1.0 - (effective_load * 0.80))
 
     return {
         "freq_multiplier": freq_mult,
@@ -281,14 +287,14 @@ def calculate_dynamic_max_tokens(priority_tier: int) -> int:
 
     engine = get_traffic_engine_metrics(priority_tier)
     weight = engine["weight_multiplier"]
-    base = {1: 380, 4: 140, 5: 90, 6: 80, 8: 45, 9: 120}.get(priority_tier, 70)
+    base = {1: 380, 4: 140, 6: 80, 7: 0, 8: 45, 9: 120, 2: 0, 5: 90, 3: 0}.get(priority_tier, 70)
     m = get_trajectory_metrics()
     usage = m["usage"]
     compression = max(0.2, (1.0 - usage) ** 1.2)
     headroom = max(60, GROQ_REMAINING_TPM - 280)
 
     allowed = int(base * compression * weight)
-    hard = {1: 650, 4: 180, 5: 120, 6: 100, 8: 60, 9: 150}.get(priority_tier, 100)
+    hard = {1: 650, 4: 180, 6: 100, 7: 0, 8: 60, 9: 150, 2: 0, 5: 120, 3: 0}.get(priority_tier, 100)
     return max(0, min(allowed, hard, headroom))
 
 # ============================================================
@@ -530,15 +536,11 @@ async def fetch_pollinations(prompt: str = None) -> Optional[discord.File]:
         return None
 
 async def fetch_embed_photo() -> str:
-    """
-    Dynamic Wikimedia Commons & Unsplash/Picsum image fetcher.
-    Guarantees zero repetition by querying live Wikimedia categories and unique seeds.
-    """
     try:
         query = random.choice(SEED_WORDS)
         encoded = urllib.parse.quote(query)
         url = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch={encoded}&gsrnamespace=6&gsrlimit=15&prop=imageinfo&iiprop=url&format=json"
-        req = urllib.request.Request(url, headers={"User-Agent": "OatmealAI/46.1"})
+        req = urllib.request.Request(url, headers={"User-Agent": "OatmealAI/46.2"})
         data = json.loads(urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore"))
         pages = data.get("query", {}).get("pages", {})
         urls = []
@@ -582,7 +584,7 @@ async def fetch_audio_embed() -> str:
 
 async def fetch_web_link() -> str:
     try:
-        req = urllib.request.Request("https://en.wikipedia.org/api/rest_v1/page/random/summary", headers={"User-Agent": "OatmealAI/46.1"})
+        req = urllib.request.Request("https://en.wikipedia.org/api/rest_v1/page/random/summary", headers={"User-Agent": "OatmealAI/46.2"})
         data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
         wiki_url = data.get("content_urls", {}).get("desktop", {}).get("page")
         if wiki_url and wiki_url not in recent_media_urls:
@@ -790,15 +792,15 @@ async def fetch_live_context(query: str) -> str:
 
 async def process_job(job: PendingJob):
     """
-    COROUTINE CORRECTION & TRAFFIC ENGINE INTEGRATION:
+    COROUTINE CORRECTION SYSTEM:
     Regulates frequency, weight, and token usage. Automatically retries up to 20 times
-    with 2X exponential backoff when fallback text, duplicate hashes, or fallback media are detected,
-    unless Priority 1 or 4 with direct user request.
+    with 2X exponential backoff when fallback text, duplicate hashes, or fallback media are detected.
+    Priorities 1 and 4 are immune unless exhausted.
     """
     global last_api_call_timestamp
 
     max_retries = 20
-    base_delay = 1.0
+    base_delay = 0.5
 
     for attempt in range(max_retries):
         while True:
@@ -816,9 +818,9 @@ async def process_job(job: PendingJob):
         engine = get_traffic_engine_metrics(job.priority_tier)
         freq = engine["freq_multiplier"]
 
-        if job.priority_tier == 1: min_gap = max(0.06, 0.12 * freq)
-        elif job.priority_tier == 4: min_gap = max(0.3, 0.5 * freq)
-        else: min_gap = max(1.2, 2.0 * freq)
+        if job.priority_tier == 1: min_gap = max(0.04, 0.08 * freq)
+        elif job.priority_tier == 4: min_gap = max(0.2, 0.4 * freq)
+        else: min_gap = max(1.0, 1.8 * freq)
 
         elapsed = time.monotonic() - last_api_call_timestamp
         if elapsed < min_gap:
@@ -918,9 +920,10 @@ async def process_job(job: PendingJob):
 
         text_hash = hashlib.md5(reply.encode("utf-8")).hexdigest()
         is_duplicate_text = text_hash in recent_text_hashes
+        is_fallback = reply in ZERO_TOKEN_BANTER_POOL
 
         media_url, file_obj, sticker = "", None, None
-        want_media = (job.priority_tier in (2, 3, 4, 5, 6, 7)) or (job.priority_tier == 1 and random.random() < 0.75)
+        want_media = (job.priority_tier in (4, 6, 7, 8, 9, 2, 5, 3)) or (job.priority_tier == 1 and random.random() < 0.75)
         if want_media and job.priority_tier not in (8, 9):
             media_url, file_obj, sticker = await get_wild_media_hybrid(
                 guild=getattr(job.channel, "guild", None),
@@ -929,11 +932,11 @@ async def process_job(job: PendingJob):
                 allow_tokens=(token_limit > 0)
             )
 
-        # COROUTINE CORRECTION DUPLICATION & FALLBACK CHECK
-        is_fallback = reply in ZERO_TOKEN_BANTER_POOL
-        if (is_duplicate_text or is_fallback) and job.priority_tier not in (1, 4) and attempt < max_retries - 1:
+        # COROUTINE CORRECTION: If duplicate or fallback, slow down by 2X and retry up to 20 times (unless P1/P4 direct user request)
+        immune = (job.priority_tier in (1, 4) and job.reference_message is not None)
+        if (is_duplicate_text or is_fallback) and not immune and attempt < max_retries - 1:
             backoff = base_delay * (2 ** attempt)
-            print(f"[COROUTINE CORRECTION] Duplicate/Fallback detected on P{job.priority_tier} (Attempt {attempt+1}/{max_retries}). Backing off by {backoff}s...")
+            print(f"[COROUTINE CORRECTION] Duplicate/Fallback detected on P{job.priority_tier} (Attempt {attempt+1}/{max_retries}). Backing off by {backoff:.2f}s...")
             await asyncio.sleep(backoff)
             continue
 
@@ -954,17 +957,20 @@ async def process_job(job: PendingJob):
 
         if job.reference_message:
             replied_message_ids.add(job.reference_message.id)
-            if job.priority_tier == 2 and job.reference_message.guild:
-                priority2_replied_member_ids.add(p2_key(job.reference_message.guild.id, job.reference_message.author.id))
-                save_state()
+            save_state()
         break
 
 async def execute_priority_2():
+    """
+    PRIORITY 2:
+    Only reply with RANDOM MEDIA in forward-chronological order to each unique member's MESSAGE
+    only once per MESSAGE in an infinite loop using internal Discord search navigation / history.
+    """
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 2: Forward Historical Backlog (Dynamic Traffic Engine)")
+    print("[COROUTINE INITIALIZED] Priority 2: Forward-Chronological Unique Message Media Replies")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(2)
-        delay = random.uniform(25, 75) * engine["freq_multiplier"]
+        delay = random.uniform(30, 90) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -977,35 +983,33 @@ async def execute_priority_2():
                 random.shuffle(channels)
                 ch = channels[0]
 
-                cursor = channel_cursors.get(f"fwd_{ch.id}", 0)
-                kwargs = {"limit": 30, "oldest_first": True}
+                cursor = channel_cursors.get(f"p2_fwd_{ch.id}", 0)
+                kwargs = {"limit": 50, "oldest_first": True}
                 if cursor:
                     kwargs["after"] = discord.Object(id=cursor)
 
-                target = None
+                target_msg = None
                 async for msg in ch.history(**kwargs):
-                    channel_cursors[f"fwd_{ch.id}"] = msg.id
-                    if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
+                    channel_cursors[f"p2_fwd_{ch.id}"] = msg.id
+                    if msg.author.bot or msg.author == bot.user or msg.is_system() or msg.type != discord.MessageType.default:
                         continue
-                    key = p2_key(guild.id, msg.author.id)
-                    if key in priority2_replied_member_ids or msg.id in replied_message_ids:
+                    if msg.id in replied_message_ids:
                         continue
-                    target = msg
+                    target_msg = msg
                     break
 
-                if not target and cursor != 0:
-                    channel_cursors[f"fwd_{ch.id}"] = 0
+                if not target_msg and cursor != 0:
+                    channel_cursors[f"p2_fwd_{ch.id}"] = 0
                     continue
 
-                if target:
+                if target_msg:
                     url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=2)
-                    content_val, kwargs_send = await build_message_payload(get_zero_token_text(), url, file_obj, sticker)
+                    content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
                     try:
-                        await target.reply(content=content_val or None, mention_author=False, **kwargs_send)
-                        replied_message_ids.add(target.id)
-                        priority2_replied_member_ids.add(p2_key(guild.id, target.author.id))
+                        await target_msg.reply(content=content_val or None, mention_author=False, **kwargs_send)
+                        replied_message_ids.add(target_msg.id)
                         save_state()
-                        print(f"[P2 DISPATCH] Dynamic backlog reply to msg {target.id} in #{ch.name}")
+                        print(f"[P2 DISPATCH] Random media reply to unique msg {target_msg.id} in #{ch.name}")
                     except Exception as e:
                         print(f"[P2 SEND EXCEPTION] {e}")
                     break
@@ -1013,30 +1017,41 @@ async def execute_priority_2():
             print(f"[P2 COROUTINE EXCEPTION] {e}")
 
 async def execute_priority_3():
+    """
+    PRIORITY 3:
+    Message ALPHABETICALLY to each individual unique member only once in an infinite loop.
+    Only mention member's username and not display name or nicknames.
+    Must not text the member's name more than once per message.
+    """
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 3: Alphabetical Member Tagging (Dynamic Traffic Engine)")
+    print("[COROUTINE INITIALIZED] Priority 3: Alphabetical Unique Member Tagging")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(3)
-        delay = random.uniform(40, 120) * engine["freq_multiplier"]
+        delay = random.uniform(60, 150) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         try:
             for guild in list(bot.guilds):
-                members = sorted([m for m in guild.members if not m.bot], key=lambda x: x.display_name.lower())
+                # Sort members alphabetically by username (target.name)
+                members = sorted([m for m in guild.members if not m.bot], key=lambda x: x.name.lower())
                 if not members:
                     continue
                 idx = p3_member_indices.get(guild.id, 0) % len(members)
                 target = members[idx]
                 p3_member_indices[guild.id] = (idx + 1) % len(members)
+
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not channels:
                     continue
                 ch = random.choice(channels)
                 url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=3)
-                content_val, kwargs = await build_message_payload(get_zero_token_text(), url, file_obj, sticker, mention_prefix=target.mention)
+                
+                # Mention user by username / mention without duplicating name text
+                mention_str = f"<@{target.id}>"
+                content_val, kwargs = await build_message_payload(get_zero_token_text(), url, file_obj, sticker, mention_prefix=mention_str)
 
                 await ch.send(content=content_val or None, **kwargs)
-                print(f"[P3 DISPATCH] Tagged member {target.display_name} in #{ch.name}")
+                print(f"[P3 DISPATCH] Alphabetical tag for username {target.name} in #{ch.name}")
                 break
         except Exception as e:
             print(f"[P3 COROUTINE EXCEPTION] {e}")
@@ -1046,7 +1061,7 @@ async def execute_priority_4():
     print("[COROUTINE INITIALIZED] Priority 4: Live Chat Reaction Genie")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(4)
-        delay = random.uniform(3, 10) * engine["freq_multiplier"]
+        delay = random.uniform(2, 8) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -1086,13 +1101,37 @@ async def execute_priority_4():
         except Exception as e:
             print(f"[P4 COROUTINE EXCEPTION] {e}")
 
+async def execute_priority_6_drops():
+    await bot.wait_until_ready()
+    print("[COROUTINE INITIALIZED] Priority 6: Spontaneous Infinite Media Drops")
+    while not bot.is_closed():
+        engine = get_traffic_engine_metrics(6)
+        delay = random.uniform(15, 45) * engine["freq_multiplier"]
+        await asyncio.sleep(delay)
+
+        try:
+            for guild in list(bot.guilds):
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if not channels:
+                    continue
+                ch = random.choice(channels)
+                url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=6)
+                content_val, kwargs = await build_message_payload(get_zero_token_text(), url, file_obj, sticker)
+
+                if content_val or kwargs:
+                    await ch.send(content=content_val or None, **kwargs)
+                    print(f"[P6 DISPATCH] Spontaneous media drop in #{ch.name}")
+                break
+        except Exception as e:
+            print(f"[P6 COROUTINE EXCEPTION] {e}")
+
 async def execute_priority_7():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 7: Forward-Chronological Bot Media Sweeper (Dynamic Speed)")
+    print("[COROUTINE INITIALIZED] Priority 7: Bot Media Sweeper")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(7)
-        delay = random.uniform(0.4, 2.0) * (engine["freq_multiplier"] / 8.0)
-        await asyncio.sleep(max(0.2, delay))
+        delay = random.uniform(20, 60) * engine["freq_multiplier"]
+        await asyncio.sleep(delay)
 
         try:
             for guild in list(bot.guilds):
@@ -1102,11 +1141,9 @@ async def execute_priority_7():
                 ch = channels[0]
 
                 cursor = bot_media_cursors.get(f"bot_media_fwd_{ch.id}", 0)
-                kwargs = {"limit": 100, "oldest_first": True}
+                kwargs = {"limit": 50, "oldest_first": True}
                 if cursor > 0:
                     kwargs["after"] = discord.Object(id=cursor)
-                else:
-                    kwargs["oldest_first"] = True
 
                 target_msg = None
                 async for msg in ch.history(**kwargs):
@@ -1137,11 +1174,11 @@ async def execute_priority_7():
 
 async def execute_priority_8():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 8: Forward-Chronological Bot Text Sweeper (Dynamic Speed)")
+    print("[COROUTINE INITIALIZED] Priority 8: Bot Text Sweeper")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(8)
-        delay = random.uniform(0.5, 2.5) * (engine["freq_multiplier"] / 8.0)
-        await asyncio.sleep(max(0.3, delay))
+        delay = random.uniform(25, 75) * engine["freq_multiplier"]
+        await asyncio.sleep(delay)
 
         try:
             for guild in list(bot.guilds):
@@ -1151,11 +1188,9 @@ async def execute_priority_8():
                 ch = channels[0]
 
                 cursor = bot_text_cursors.get(f"bot_text_fwd_{ch.id}", 0)
-                kwargs = {"limit": 100, "oldest_first": True}
+                kwargs = {"limit": 50, "oldest_first": True}
                 if cursor > 0:
                     kwargs["after"] = discord.Object(id=cursor)
-                else:
-                    kwargs["oldest_first"] = True
 
                 target_msg = None
                 async for msg in ch.history(**kwargs):
@@ -1187,60 +1222,12 @@ async def execute_priority_8():
         except Exception as e:
             print(f"[P8 COROUTINE EXCEPTION] {e}")
 
-async def execute_priority_5_reverse():
-    await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 5: Reverse History Sweep")
-    while not bot.is_closed():
-        engine = get_traffic_engine_metrics(5)
-        delay = random.uniform(50, 200) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
-        try:
-            for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
-                if not channels:
-                    continue
-                ch = random.choice(channels)
-                async for msg in ch.history(limit=25, oldest_first=False):
-                    if msg.author.bot or msg.id in replied_message_ids:
-                        continue
-                    job = PendingJob(5, time.time(), ch, "Short reflection.", reference_message=msg, author_id=msg.author.id)
-                    await delay_queue.put(job)
-                    break
-                break
-        except Exception as e:
-            print(f"[P5 COROUTINE EXCEPTION] {e}")
-
-async def execute_priority_6_drops():
-    await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 6: Spontaneous Infinite Media Drops")
-    while not bot.is_closed():
-        engine = get_traffic_engine_metrics(6)
-        delay = random.uniform(100, 400) * engine["freq_multiplier"]
-        await asyncio.sleep(delay)
-
-        try:
-            for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
-                if not channels:
-                    continue
-                ch = random.choice(channels)
-                url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=6)
-                content_val, kwargs = await build_message_payload(get_zero_token_text(), url, file_obj, sticker)
-
-                if content_val or kwargs:
-                    await ch.send(content=content_val or None, **kwargs)
-                    print(f"[P6 DISPATCH] Spontaneous media drop in #{ch.name}")
-                break
-        except Exception as e:
-            print(f"[P6 COROUTINE EXCEPTION] {e}")
-
 async def execute_priority_9():
     await bot.wait_until_ready()
     print("[COROUTINE INITIALIZED] Priority 9: Periodic Chat Recap")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(9)
-        delay = random.uniform(3000, 6000) * engine["freq_multiplier"]
+        delay = random.uniform(300, 600) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -1280,6 +1267,30 @@ async def execute_priority_9():
         except Exception as e:
             print(f"[P9 COROUTINE EXCEPTION] {e}")
 
+async def execute_priority_5_reverse():
+    await bot.wait_until_ready()
+    print("[COROUTINE INITIALIZED] Priority 5: Reverse History Sweep")
+    while not bot.is_closed():
+        engine = get_traffic_engine_metrics(5)
+        delay = random.uniform(40, 100) * engine["freq_multiplier"]
+        await asyncio.sleep(delay)
+
+        try:
+            for guild in list(bot.guilds):
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                if not channels:
+                    continue
+                ch = random.choice(channels)
+                async for msg in ch.history(limit=25, oldest_first=False):
+                    if msg.author.bot or msg.id in replied_message_ids:
+                        continue
+                    job = PendingJob(5, time.time(), ch, "Short reflection.", reference_message=msg, author_id=msg.author.id)
+                    await delay_queue.put(job)
+                    break
+                break
+        except Exception as e:
+            print(f"[P5 COROUTINE EXCEPTION] {e}")
+
 async def delay_queue_worker():
     while True:
         job = await delay_queue.get()
@@ -1291,7 +1302,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V46.1 Coroutine Correction & Traffic Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V46.2 Coroutine Correction & Traffic Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
@@ -1307,6 +1318,12 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
+    """
+    PRIORITY 1:
+    1. When a member (minus itself) replies to the bot.
+    2. When a member (minus itself) mentions the bot's username (Oatmeal AI#4059 or bot.user)
+       or mentions the bot's nicknames (OATMEAL, JOEY, ARNOLD, JOEYARNOLDVN, OJAWALL - not case-sensitive).
+    """
     if message.author.bot or message.guild is None or message.is_system() or message.author == bot.user:
         return
 
@@ -1341,14 +1358,16 @@ async def on_message(message):
     lifetime_interacted_members.add(author_id)
     content_lower = message.content.lower()
 
-    mentioned = bot.user in message.mentions
+    # Priority 1 Trigger Checks
+    mentioned_bot = (bot.user in message.mentions) or any(n in content_lower for n in ("oatmeal ai#4059", str(bot.user.id)))
     replied_to_bot = False
     if message.reference and isinstance(message.reference.resolved, discord.Message):
         replied_to_bot = message.reference.resolved.author == bot.user
 
-    named = any(k in content_lower for k in ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall"))
+    nicknames = ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall")
+    named = any(nick in content_lower for nick in nicknames)
 
-    if mentioned or replied_to_bot or named:
+    if mentioned_bot or replied_to_bot or named:
         replied_message_ids.add(message.id)
         job = PendingJob(
             priority_tier=1, 
