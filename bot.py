@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 36.3 (Anti-Loop Text Sanitizer & Guaranteed Media Edition)
+Master Production Version 36.9 (Forward-Chronological Bot Sweeper & Smooth Pacing Edition)
 
-- Bulletproof text sanitizer (`sanitize_reply_text`) stripping all markdown links and raw URLs from AI text responses
-- Guaranteed clean media embedding with automatic Pollinations AI / emoticon fallback for unresolvable links
-- Priority 2 strictly restricted to media-only posts (zero text/banter)
-- Web links restricted to <=1% frequency in the hybrid media generator (99% GIFs/images/stickers/emoticons)
-- Multi-source search engine active exclusively in Priorities 1 and 4
-- Anti-repetition state tracking (recent media URLs, sticker IDs, and text hashes)
-- Master Traffic Engine with continuous coroutine pacing & sequential zero-token cutover
-- Infinite forward chronological self-mirrors (P7 media + P8 text) starting from oldest bot message
-- Priority 9 periodic chat recap ("Oatmeal Recap." format)
-- 600-second member activity pause on background maintenance priorities
-- Atomic state persistence (tempfile -> fsync -> os.replace) & Render health check server
+- Forward-chronological bot message sweepers for P7 & P8 mirroring Priority 2 logic (`msg.author == bot.user`)
+- Persistent bot cursor state tracking (`bot_media_cursors` & `bot_text_cursors`)
+- Continuous smooth traffic pacing targeting 20% token utilization without abrupt cliffs
+- 9-Tier Probabilistic Media Generator (Videos > Drawings > GIFs > Emoticons > Stickers > ASCII > Embed Photos > Audio/Music > Web Links)
+- Bulletproof text sanitizer (`sanitize_reply_text`) stripping markdown links and raw URLs
+- Bulletproof dual-source Bitcoin price lookup (Coinbase + CoinGecko)
 """
 
 import os
@@ -44,7 +39,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V36.3 -- Anti-Loop Media Engine Operating")
+        self.wfile.write(b"Oatmeal AI V36.9 -- Bot-Sweeper Multi-Priority Engine Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -80,10 +75,12 @@ intents.members = True
 bot = discord.Client(intents=intents)
 
 # ============================================================
-# 3. GLOBAL STATE STRUCTURES & ANTI-REPETITION TRACKERS
+# 3. GLOBAL STATE STRUCTURES & FORWARD-CHRONOLOGICAL CURSORS
 # ============================================================
 replied_message_ids: Set[int] = set()
 channel_cursors: Dict[str, int] = {}
+bot_media_cursors: Dict[str, int] = {}
+bot_text_cursors: Dict[str, int] = {}
 priority2_replied_member_ids: Set[str] = set()
 lifetime_interacted_members: Set[int] = set()
 
@@ -92,8 +89,6 @@ recent_sticker_ids = collections.deque(maxlen=200)
 recent_text_hashes = collections.deque(maxlen=2000)
 
 p3_member_indices: Dict[int, int] = {}
-p7_cursors: Dict[str, int] = {}
-p8_cursors: Dict[str, int] = {}
 last_member_activity_time: Dict[Any, float] = {}
 
 DAILY_EXHAUSTED_UNTIL = 0.0
@@ -109,18 +104,18 @@ def p2_key(guild_id: int, author_id: int) -> str:
 
 def load_state():
     global replied_message_ids, channel_cursors, priority2_replied_member_ids
-    global blocked_users, p7_cursors, p8_cursors
+    global blocked_users, bot_media_cursors, bot_text_cursors
     try:
         if os.path.exists(STATE_PATH):
             with open(STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             replied_message_ids = set(int(x) for x in data.get("replied", []))
             channel_cursors = {str(k): int(v) for k, v in data.get("cursors", {}).items()}
+            bot_media_cursors = {str(k): int(v) for k, v in data.get("bot_media_cursors", {}).items()}
+            bot_text_cursors = {str(k): int(v) for k, v in data.get("bot_text_cursors", {}).items()}
             priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
             blocked_users = {str(k): float(v) for k, v in data.get("blocked_users", {}).items()}
-            p7_cursors = {str(k): int(v) for k, v in data.get("p7_cursors", {}).items()}
-            p8_cursors = {str(k): int(v) for k, v in data.get("p8_cursors", {}).items()}
-            print(f"[STATE] Loaded {len(replied_message_ids)} replies | P7:{len(p7_cursors)} P8:{len(p8_cursors)}")
+            print(f"[STATE] Loaded {len(replied_message_ids)} replies | Bot Media Cursors: {len(bot_media_cursors)} | Bot Text Cursors: {len(bot_text_cursors)}")
     except Exception as e:
         print(f"[STATE] Fresh start initialized: {e}")
 
@@ -132,10 +127,10 @@ def save_state():
             data = {
                 "replied": list(replied_message_ids)[-50000:],
                 "cursors": channel_cursors,
+                "bot_media_cursors": bot_media_cursors,
+                "bot_text_cursors": bot_text_cursors,
                 "p2_done_members": list(priority2_replied_member_ids),
                 "blocked_users": blocked_users,
-                "p7_cursors": p7_cursors,
-                "p8_cursors": p8_cursors,
             }
             fd, tmp_path = tempfile.mkstemp(prefix="oatmeal_state_", suffix=".json.tmp", dir=dir_name)
             try:
@@ -152,7 +147,7 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. MASTER TRAFFIC ENGINE – MATHEMATICAL GOVERNOR
+# 4. MASTER TRAFFIC ENGINE – SMOOTH PACE GOVERNOR (20% TARGET)
 # ============================================================
 GROQ_REMAINING_TPM = 8000
 GROQ_REMAINING_RPD = 1000
@@ -264,7 +259,7 @@ def get_trajectory_metrics():
 def get_traffic_engine_metrics(priority_tier: int = 1) -> Dict[str, Any]:
     m = get_trajectory_metrics()
     s = max(0.0, min(1.0, m["local_daily"] / 200000.0))
-    load_delta = s - 0.20
+    load_delta = s - 0.20  # Target spent threshold = 20% (0.20)
 
     rank = {9: 9, 8: 8, 7: 7, 6: 6, 5: 5, 3: 4, 2: 3, 4: 2, 1: 1}
     r = rank.get(priority_tier, 1)
@@ -273,29 +268,18 @@ def get_traffic_engine_metrics(priority_tier: int = 1) -> Dict[str, Any]:
     effective_load = max(0.0, min(1.0, s + load_delta * sens * 1.6))
 
     if effective_load <= 0.20:
-        freq_mult = max(0.25, 0.6 + (effective_load / 0.20) * 2.8)
+        freq_mult = max(0.3, 0.6 + (effective_load / 0.20) * 2.2)
     else:
         excess = (effective_load - 0.20) / 0.80
-        freq_mult = 3.0 + (excess ** 1.4) * 140.0
+        freq_mult = 2.8 + (excess ** 1.3) * 45.0
 
-    if freq_mult >= 8.0:
-        progress = min(1.0, (freq_mult - 8.0) / 12.0)
-        weight_mult = max(0.04, 1.0 - 0.96 * progress)
-    else:
-        weight_mult = 1.0
-
-    cutover = {
-        9: 0.20, 8: 0.22, 7: 0.24, 6: 0.26, 5: 0.28,
-        3: 0.30, 2: 0.32, 4: 0.35, 1: 0.40
-    }
-    zero_token_mode = s >= cutover.get(priority_tier, 0.25)
+    weight_mult = max(0.1, 1.0 - (effective_load * 0.75))
 
     return {
         "freq_multiplier": freq_mult,
         "weight_multiplier": weight_mult,
         "spent_pct": s,
-        "effective_load": effective_load,
-        "zero_token_mode": zero_token_mode
+        "effective_load": effective_load
     }
 
 def calculate_dynamic_max_tokens(priority_tier: int) -> int:
@@ -304,30 +288,15 @@ def calculate_dynamic_max_tokens(priority_tier: int) -> int:
 
     engine = get_traffic_engine_metrics(priority_tier)
     weight = engine["weight_multiplier"]
-    zero = engine["zero_token_mode"]
-
-    if zero and priority_tier != 1:
-        if priority_tier in (3, 6):
-            return 0
-        if priority_tier in (4, 5, 8, 9):
-            return 12
-
     base = {1: 520, 4: 180, 5: 110, 6: 100, 8: 28, 9: 120}.get(priority_tier, 90)
     m = get_trajectory_metrics()
     usage = m["usage"]
-    compression = max(0.15, (1.0 - usage) ** 1.4)
+    compression = max(0.2, (1.0 - usage) ** 1.2)
     headroom = max(60, GROQ_REMAINING_TPM - 280)
 
     allowed = int(base * compression * weight)
     hard = {1: 900, 4: 240, 5: 140, 6: 130, 8: 32, 9: 150}.get(priority_tier, 120)
-    result = max(12, min(allowed, hard, headroom))
-
-    if priority_tier == 1:
-        if zero:
-            result = min(result, 48)
-        else:
-            result = max(result, min(200, headroom))
-    return result
+    return max(16, min(allowed, hard, headroom))
 
 # ============================================================
 # 5. FULL 1985–2026 TIMELINE + PERSONALITY & IDENTITY
@@ -460,6 +429,13 @@ ZERO_TOKEN_BANTER_POOL = [
 
 EMOTICON_POOL = ["🥣", "🔥", "😂", "🫡", "🚀", "📼", "🎬", "🏀", "✨", "👀", "🧠", "🌌", "💪"]
 
+ASCII_ART_POOL = [
+    "```text\n  /\\_/\\\n ( o.o )\n  > ^ <\n```",
+    "```text\n  _____ _         _ \n / ____| |       | |\n| (___ | |_ _   _| |\n \\___ \\| __| | | | |\n ____) | |_| |_| | |\n|_____/ \\__|\\__,_|_|\n```",
+    "```text\n     ___ \n    /   \\\n    | O |\n    \\___/\n     | |\n    /|_|\\\n   / | | \\\n     | |\n    /   \\\n   /     \\\n```",
+    "```text\n  ___ _           _      _ \n / __| |_ ___ _ _| |__ LAYER\n \\__ \\  _/ -_) '_| / _` | |\n |___/\\__\\___|_| |_\\__,_|_|\n```"
+]
+
 WORD_NUMBERS = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -469,7 +445,7 @@ WORD_NUMBERS = {
 }
 
 # ============================================================
-# 6. DYNAMIC HYBRID MEDIA ENGINE & TENOR RESOLVER
+# 6. 9-TIER PROBABILISTIC MEDIA ENGINE
 # ============================================================
 SEED_WORDS = [
     "star wars", "90s nostalgia", "power rangers", "ninja turtles", "vhs tape",
@@ -488,14 +464,10 @@ def get_zero_token_text() -> str:
     return random.choice(ZERO_TOKEN_BANTER_POOL)
 
 def sanitize_reply_text(text: str) -> str:
-    """Anti-Loop Sanitizer: Strips raw URLs and converts markdown links [Text](URL) -> Text."""
     if not text:
         return ""
-    # Remove raw URLs
     text = re.sub(r'https?://\S+', '', text)
-    # Convert markdown links [Text](URL) to just Text
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-    # Clean up excess whitespace
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -560,6 +532,33 @@ async def fetch_pollinations(prompt: str = None) -> Optional[discord.File]:
     except Exception:
         return None
 
+async def fetch_embed_photo() -> str:
+    samples = [
+        "https://i.imgur.com/34RXfb6.jpg",
+        "https://i.imgur.com/7Y9z2vX.jpg",
+        "https://i.imgur.com/Z4w29qC.jpg",
+        "https://imgflip.com/s/meme/Distracted-Boyfriend.jpg",
+        "https://cdn.pixabay.com/photo/2015/04/23/22/00/tree-736885_1280.jpg"
+    ]
+    return random.choice(samples)
+
+async def fetch_audio_embed() -> str:
+    tracks = [
+        "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
+        "https://soundcloud.com/search?q=90s%20hip%20hop",
+        "https://bandcamp.com",
+        "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
+    ]
+    return random.choice(tracks)
+
+async def fetch_web_link() -> str:
+    links = [
+        "https://en.wikipedia.org/wiki/Special:Random",
+        "https://archive.org/details/softwarelibrary_msdos_games",
+        "https://www.nasa.gov/"
+    ]
+    return random.choice(links)
+
 async def generate_token_assisted_media_prompt(chat_context: str) -> str:
     try:
         def _call():
@@ -587,31 +586,50 @@ async def get_wild_media_hybrid(
     chat_context: str = "",
     allow_tokens: bool = False
 ) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
+    chat_lower = chat_context.lower()
+    
+    if "gif" in chat_lower or "animation" in chat_lower:
+        query_prompt = chat_context
+        if allow_tokens and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4):
+            query_prompt = await generate_token_assisted_media_prompt(chat_context)
+        url = await fetch_tenor_gif(query_prompt)
+        if url:
+            return url, None, None
+
     query_prompt = None
     if allow_tokens and chat_context and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4):
         query_prompt = await generate_token_assisted_media_prompt(chat_context)
 
-    # 99% Visual Media (Tenor GIFs, Pollinations images, Guild stickers, Emojis) vs 1% Web/YouTube links
-    choices = ["tenor", "image", "sticker", "emoticon", "youtube"]
-    weights = [45, 30, 15, 9, 1]
+    # 9-Tier Probabilistic Choices & Weights (Videos > Drawings > GIFs > Emoticons > Stickers > ASCII > Embed Photos > Audio/Music > Web Links)
+    choices = ["youtube", "image", "tenor", "emoticon", "sticker", "ascii", "embed_photo", "audio", "weblink"]
+    weights = [30,       25,      20,      10,          6,         4,       3,             2,       1]
+    
     choice = random.choices(choices, weights=weights, k=1)[0]
 
-    if choice == "tenor":
-        url = await fetch_tenor_gif(query_prompt)
-        if url: return url, None, None
+    if choice == "youtube":
+        return await fetch_youtube(query_prompt), None, None
     elif choice == "image":
         f = await fetch_pollinations(query_prompt)
         if f: return "", f, None
+    elif choice == "tenor":
+        url = await fetch_tenor_gif(query_prompt)
+        if url: return url, None, None
+    elif choice == "emoticon":
+        return random.choice(EMOTICON_POOL), None, None
     elif choice == "sticker" and guild and guild.stickers:
         available_stickers = [s for s in guild.stickers if str(s.id) not in recent_sticker_ids]
         if available_stickers:
             st = random.choice(available_stickers)
             recent_sticker_ids.append(str(st.id))
             return "", None, st
-    elif choice == "emoticon":
-        return random.choice(EMOTICON_POOL), None, None
-    elif choice == "youtube":
-        return await fetch_youtube(query_prompt), None, None
+    elif choice == "ascii":
+        return random.choice(ASCII_ART_POOL), None, None
+    elif choice == "embed_photo":
+        return await fetch_embed_photo(), None, None
+    elif choice == "audio":
+        return await fetch_audio_embed(), None, None
+    elif choice == "weblink":
+        return await fetch_web_link(), None, None
 
     url = await fetch_tenor_gif(query_prompt)
     return url or random.choice(EMOTICON_POOL), None, None
@@ -629,21 +647,22 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
         kwargs["stickers"] = [sticker]
 
     if media_url:
-        resolved_media = await resolve_media_url(media_url)
-        # If we have a direct image or Tenor CDN URL, embed it cleanly
-        if resolved_media and (resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or "c.tenor.com" in resolved_media or "giphy.com" in resolved_media):
-            embed = discord.Embed(color=0x2b2d31)
-            embed.set_image(url=resolved_media)
-            kwargs["embed"] = embed
-        elif "tenor.com" in media_url or "youtube.com" in media_url:
-            # If resolution failed to get a direct image file, generate a Pollinations drawing instead of showing a broken embed or raw link
-            f = await fetch_pollinations(clean_reply or "retro 90s aesthetic")
-            if f:
-                kwargs["file"] = f
-            else:
-                content = f"{content} 🥣".strip()
-        else:
+        if media_url.startswith("```text"):
             content = f"{content}\n{media_url}".strip() if content else media_url
+        else:
+            resolved_media = await resolve_media_url(media_url)
+            if resolved_media and (resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or "c.tenor.com" in resolved_media or "giphy.com" in resolved_media or "imgur.com" in resolved_media or "pixabay.com" in resolved_media):
+                embed = discord.Embed(color=0x2b2d31)
+                embed.set_image(url=resolved_media)
+                kwargs["embed"] = embed
+            elif "youtube.com" in media_url or "spotify.com" in media_url or "soundcloud.com" in media_url:
+                content = f"{content}\n{media_url}".strip() if content else media_url
+            else:
+                f = await fetch_pollinations(clean_reply or "retro 90s aesthetic")
+                if f:
+                    kwargs["file"] = f
+                else:
+                    content = f"{content} 🥣".strip()
 
     if not content and not kwargs:
         content = get_zero_token_text()
@@ -698,20 +717,33 @@ def extract_relevant_context(prompt: str) -> str:
 async def fetch_bitcoin_price() -> str:
     try:
         req = urllib.request.Request(
-            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+            "[https://api.coinbase.com/v2/prices/BTC-USD/spot](https://api.coinbase.com/v2/prices/BTC-USD/spot)",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode())
+        amount = data.get("data", {}).get("amount")
+        if amount:
+            return f"Bitcoin is currently around ${float(amount):,.2f} USD."
+    except Exception as e:
+        print(f"[BITCOIN COINBASE EXCEPTION] {e}")
+
+    try:
+        req = urllib.request.Request(
+            "[https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd](https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd)",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         )
         data = json.loads(urllib.request.urlopen(req, timeout=3).read().decode())
         price = data.get("bitcoin", {}).get("usd")
         if price:
-            return f"Bitcoin is currently around ${price:,.0f} USD."
-    except Exception:
-        pass
+            return f"Bitcoin is currently around ${float(price):,.2f} USD."
+    except Exception as e:
+        print(f"[BITCOIN COINGECKO EXCEPTION] {e}")
+
     return ""
 
 async def fetch_live_context(query: str) -> str:
     query_lower = query.lower().strip()
-    if any(k in query_lower for k in ("bitcoin", "btc", "crypto price")):
+    if any(k in query_lower for k in ("bitcoin", "btc", "crypto price", "price of bitcoin")):
         btc = await fetch_bitcoin_price()
         if btc: return btc
 
@@ -721,7 +753,7 @@ async def fetch_live_context(query: str) -> str:
 
     try:
         encoded = urllib.parse.quote(clean)
-        url = f"https://html.duckduckgo.com/html/?q={encoded}"
+        url = f"[https://html.duckduckgo.com/html/?q=](https://html.duckduckgo.com/html/?q=){encoded}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
         html = urllib.request.urlopen(req, timeout=5).read().decode("utf-8", "ignore")
         snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
@@ -733,7 +765,7 @@ async def fetch_live_context(query: str) -> str:
 
     try:
         encoded = urllib.parse.quote(clean)
-        url = f"https://lite.duckduckgo.com/lite/"
+        url = "[https://lite.duckduckgo.com/lite/](https://lite.duckduckgo.com/lite/)"
         data = f"q={encoded}".encode("utf-8")
         req = urllib.request.Request(url, data=data, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -749,7 +781,7 @@ async def fetch_live_context(query: str) -> str:
 
     try:
         encoded = urllib.parse.quote(clean)
-        url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded}&format=json"
+        url = f"[https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=](https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=){encoded}&format=json"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
         data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
         results = data.get("query", {}).get("search", [])
@@ -886,7 +918,6 @@ async def process_job(job: PendingJob):
                 allow_tokens=(token_limit > 0)
             )
 
-    sent_ok = False
     try:
         mention_prefix = job.target_member.mention if job.target_member else ""
         content_val, kwargs = await build_message_payload(reply, media_url, file_obj, sticker, mention_prefix=mention_prefix)
@@ -897,13 +928,8 @@ async def process_job(job: PendingJob):
             await job.channel.send(content=content_val, **kwargs)
         else:
             await job.channel.send(content=content_val, **kwargs)
-        sent_ok = True
     except Exception as e:
         print(f"[DISPATCH EXCEPTION P{job.priority_tier}] {e}")
-
-    if sent_ok and job.priority_tier == 8 and job.p8_channel_id and job.p8_message_id:
-        p8_cursors[job.p8_channel_id] = job.p8_message_id
-        save_state()
 
     if job.reference_message:
         replied_message_ids.add(job.reference_message.id)
@@ -919,7 +945,7 @@ async def execute_priority_2():
     print("[COROUTINE INITIALIZED] Priority 2: Forward Historical Backlog (Media Only)")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(2)
-        delay = random.uniform(30, 160) * engine["freq_multiplier"] * random.uniform(1.8, 3.2)
+        delay = random.uniform(25, 80) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -928,46 +954,45 @@ async def execute_priority_2():
         try:
             for guild in list(bot.guilds):
                 now = time.time()
-                if now - last_member_activity_time.get(guild.id, 0) < 600:
+                if now - last_member_activity_time.get(guild.id, 0) < 15:
                     continue
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                if not channels: continue
                 random.shuffle(channels)
-                for ch in channels:
-                    if now - last_member_activity_time.get(ch.id, 0) < 600:
+                ch = channels[0]
+
+                cursor = channel_cursors.get(f"fwd_{ch.id}", 0)
+                kwargs = {"limit": 40, "oldest_first": True}
+                if cursor:
+                    kwargs["after"] = discord.Object(id=cursor)
+
+                target = None
+                async for msg in ch.history(**kwargs):
+                    channel_cursors[f"fwd_{ch.id}"] = msg.id
+                    if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
                         continue
+                    key = p2_key(guild.id, msg.author.id)
+                    if key in priority2_replied_member_ids or msg.id in replied_message_ids:
+                        continue
+                    target = msg
+                    break
 
-                    cursor = channel_cursors.get(f"fwd_{ch.id}", 0)
-                    kwargs = {"limit": 60, "oldest_first": True}
-                    if cursor:
-                        kwargs["after"] = discord.Object(id=cursor)
-
-                    target = None
-                    async for msg in ch.history(**kwargs):
-                        channel_cursors[f"fwd_{ch.id}"] = msg.id
-                        if msg.author.bot or msg.is_system() or msg.type != discord.MessageType.default:
-                            continue
-                        key = p2_key(guild.id, msg.author.id)
-                        if key in priority2_replied_member_ids or msg.id in replied_message_ids:
-                            continue
-                        target = msg
-                        break
-
-                    if target:
-                        url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=2)
-                        # Priority 2 is strictly media only (empty text string)
-                        content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
-                        try:
-                            await target.reply(content=content_val, mention_author=False, **kwargs_send)
-                            replied_message_ids.add(target.id)
-                            priority2_replied_member_ids.add(p2_key(guild.id, target.author.id))
-                            save_state()
-                            print(f"[P2 DISPATCH] Responded with media only to message {target.id} in #{ch.name}")
-                        except Exception as e:
-                            print(f"[P2 SEND EXCEPTION] {e}")
-                        break
-                else:
+                if not target and cursor != 0:
+                    channel_cursors[f"fwd_{ch.id}"] = 0
                     continue
-                break
+
+                if target:
+                    url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=2)
+                    content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
+                    try:
+                        await target.reply(content=content_val, mention_author=False, **kwargs_send)
+                        replied_message_ids.add(target.id)
+                        priority2_replied_member_ids.add(p2_key(guild.id, target.author.id))
+                        save_state()
+                        print(f"[P2 DISPATCH] Responded with media only to message {target.id} in #{ch.name}")
+                    except Exception as e:
+                        print(f"[P2 SEND EXCEPTION] {e}")
+                    break
         except Exception as e:
             print(f"[P2 COROUTINE EXCEPTION] {e}")
 
@@ -976,17 +1001,11 @@ async def execute_priority_3():
     print("[COROUTINE INITIALIZED] Priority 3: Alphabetical Member Tagging")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(3)
-        delay = random.uniform(90, 900) * engine["freq_multiplier"] * random.uniform(1.8, 3.5)
+        delay = random.uniform(45, 180) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         try:
-            if engine["zero_token_mode"] is False and get_trajectory_metrics()["usage"] > 0.82:
-                continue
-
             for guild in list(bot.guilds):
-                now = time.time()
-                if now - last_member_activity_time.get(guild.id, 0) < 600:
-                    continue
                 members = sorted([m for m in guild.members if not m.bot], key=lambda x: x.display_name.lower())
                 if not members:
                     continue
@@ -1008,10 +1027,10 @@ async def execute_priority_3():
 
 async def execute_priority_4():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 4: Live Chat Reaction Genie (Fixed)")
+    print("[COROUTINE INITIALIZED] Priority 4: Live Chat Reaction Genie")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(4)
-        delay = random.uniform(5, 15) * engine["freq_multiplier"]
+        delay = random.uniform(3, 10) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -1020,147 +1039,134 @@ async def execute_priority_4():
         try:
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                if not channels: continue
                 random.shuffle(channels)
-                for ch in channels:
-                    target = None
-                    async for msg in ch.history(limit=10):
-                        if msg.author.bot or msg.author == bot.user or not msg.content:
-                            continue
-                        if msg.id in replied_message_ids:
-                            continue
-                        if (datetime.now(timezone.utc) - msg.created_at).total_seconds() > 600:
-                            continue
-                        target = msg
-                        break
+                ch = channels[0]
 
-                    if target:
-                        clean_text = re.sub(r"<@!?\d+>", "", target.content).strip()
-                        if len(clean_text) >= 2:
-                            job = PendingJob(
-                                priority_tier=4,
-                                timestamp=time.monotonic(),
-                                channel=ch,
-                                prompt_text=f"Give a quick witty take on this chat message: '{clean_text[:120]}'",
-                                reference_message=target,
-                                author_id=target.author.id
-                            )
-                            await delay_queue.put(job)
-                            print(f"[P4 QUEUED] Enqueued reaction for msg {target.id} in #{ch.name}")
-                            break
-                else:
-                    continue
-                break
+                target = None
+                async for msg in ch.history(limit=25):
+                    if msg.author.bot or msg.author == bot.user or not msg.content:
+                        continue
+                    if msg.id in replied_message_ids:
+                        continue
+                    if (datetime.now(timezone.utc) - msg.created_at).total_seconds() > 3600:
+                        continue
+                    if bot.user in msg.mentions or (msg.reference and isinstance(msg.reference.resolved, discord.Message) and msg.reference.resolved.author == bot.user):
+                        replied_message_ids.add(msg.id)
+                        continue
+                    target = msg
+                    break
+
+                if target:
+                    clean_text = re.sub(r"<@!?\d+>", "", target.content).strip()
+                    if len(clean_text) >= 2:
+                        job = PendingJob(
+                            priority_tier=4,
+                            timestamp=time.monotonic(),
+                            channel=ch,
+                            prompt_text=f"Give a quick witty take on this chat message: '{clean_text[:120]}'",
+                            reference_message=target,
+                            author_id=target.author.id
+                        )
+                        await delay_queue.put(job)
+                        print(f"[P4 QUEUED] Enqueued reaction for msg {target.id} in #{ch.name}")
+                        break
         except Exception as e:
             print(f"[P4 COROUTINE EXCEPTION] {e}")
 
 async def execute_priority_7():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 7: Infinite Forward Media Mirror (Oldest-First)")
+    print("[COROUTINE INITIALIZED] Priority 7: Forward-Chronological Bot Media Sweeper")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(7)
-        delay = random.uniform(25, 120) * engine["freq_multiplier"] * random.uniform(1.8, 3.4)
+        delay = random.uniform(15, 60) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         try:
-            if get_trajectory_metrics()["usage"] > 0.93:
-                continue
-
             for guild in list(bot.guilds):
-                now = time.time()
-                if now - last_member_activity_time.get(guild.id, 0) < 600:
-                    continue
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                if not channels: continue
                 random.shuffle(channels)
-                for ch in channels:
-                    if now - last_member_activity_time.get(ch.id, 0) < 600:
-                        continue
+                ch = channels[0]
 
-                    cursor = p7_cursors.get(str(ch.id), 0)
-                    kwargs = {"limit": 60, "oldest_first": True}
-                    if cursor > 0:
-                        kwargs["after"] = discord.Object(id=cursor)
+                cursor = bot_media_cursors.get(f"bot_media_fwd_{ch.id}", 0)
+                kwargs = {"limit": 40, "oldest_first": True}
+                if cursor > 0:
+                    kwargs["after"] = discord.Object(id=cursor)
 
-                    target = None
-                    async for msg in ch.history(**kwargs):
-                        if msg.author == bot.user:
-                            target = msg
-                            break
-
-                    if not target:
-                        continue
-
-                    url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=7)
-                    if not (url or file_obj or sticker):
-                        continue
-
-                    content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
-
-                    try:
-                        await target.reply(content=content_val or None, mention_author=False, **kwargs_send)
-                        p7_cursors[str(ch.id)] = target.id
-                        save_state()
-                        print(f"[P7 MIRROR DISPATCH] Successfully mirrored bot msg {target.id} in #{ch.name}")
+                target_msg = None
+                async for msg in ch.history(**kwargs):
+                    bot_media_cursors[f"bot_media_fwd_{ch.id}"] = msg.id
+                    if msg.author == bot.user:
+                        target_msg = msg
                         break
-                    except Exception as e:
-                        print(f"[P7 DISPATCH ERROR] Cursor NOT advanced for msg {target.id}: {e}")
-                else:
+
+                if not target_msg and cursor != 0:
+                    bot_media_cursors[f"bot_media_fwd_{ch.id}"] = 0
                     continue
+
+                if not target_msg:
+                    continue
+
+                url, file_obj, sticker = await get_wild_media_hybrid(guild, priority_tier=7)
+                if not (url or file_obj or sticker):
+                    continue
+
+                content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
+
+                await target_msg.reply(content=content_val or None, mention_author=False, **kwargs_send)
+                save_state()
+                print(f"[P7 BOT-SWEEPER DISPATCH] Replied to historical bot message {target_msg.id} in #{ch.name}")
                 break
         except Exception as e:
             print(f"[P7 COROUTINE EXCEPTION] {e}")
 
 async def execute_priority_8():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 8: Lightweight Text Mirror (Oldest-First)")
+    print("[COROUTINE INITIALIZED] Priority 8: Forward-Chronological Bot Text Sweeper")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(8)
-        delay = random.uniform(40, 180) * engine["freq_multiplier"] * random.uniform(1.9, 3.6)
+        delay = random.uniform(20, 80) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         try:
-            if engine["zero_token_mode"]:
-                continue
-            if get_trajectory_metrics()["usage"] > 0.90:
-                continue
-
             for guild in list(bot.guilds):
-                now = time.time()
-                if now - last_member_activity_time.get(guild.id, 0) < 600:
-                    continue
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                if not channels: continue
                 random.shuffle(channels)
-                for ch in channels:
-                    if now - last_member_activity_time.get(ch.id, 0) < 600:
-                        continue
+                ch = channels[0]
 
-                    cursor = p8_cursors.get(str(ch.id), 0)
-                    kwargs = {"limit": 60, "oldest_first": True}
-                    if cursor > 0:
-                        kwargs["after"] = discord.Object(id=cursor)
+                cursor = bot_text_cursors.get(f"bot_text_fwd_{ch.id}", 0)
+                kwargs = {"limit": 40, "oldest_first": True}
+                if cursor > 0:
+                    kwargs["after"] = discord.Object(id=cursor)
 
-                    target = None
-                    async for msg in ch.history(**kwargs):
-                        if msg.author == bot.user:
-                            target = msg
-                            break
+                target_msg = None
+                async for msg in ch.history(**kwargs):
+                    bot_text_cursors[f"bot_text_fwd_{ch.id}"] = msg.id
+                    if msg.author == bot.user:
+                        target_msg = msg
+                        break
 
-                    if not target:
-                        continue
-
-                    safe = re.sub(r"https?://\S+", "[media]", target.content or "Oatmeal")[:50]
-                    job = PendingJob(
-                        priority_tier=8,
-                        timestamp=time.time(),
-                        channel=ch,
-                        prompt_text=f"Short witty reflection on: {safe}",
-                        reference_message=target,
-                        p8_channel_id=str(ch.id),
-                        p8_message_id=target.id
-                    )
-                    await delay_queue.put(job)
-                    break
-                else:
+                if not target_msg and cursor != 0:
+                    bot_text_cursors[f"bot_text_fwd_{ch.id}"] = 0
                     continue
+
+                if not target_msg:
+                    continue
+
+                safe = re.sub(r"https?://\S+", "[media]", target_msg.content or "Oatmeal")[:50]
+                job = PendingJob(
+                    priority_tier=8,
+                    timestamp=time.time(),
+                    channel=ch,
+                    prompt_text=f"Short witty reflection on: {safe}",
+                    reference_message=target_msg,
+                    p8_channel_id=str(ch.id),
+                    p8_message_id=target_msg.id
+                )
+                await delay_queue.put(job)
+                save_state()
                 break
         except Exception as e:
             print(f"[P8 COROUTINE EXCEPTION] {e}")
@@ -1170,21 +1176,16 @@ async def execute_priority_5_reverse():
     print("[COROUTINE INITIALIZED] Priority 5: Reverse History Sweep")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(5)
-        delay = random.uniform(300, 1800) * engine["freq_multiplier"] * random.uniform(2.0, 4.0)
+        delay = random.uniform(60, 240) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         try:
-            if engine["zero_token_mode"] or get_trajectory_metrics()["usage"] > 0.80:
-                continue
             for guild in list(bot.guilds):
-                now = time.time()
-                if now - last_member_activity_time.get(guild.id, 0) < 600:
-                    continue
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels:
                     continue
                 ch = random.choice(channels)
-                async for msg in ch.history(limit=20, oldest_first=False):
+                async for msg in ch.history(limit=25, oldest_first=False):
                     if msg.author.bot or msg.id in replied_message_ids:
                         continue
                     job = PendingJob(5, time.time(), ch, "Short reflection.", reference_message=msg, author_id=msg.author.id)
@@ -1199,16 +1200,11 @@ async def execute_priority_6_drops():
     print("[COROUTINE INITIALIZED] Priority 6: Spontaneous Media Drops")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(6)
-        delay = random.uniform(600, 7200) * engine["freq_multiplier"] * random.uniform(2.0, 4.0)
+        delay = random.uniform(120, 500) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         try:
-            if get_trajectory_metrics()["usage"] > 0.78:
-                continue
             for guild in list(bot.guilds):
-                now = time.time()
-                if now - last_member_activity_time.get(guild.id, 0) < 600:
-                    continue
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if not channels:
                     continue
@@ -1228,20 +1224,14 @@ async def execute_priority_9():
     print("[COROUTINE INITIALIZED] Priority 9: Periodic Chat Recap")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(9)
-        delay = random.uniform(3600, 7200) * engine["freq_multiplier"] * random.uniform(1.5, 2.8)
+        delay = random.uniform(300, 900) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
             continue
 
         try:
-            if engine["zero_token_mode"] or get_trajectory_metrics()["usage"] > 0.85:
-                continue
-
             for guild in list(bot.guilds):
-                now = time.time()
-                if now - last_member_activity_time.get(guild.id, 0) < 600:
-                    continue
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels:
                     continue
@@ -1312,7 +1302,7 @@ async def execute_priority_9():
 async def delay_queue_worker():
     while True:
         job = await delay_queue.get()
-        while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or (get_trajectory_metrics()["usage"] > 0.93 and job.priority_tier != 1):
+        while time.monotonic() < GROQ_RATE_LIMITED_UNTIL or (get_trajectory_metrics()["usage"] > 0.95 and job.priority_tier != 1):
             await asyncio.sleep(5)
         await process_job(job)
         delay_queue.task_done()
@@ -1320,7 +1310,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V36.3 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V36.9 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
@@ -1379,6 +1369,7 @@ async def on_message(message):
 
     # Priority 1 Direct Address Trigger
     if mentioned or replied_to_bot or named:
+        replied_message_ids.add(message.id)
         job = PendingJob(
             priority_tier=1, 
             timestamp=now, 
