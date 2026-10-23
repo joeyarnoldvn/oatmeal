@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Gemini's Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 35.0 (Definitive Synthesis & Complete Restoration Edition)
+Oatmeal AI – Joey Arnold Discord Bot (#4059)
+Master Production Version 35.1 (Tenor GIF Embed Fix Edition)
 
-- Complete media engine (Tenor CDN + Pollinations + YouTube + stickers)
+- Complete media engine (Tenor native links + Pollinations + YouTube + stickers)
 - Full process_job with surgical timeline + live search + moods
 - Master Traffic Engine with continuous coroutine pacing & sequential zero-token cutover
 - True infinite forward chronological self-mirrors (P7 media + P8 text) starting from oldest bot message (success-only cursors)
@@ -39,7 +39,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V35.0 -- Master Continuous Traffic Engine Operating")
+        self.wfile.write(b"Oatmeal AI V35.1 -- Master Continuous Traffic Engine Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -549,6 +549,33 @@ async def get_wild_media(guild: Optional[discord.Guild] = None, priority_tier: i
     url = await fetch_tenor_gif("reaction")
     return url or random.choice(EMOTICON_POOL), None, None
 
+async def build_message_payload(reply: str, media_url: str, file_obj: Optional[discord.File], sticker: Optional[discord.Sticker], mention_prefix: str = "") -> Tuple[str, Dict[str, Any]]:
+    content = mention_prefix
+    if reply:
+        content = f"{content} {reply}".strip() if content else reply
+    
+    kwargs = {}
+    if file_obj:
+        kwargs["file"] = file_obj
+    if sticker:
+        kwargs["stickers"] = [sticker]
+
+    if media_url:
+        if "tenor.com" in media_url or "c.tenor.com" in media_url:
+            # Tenor links are sent as plain text so Discord natively unfurls the animated GIF
+            content = f"{content}\n{media_url}".strip() if content else media_url
+        elif media_url.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+            embed = discord.Embed(color=0x2b2d31)
+            embed.set_image(url=media_url)
+            kwargs["embed"] = embed
+        else:
+            content = f"{content}\n{media_url}".strip() if content else media_url
+
+    if not content and not kwargs:
+        content = "🥣"
+
+    return content, kwargs
+
 # ============================================================
 # 7. SURGICAL TIMELINE EXTRACTION + LIVE SEARCH
 # ============================================================
@@ -732,27 +759,15 @@ async def process_job(job: PendingJob):
 
     sent_ok = False
     try:
-        resolved_media = await resolve_media_url(media_url) if media_url else ""
-        kwargs = {}
-        if file_obj: kwargs["file"] = file_obj
-        if sticker: kwargs["stickers"] = [sticker]
-
-        if resolved_media and ("tenor.com" in resolved_media or "c.tenor.com" in resolved_media or resolved_media.endswith((".gif", ".png", ".jpg", ".webp"))):
-            embed = discord.Embed(color=0x2b2d31)
-            embed.set_image(url=resolved_media)
-            kwargs["embed"] = embed
-            content_to_send = reply or "…"
-        elif media_url:
-            content_to_send = f"{reply}\n{media_url}".strip()
-        else:
-            content_to_send = reply or "…"
+        mention_prefix = job.target_member.mention if job.target_member else ""
+        content_val, kwargs = await build_message_payload(reply, media_url, file_obj, sticker, mention_prefix=mention_prefix)
 
         if job.reference_message:
-            await job.reference_message.reply(content=content_to_send, mention_author=(job.priority_tier == 1), **kwargs)
+            await job.reference_message.reply(content=content_val, mention_author=(job.priority_tier == 1), **kwargs)
         elif job.target_member:
-            await job.channel.send(content=f"{job.target_member.mention} {content_to_send}".strip(), **kwargs)
+            await job.channel.send(content=content_val, **kwargs)
         else:
-            await job.channel.send(content=content_to_send, **kwargs)
+            await job.channel.send(content=content_val, **kwargs)
         sent_ok = True
     except Exception as e:
         print(f"[DISPATCH EXCEPTION P{job.priority_tier}] {e}")
@@ -810,19 +825,7 @@ async def execute_priority_2():
 
                     if target:
                         url, file_obj, sticker = await get_wild_media(guild, priority_tier=2)
-                        resolved_url = await resolve_media_url(url) if url else ""
-                        kwargs_send = {}
-                        if file_obj: kwargs_send["file"] = file_obj
-                        if sticker: kwargs_send["stickers"] = [sticker]
-
-                        if resolved_url and ("tenor.com" in resolved_url or "c.tenor.com" in resolved_url or resolved_url.endswith((".gif", ".png", ".jpg", ".webp"))):
-                            embed = discord.Embed(color=0x2b2d31)
-                            embed.set_image(url=resolved_url)
-                            kwargs_send["embed"] = embed
-                            content_val = "🥣"
-                        else:
-                            content_val = url or "🥣"
-
+                        content_val, kwargs_send = await build_message_payload("🥣", url, file_obj, sticker)
                         try:
                             await target.reply(content=content_val, mention_author=False, **kwargs_send)
                             replied_message_ids.add(target.id)
@@ -865,20 +868,9 @@ async def execute_priority_3():
                     continue
                 ch = random.choice(channels)
                 url, file_obj, sticker = await get_wild_media(guild, priority_tier=3)
-                resolved_url = await resolve_media_url(url) if url else ""
-                kwargs = {}
-                if file_obj: kwargs["file"] = file_obj
-                if sticker: kwargs["stickers"] = [sticker]
+                content_val, kwargs = await build_message_payload("", url, file_obj, sticker, mention_prefix=target.mention)
 
-                if resolved_url and ("tenor.com" in resolved_url or "c.tenor.com" in resolved_url or resolved_url.endswith((".gif", ".png", ".jpg", ".webp"))):
-                    embed = discord.Embed(color=0x2b2d31)
-                    embed.set_image(url=resolved_url)
-                    kwargs["embed"] = embed
-                    content = target.mention
-                else:
-                    content = f"{target.mention}\n{url}" if url else target.mention
-
-                await ch.send(content=content, **kwargs)
+                await ch.send(content=content_val, **kwargs)
                 print(f"[P3 DISPATCH] Tagged member {target.display_name} in #{ch.name}")
                 break
         except Exception as e:
@@ -970,21 +962,10 @@ async def execute_priority_7():
                         continue
 
                     url, file_obj, sticker = await get_wild_media(guild, priority_tier=7)
-                    resolved_url = await resolve_media_url(url) if url else ""
-                    if not (resolved_url or file_obj or sticker):
+                    if not (url or file_obj or sticker):
                         continue
 
-                    kwargs_send = {}
-                    if file_obj: kwargs_send["file"] = file_obj
-                    if sticker: kwargs_send["stickers"] = [sticker]
-
-                    if resolved_url and ("tenor.com" in resolved_url or "c.tenor.com" in resolved_url or resolved_url.endswith((".gif", ".png", ".jpg", ".webp"))):
-                        embed = discord.Embed(color=0x2b2d31)
-                        embed.set_image(url=resolved_url)
-                        kwargs_send["embed"] = embed
-                        content_val = ""
-                    else:
-                        content_val = url or ""
+                    content_val, kwargs_send = await build_message_payload("", url, file_obj, sticker)
 
                     # SUCCESS-ONLY CURSOR ADVANCEMENT PROTOCOL
                     try:
@@ -1106,20 +1087,9 @@ async def execute_priority_6_drops():
                     continue
                 ch = random.choice(channels)
                 url, file_obj, sticker = await get_wild_media(guild, priority_tier=6)
-                resolved_url = await resolve_media_url(url) if url else ""
-                kwargs = {}
-                if file_obj: kwargs["file"] = file_obj
-                if sticker: kwargs["stickers"] = [sticker]
+                content_val, kwargs = await build_message_payload("", url, file_obj, sticker)
 
-                if resolved_url and ("tenor.com" in resolved_url or "c.tenor.com" in resolved_url or resolved_url.endswith((".gif", ".png", ".jpg", ".webp"))):
-                    embed = discord.Embed(color=0x2b2d31)
-                    embed.set_image(url=resolved_url)
-                    kwargs["embed"] = embed
-                    content_val = ""
-                else:
-                    content_val = url or ""
-
-                if content_val or file_obj or sticker or "embed" in kwargs:
+                if content_val or kwargs:
                     await ch.send(content=content_val or None, **kwargs)
                     print(f"[P6 DISPATCH] Media drop posted in #{ch.name}")
                 break
@@ -1223,7 +1193,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V35.0 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V35.1 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
