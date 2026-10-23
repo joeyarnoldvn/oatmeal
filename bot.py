@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 36.9 (Forward-Chronological Bot Sweeper & Smooth Pacing Edition)
+Master Production Version 37.5 (Era-Aware Archival Recap & Multi-Purpose Elite Media Engine Edition)
 
-- Forward-chronological bot message sweepers for P7 & P8 mirroring Priority 2 logic (`msg.author == bot.user`)
-- Persistent bot cursor state tracking (`bot_media_cursors` & `bot_text_cursors`)
+- Era-aware chronological archival chat recap engine for Priority 9 spanning server history back to 2019
+- Multi-purpose elite media generator with priority-tailored probabilistic weighting (P2/P7 visuals, P3 stickers, P6 full spectrum)
+- Persistent state tracking for recap cursors (`recap_cursors`) and bot message sweepers
 - Continuous smooth traffic pacing targeting 20% token utilization without abrupt cliffs
-- 9-Tier Probabilistic Media Generator (Videos > Drawings > GIFs > Emoticons > Stickers > ASCII > Embed Photos > Audio/Music > Web Links)
-- Bulletproof text sanitizer (`sanitize_reply_text`) stripping markdown links and raw URLs
-- Bulletproof dual-source Bitcoin price lookup (Coinbase + CoinGecko)
+- Bulletproof text sanitizer and dual-source Bitcoin price lookup (Coinbase + CoinGecko)
 """
 
 import os
@@ -39,7 +38,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V36.9 -- Bot-Sweeper Multi-Priority Engine Operating")
+        self.wfile.write(b"Oatmeal AI V37.5 -- Era-Aware Archival Engine Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -75,12 +74,13 @@ intents.members = True
 bot = discord.Client(intents=intents)
 
 # ============================================================
-# 3. GLOBAL STATE STRUCTURES & FORWARD-CHRONOLOGICAL CURSORS
+# 3. GLOBAL STATE STRUCTURES & PERSISTENT CURSORS
 # ============================================================
 replied_message_ids: Set[int] = set()
 channel_cursors: Dict[str, int] = {}
 bot_media_cursors: Dict[str, int] = {}
 bot_text_cursors: Dict[str, int] = {}
+recap_cursors: Dict[str, int] = {}
 priority2_replied_member_ids: Set[str] = set()
 lifetime_interacted_members: Set[int] = set()
 
@@ -104,7 +104,7 @@ def p2_key(guild_id: int, author_id: int) -> str:
 
 def load_state():
     global replied_message_ids, channel_cursors, priority2_replied_member_ids
-    global blocked_users, bot_media_cursors, bot_text_cursors
+    global blocked_users, bot_media_cursors, bot_text_cursors, recap_cursors
     try:
         if os.path.exists(STATE_PATH):
             with open(STATE_PATH, "r", encoding="utf-8") as f:
@@ -113,9 +113,10 @@ def load_state():
             channel_cursors = {str(k): int(v) for k, v in data.get("cursors", {}).items()}
             bot_media_cursors = {str(k): int(v) for k, v in data.get("bot_media_cursors", {}).items()}
             bot_text_cursors = {str(k): int(v) for k, v in data.get("bot_text_cursors", {}).items()}
+            recap_cursors = {str(k): int(v) for k, v in data.get("recap_cursors", {}).items()}
             priority2_replied_member_ids = set(str(x) for x in data.get("p2_done_members", []))
             blocked_users = {str(k): float(v) for k, v in data.get("blocked_users", {}).items()}
-            print(f"[STATE] Loaded {len(replied_message_ids)} replies | Bot Media Cursors: {len(bot_media_cursors)} | Bot Text Cursors: {len(bot_text_cursors)}")
+            print(f"[STATE] Loaded {len(replied_message_ids)} replies | Recap Cursors: {len(recap_cursors)}")
     except Exception as e:
         print(f"[STATE] Fresh start initialized: {e}")
 
@@ -129,6 +130,7 @@ def save_state():
                 "cursors": channel_cursors,
                 "bot_media_cursors": bot_media_cursors,
                 "bot_text_cursors": bot_text_cursors,
+                "recap_cursors": recap_cursors,
                 "p2_done_members": list(priority2_replied_member_ids),
                 "blocked_users": blocked_users,
             }
@@ -445,7 +447,7 @@ WORD_NUMBERS = {
 }
 
 # ============================================================
-# 6. 9-TIER PROBABILISTIC MEDIA ENGINE
+# 6. MULTI-PURPOSE ELITE MEDIA ENGINE
 # ============================================================
 SEED_WORDS = [
     "star wars", "90s nostalgia", "power rangers", "ninja turtles", "vhs tape",
@@ -597,12 +599,22 @@ async def get_wild_media_hybrid(
             return url, None, None
 
     query_prompt = None
-    if allow_tokens and chat_context and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4):
+    if allow_tokens and chat_context and get_trajectory_metrics()["usage"] < 0.70 and priority_tier in (1, 4, 7, 8):
         query_prompt = await generate_token_assisted_media_prompt(chat_context)
 
-    # 9-Tier Probabilistic Choices & Weights (Videos > Drawings > GIFs > Emoticons > Stickers > ASCII > Embed Photos > Audio/Music > Web Links)
-    choices = ["youtube", "image", "tenor", "emoticon", "sticker", "ascii", "embed_photo", "audio", "weblink"]
-    weights = [30,       25,      20,      10,          6,         4,       3,             2,       1]
+    # Tailor probabilistic choices and weights based on priority tier (Elite Multi-Purpose Engine)
+    if priority_tier in (2, 7):  # Historical media sweepers (high visual impact)
+        choices = ["tenor", "image", "youtube", "embed_photo"]
+        weights = [45,      30,      15,        10]
+    elif priority_tier == 3:  # Member tagging (interactive / playful)
+        choices = ["sticker", "emoticon", "image"]
+        weights = [50,       35,         15]
+    elif priority_tier == 6:  # Spontaneous drops (full spectrum)
+        choices = ["youtube", "image", "tenor", "emoticon", "sticker", "ascii", "embed_photo", "audio", "weblink"]
+        weights = [25,       25,      20,      10,          8,         4,       4,             2,       2]
+    else:  # General / P1 / P4 / P5
+        choices = ["youtube", "image", "tenor", "emoticon", "sticker", "ascii", "embed_photo", "audio", "weblink"]
+        weights = [30,       25,      20,      10,          6,         4,       3,             2,       1]
     
     choice = random.choices(choices, weights=weights, k=1)[0]
 
@@ -1221,10 +1233,10 @@ async def execute_priority_6_drops():
 
 async def execute_priority_9():
     await bot.wait_until_ready()
-    print("[COROUTINE INITIALIZED] Priority 9: Periodic Chat Recap")
+    print("[COROUTINE INITIALIZED] Priority 9: Era-Aware Archival Chat Recap Engine")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(9)
-        delay = random.uniform(300, 900) * engine["freq_multiplier"]
+        delay = random.uniform(120, 300) * engine["freq_multiplier"]
         await asyncio.sleep(delay)
 
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
@@ -1235,30 +1247,54 @@ async def execute_priority_9():
                 channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if not channels:
                     continue
-                ch = random.choice(channels)
+                random.shuffle(channels)
+                ch = channels[0]
 
-                chat_lines = []
-                try:
-                    async for msg in ch.history(limit=40):
-                        if msg.author.bot or not msg.content:
-                            continue
-                        chat_lines.append(f"{msg.author.display_name}: {msg.content}")
-                except Exception:
+                cursor = recap_cursors.get(f"recap_{ch.id}", 0)
+                kwargs = {"limit": 50, "oldest_first": True}
+                if cursor > 0:
+                    kwargs["after"] = discord.Object(id=cursor)
+
+                raw_messages = []
+                last_msg_id = cursor
+                batch_year = "Unknown Era"
+
+                async for msg in ch.history(**kwargs):
+                    last_msg_id = msg.id
+                    if msg.author.bot or not msg.content:
+                        continue
+                    
+                    if msg.created_at:
+                        batch_year = str(msg.created_at.year)
+
+                    clean_content = msg.content.strip()
+                    if len(clean_content.split()) < 3 and not any(k in clean_content.lower() for k in ("joey", "oatmeal", "vhs", "archive", "stark")):
+                        continue
+
+                    raw_messages.append(f"[{msg.author.display_name}]: {clean_content[:150]}")
+
+                if last_msg_id != cursor:
+                    recap_cursors[f"recap_{ch.id}"] = last_msg_id
+                    save_state()
+
+                if len(raw_messages) < 5:
+                    if cursor != 0:
+                        recap_cursors[f"recap_{ch.id}"] = 0
+                        save_state()
                     continue
 
-                if not chat_lines:
-                    continue
-
-                chat_history_text = "\n".join(reversed(chat_lines))
+                chat_history_text = "\n".join(raw_messages[:30])
 
                 system_prompt = (
                     f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n"
-                    "You are generating a chat recap. You MUST output your response in exactly two lines:\n"
-                    "Line 1: Oatmeal Recap.\n"
-                    "Line 2: A short, punchy, in-character summary of the recent chat above.\n"
-                    "No media, text only."
+                    f"You are archiving historical chat logs from the server era of {batch_year}. "
+                    "Your mission is to unearth lost moments, jokes, or project threads from these logs.\n"
+                    "You MUST output your response in exactly two lines:\n"
+                    f"Line 1: Oatmeal Recap ({batch_year} Archive).\n"
+                    "Line 2: A sharp, punchy, in-character reflection connecting this old chat history to Joey's workaholic archival mindset.\n"
+                    "No media, text only. Avoid generic clichés."
                 )
-                user_prompt = f"Recent chat history:\n{chat_history_text}\n\nSummarize this chat."
+                user_prompt = f"Server Archive Batch ({batch_year}):\n{chat_history_text}\n\nExcavate this chapter of the attic logs."
 
                 def _call():
                     return ai_client.chat.completions.with_raw_response.create(
@@ -1267,7 +1303,7 @@ async def execute_priority_9():
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
-                        temperature=0.8,
+                        temperature=0.85,
                         max_tokens=calculate_dynamic_max_tokens(9),
                     )
 
@@ -1279,19 +1315,19 @@ async def execute_priority_9():
                 update_plane_alpha_from_response(raw_response=raw)
                 resp = raw.parse()
                 recap_text = resp.choices[0].message.content.strip() if resp.choices else ""
-                actual_tokens = getattr(resp.usage, "total_tokens", 60) if hasattr(resp, "usage") else 60
+                actual_tokens = getattr(resp.usage, "total_tokens", 70) if hasattr(resp, "usage") else 70
                 track_token_usage_real(actual_tokens)
 
                 lines = [l.strip() for l in recap_text.splitlines() if l.strip()]
                 if len(lines) >= 2:
-                    formatted_recap = f"Oatmeal Recap.\n{lines[1]}"
+                    formatted_recap = f"{lines[0]}\n{lines[1]}"
                 elif len(lines) == 1:
-                    formatted_recap = f"Oatmeal Recap.\n{lines[0]}"
+                    formatted_recap = f"Oatmeal Recap ({batch_year}).\n{lines[0]}"
                 else:
-                    formatted_recap = "Oatmeal Recap.\nNothing much happening in the attic right now."
+                    formatted_recap = f"Oatmeal Recap ({batch_year}).\nThe attic tapes from this era remain classified."
 
                 await ch.send(content=formatted_recap)
-                print(f"[P9 RECAP DISPATCH] Posted chat recap in #{ch.name}")
+                print(f"[P9 ARCHIVE RECAP DISPATCH] Posted {batch_year} historical recap in #{ch.name}")
                 break
         except Exception as e:
             print(f"[P9 COROUTINE EXCEPTION] {e}")
@@ -1310,7 +1346,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V36.9 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V37.5 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
