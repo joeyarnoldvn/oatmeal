@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 36.2 (Priority 2 Media-Only & 1% Link Frequency Edition)
+Master Production Version 36.3 (Anti-Loop Text Sanitizer & Guaranteed Media Edition)
 
+- Bulletproof text sanitizer (`sanitize_reply_text`) stripping all markdown links and raw URLs from AI text responses
+- Guaranteed clean media embedding with automatic Pollinations AI / emoticon fallback for unresolvable links
 - Priority 2 strictly restricted to media-only posts (zero text/banter)
 - Web links restricted to <=1% frequency in the hybrid media generator (99% GIFs/images/stickers/emoticons)
 - Multi-source search engine active exclusively in Priorities 1 and 4
-- Tenor link URL hiding via clean Discord embeds (`resolve_media_url` integration)
-- Fully flexible, dynamic hybrid media generator (zero-token internet word-mesh + token-assisted AI prompts)
 - Anti-repetition state tracking (recent media URLs, sticker IDs, and text hashes)
 - Master Traffic Engine with continuous coroutine pacing & sequential zero-token cutover
 - Infinite forward chronological self-mirrors (P7 media + P8 text) starting from oldest bot message
@@ -44,7 +44,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V36.2 -- Priority Media Engine Operating")
+        self.wfile.write(b"Oatmeal AI V36.3 -- Anti-Loop Media Engine Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -487,6 +487,18 @@ def get_zero_token_text() -> str:
             return candidate
     return random.choice(ZERO_TOKEN_BANTER_POOL)
 
+def sanitize_reply_text(text: str) -> str:
+    """Anti-Loop Sanitizer: Strips raw URLs and converts markdown links [Text](URL) -> Text."""
+    if not text:
+        return ""
+    # Remove raw URLs
+    text = re.sub(r'https?://\S+', '', text)
+    # Convert markdown links [Text](URL) to just Text
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    # Clean up excess whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
 async def resolve_media_url(url: str) -> str:
     if not url or "tenor.com" not in url:
         return url
@@ -605,9 +617,10 @@ async def get_wild_media_hybrid(
     return url or random.choice(EMOTICON_POOL), None, None
 
 async def build_message_payload(reply: str, media_url: str, file_obj: Optional[discord.File], sticker: Optional[discord.Sticker], mention_prefix: str = "") -> Tuple[str, Dict[str, Any]]:
+    clean_reply = sanitize_reply_text(reply)
     content = mention_prefix
-    if reply:
-        content = f"{content} {reply}".strip() if content else reply
+    if clean_reply:
+        content = f"{content} {clean_reply}".strip() if content else clean_reply
     
     kwargs = {}
     if file_obj:
@@ -617,10 +630,18 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
 
     if media_url:
         resolved_media = await resolve_media_url(media_url)
-        if "tenor.com" in media_url or resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+        # If we have a direct image or Tenor CDN URL, embed it cleanly
+        if resolved_media and (resolved_media.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")) or "c.tenor.com" in resolved_media or "giphy.com" in resolved_media):
             embed = discord.Embed(color=0x2b2d31)
             embed.set_image(url=resolved_media)
             kwargs["embed"] = embed
+        elif "tenor.com" in media_url or "youtube.com" in media_url:
+            # If resolution failed to get a direct image file, generate a Pollinations drawing instead of showing a broken embed or raw link
+            f = await fetch_pollinations(clean_reply or "retro 90s aesthetic")
+            if f:
+                kwargs["file"] = f
+            else:
+                content = f"{content} 🥣".strip()
         else:
             content = f"{content}\n{media_url}".strip() if content else media_url
 
@@ -1299,7 +1320,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V36.2 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V36.3 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
