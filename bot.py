@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 44.0 (Fully Restored & Optimized Archival Edition)
+Master Production Version 44.2 (Bugfix & URL Sanitization Edition)
 
-- Fixed malformed URL strings for Bitcoin and DuckDuckGo search.
-- Priorities 2 & 3 are strictly media-only (diverse random media: YouTube, Tenor GIF, Pollinations AI, Wikimedia/Pixabay CDN photos, audio, web links, and stickers) with zero text or emoticon fallback spam.
-- Robust cursor reset and pagination logic for Priorities 7 & 8 bot sweepers.
-- Enhanced traffic governor and token scaling across all 9 priority coroutines.
-- Massive multi-batch historical archival engine for Priority 9.
+- Fixed corrupted markdown URL strings in Coinbase, CoinGecko, and DuckDuckGo API requests.
+- Optimized 9-tier priority traffic governor, token scaling, and robust cursor persistence.
+- Diversified media engine (YouTube, Tenor GIF, Pollinations AI, Wikimedia/Pixabay photos, audio, web links, stickers).
+- Strict non-refusal persona and archival workflow intact.
 """
 
 import os
@@ -37,7 +36,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V44.0 -- Archival Engine & Media Operating")
+        self.wfile.write(b"Oatmeal AI V44.2 -- Archival Engine & Media Operating")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -187,7 +186,7 @@ def call_groq_rest(messages: List[Dict[str, str]], max_tokens: int = 300, temper
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
-        "User-Agent": "OatmealAI/44.0"
+        "User-Agent": "OatmealAI/44.2"
     }
     payload = {
         "model": MODEL_NAME,
@@ -420,13 +419,6 @@ ZERO_TOKEN_BANTER_POOL = [
     "Nostalgia hits harder than a SNES cartridge push.",
 ]
 
-ASCII_ART_POOL = [
-    "```text\n  /\\_/\\\n ( o.o )\n  > ^ <\n```",
-    "```text\n  _____ _         _ \n / ____| |       | |\n| (___ | |_ _   _| |\n \\___ \\| __| | | | |\n ____) | |_| |_| | |\n|_____/ \\__|\\__,_|_|\n```",
-    "```text\n     ___ \n    /   \\\n    | O |\n    \\___/\n     | |\n    /|_|\\\n   / | | \\\n     | |\n    /   \\\n   /     \\\n```",
-    "```text\n  ___ _           _      _ \n / __| |_ ___ _ _| |__ LAYER\n \\__ \\  _/ -_) '_| / _` | |\n |___/\\__\\___|_| |_\\__,_|_|\n```"
-]
-
 WORD_NUMBERS = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -435,9 +427,6 @@ WORD_NUMBERS = {
     "nineteen": 19, "twenty": 20, "twenty-one": 21, "twenty one": 21,
 }
 
-# ============================================================
-# 6. DIVERSE MEDIA ENGINE & STABLE PHOTO EMBEDS
-# ============================================================
 SEED_WORDS = [
     "star wars", "90s nostalgia", "power rangers", "ninja turtles", "vhs tape",
     "arcade cabinet", "retro basketball", "matrix dodge", "robin williams",
@@ -623,9 +612,6 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
 
     return content, kwargs
 
-# ============================================================
-# 7. SURGICAL TIMELINE EXTRACTION + LIVE SEARCH & BITCOIN
-# ============================================================
 def extract_relevant_context(prompt: str) -> str:
     if not prompt:
         return SHORT_IDENTITY
@@ -719,9 +705,6 @@ async def fetch_live_context(query: str) -> str:
 
     return ""
 
-# ============================================================
-# 8. CORE PROCESSOR
-# ============================================================
 async def process_job(job: PendingJob):
     global last_api_call_timestamp
 
@@ -852,9 +835,6 @@ async def process_job(job: PendingJob):
             priority2_replied_member_ids.add(p2_key(job.reference_message.guild.id, job.reference_message.author.id))
             save_state()
 
-# ============================================================
-# 9. PRIORITY COROUTINE WORKERS (P1 - P9)
-# ============================================================
 async def execute_priority_2():
     await bot.wait_until_ready()
     print("[COROUTINE INITIALIZED] Priority 2: Forward Historical Backlog (Media Only)")
@@ -1193,9 +1173,6 @@ async def execute_priority_9():
         except Exception as e:
             print(f"[P9 COROUTINE EXCEPTION] {e}")
 
-# ============================================================
-# 10. EVENT HANDLERS & WORKER DISPATCHER
-# ============================================================
 async def delay_queue_worker():
     while True:
         job = await delay_queue.get()
@@ -1207,7 +1184,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V44.0 Master Engine logged in as {bot.user}")
+    print(f" Oatmeal AI V44.2 Master Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
@@ -1264,7 +1241,6 @@ async def on_message(message):
 
     named = any(k in content_lower for k in ("joey", "arnold", "oatmeal", "joeyarnoldvn", "ojawall"))
 
-    # Priority 1 Direct Address Trigger
     if mentioned or replied_to_bot or named:
         replied_message_ids.add(message.id)
         job = PendingJob(
