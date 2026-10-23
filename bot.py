@@ -1,12 +1,12 @@
-#!/usr/init/env python3
+#!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Version 47.0 (Robust Media Engine, Fixed Search & Coroutine Correction)
+Master Production Version 47.1 (Fixed Search URLs, Enhanced Priorities 1 & 4 Search & Robust Media Engine)
 
-- Fixed malformed markdown URLs in Coinbase, CoinGecko, Wikipedia, and DuckDuckGo search requests.
-- Implemented dual-mode MEDIA Engine (CUSTOM vs RANDOM) supporting all 9 media categories (Videos, GIFs, Photos, Drawings, Audio, Web Links, ASCII Art, Emoticons, Stickers).
-- Repaired search triggers for Priorities 1 & 4 (keywords: GOOGLE, SEARCH, LOOK, FIND, LOCATE, DUCKDUCKGO, BITCOIN, etc.) and bypassed anti-hallucination guard for live web data.
-- Enhanced Coroutine Correction exponential backoff (2X delay scaling up to 20 retries with progressive throttling) to eliminate fallback and duplicate spam.
+- Fixed corrupted markdown URLs in Coinbase, CoinGecko, Wikipedia, and DuckDuckGo search requests.
+- Enhanced search triggers and execution for Priorities 1 & 4 (keywords: GOOGLE, SEARCH, LOOK, FIND, LOCATE, DUCKDUCKGO, BITCOIN, PRICE, etc.).
+- Implemented dual-mode MEDIA Engine (CUSTOM vs RANDOM) supporting all 9 media categories.
+- Enhanced Coroutine Correction exponential backoff (2X delay up to 20 retries) to eliminate fallback/duplicate spam.
 - Model pinned to openai/gpt-oss-120b.
 """
 
@@ -38,7 +38,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Oatmeal AI V47.0 -- Robust Media Engine & Search Fix")
+        self.wfile.write(b"Oatmeal AI V47.1 -- Fixed Search & Robust Media Engine")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -182,7 +182,7 @@ def call_groq_rest(messages: List[Dict[str, str]], max_tokens: int = 300, temper
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
-        "User-Agent": "OatmealAI/47.0"
+        "User-Agent": "OatmealAI/47.1"
     }
     payload = {
         "model": MODEL_NAME,
@@ -527,14 +527,13 @@ async def fetch_gif_media(query: str = None) -> Optional[str]:
             await asyncio.sleep(0.1)
     return "https://tenor.com/view/cat-vibing-gif-22441235"
 
-# Category 3: Photos (Picsum, Wikimedia, Imgur, Pixabay)
+# Category 3: Photos (Picsum, Wikimedia, etc.)
 async def fetch_photo_media() -> str:
-    # Attempt Wikimedia Commons
     try:
         query = random.choice(SEED_WORDS)
         encoded = urllib.parse.quote(query)
         url = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch={encoded}&gsrnamespace=6&gsrlimit=10&prop=imageinfo&iiprop=url&format=json"
-        req = urllib.request.Request(url, headers={"User-Agent": "OatmealAI/47.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "OatmealAI/47.1"})
         data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
         pages = data.get("query", {}).get("pages", {})
         urls = []
@@ -552,7 +551,6 @@ async def fetch_photo_media() -> str:
     except Exception:
         pass
 
-    # Backup Plan: Picsum Photos
     seed_id = random.randint(10, 99999)
     fallback_url = f"https://picsum.photos/seed/{seed_id}/1280/720"
     if fallback_url not in recent_media_urls:
@@ -573,7 +571,7 @@ async def fetch_drawing_media(prompt: str = None) -> Optional[discord.File]:
     except Exception:
         return None
 
-# Category 5: Audio / Soundtracks / Podcasts (Spotify, SoundCloud, Bandcamp, Mixcloud, Audiomack)
+# Category 5: Audio / Soundtracks / Podcasts
 async def fetch_audio_media() -> str:
     rand_chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
     track_id = "".join(random.choices(string.ascii_lowercase + string.ascii_uppercase + string.digits, k=22))
@@ -589,10 +587,10 @@ async def fetch_audio_media() -> str:
         return cand
     return cand
 
-# Category 6: Web Links (Wikipedia, Archive.org, NASA)
+# Category 6: Web Links
 async def fetch_weblink_media() -> str:
     try:
-        req = urllib.request.Request("https://en.wikipedia.org/api/rest_v1/page/random/summary", headers={"User-Agent": "OatmealAI/47.0"})
+        req = urllib.request.Request("https://en.wikipedia.org/api/rest_v1/page/random/summary", headers={"User-Agent": "OatmealAI/47.1"})
         data = json.loads(urllib.request.urlopen(req, timeout=4).read().decode("utf-8", "ignore"))
         wiki_url = data.get("content_urls", {}).get("desktop", {}).get("page")
         if wiki_url and wiki_url not in recent_media_urls:
@@ -617,7 +615,7 @@ async def fetch_emoticon() -> str:
     emoticons = ["¯\\_(ツ)_/¯", "(▀̿ĹM▀̿ ̿)", "( ͡° ͜ʖ ͡°)", "ʕ•ᴥ•ʔ", "(=^ ^=)", "\\m/(>_<)\\m/", "(╯°□°)╯︵ ┻━┻", "V(^_^)V", "<(^_^)>"]
     return random.choice(emoticons)
 
-# Category 9: Stickers (Discord Guild Stickers or fallback text/emoji)
+# Category 9: Stickers
 async def fetch_guild_sticker(guild: Optional[discord.Guild]) -> Optional[discord.Sticker]:
     if guild and guild.stickers:
         try:
@@ -632,45 +630,31 @@ async def get_wild_media_hybrid(
     chat_context: str = "",
     mode: str = "RANDOM"
 ) -> Tuple[str, Optional[discord.File], Optional[discord.Sticker]]:
-    """
-    Unified MEDIA Engine: dynamically switches between CUSTOM mode (search/context-aware)
-    and RANDOM mode (zero-token token-free random distribution across all 9 categories).
-    """
-    # Try sticker category (Category 9) occasionally
     if random.random() < 0.05:
         st = await fetch_guild_sticker(guild)
         if st:
             return "", None, st
 
-    # Select across categories 1 through 8
     cat_choice = random.randint(1, 8)
-
     if cat_choice == 1:
-        vid = await fetch_video_media(chat_context if mode == "CUSTOM" else None)
-        return vid, None, None
+        return await fetch_video_media(chat_context if mode == "CUSTOM" else None), None, None
     elif cat_choice == 2:
-        gif = await fetch_gif_media(chat_context if mode == "CUSTOM" else None)
-        return gif, None, None
+        return await fetch_gif_media(chat_context if mode == "CUSTOM" else None), None, None
     elif cat_choice == 3:
-        photo = await fetch_photo_media()
-        return photo, None, None
+        return await fetch_photo_media(), None, None
     elif cat_choice == 4:
         drawing = await fetch_drawing_media(chat_context if mode == "CUSTOM" else None)
         if drawing:
             return "", drawing, None
         return await fetch_photo_media(), None, None
     elif cat_choice == 5:
-        audio = await fetch_audio_media()
-        return audio, None, None
+        return await fetch_audio_media(), None, None
     elif cat_choice == 6:
-        link = await fetch_weblink_media()
-        return link, None, None
+        return await fetch_weblink_media(), None, None
     elif cat_choice == 7:
-        ascii_str = await fetch_ascii_art()
-        return ascii_str, None, None
+        return await fetch_ascii_art(), None, None
     elif cat_choice == 8:
-        emot = await fetch_emoticon()
-        return emot, None, None
+        return await fetch_emoticon(), None, None
 
     return await fetch_photo_media(), None, None
 
@@ -695,8 +679,6 @@ async def build_message_payload(reply: str, media_url: str, file_obj: Optional[d
                 embed = discord.Embed(color=0x2b2d31)
                 embed.set_image(url=resolved_media)
                 kwargs["embed"] = embed
-            elif any(d in media_url for d in ("youtube.com", "spotify.com", "soundcloud.com", "wikipedia.org", "nasa.gov", "archive.org", "bandcamp.com")):
-                content = f"{content}\n{media_url}".strip() if content else media_url
             else:
                 content = f"{content}\n{media_url}".strip() if content else media_url
 
@@ -745,7 +727,7 @@ def extract_relevant_context(prompt: str) -> str:
     return SHORT_IDENTITY
 
 # ============================================================
-# 7. REPAIRED REAL-WORLD SEARCH ENGINE
+# 7. FIXED REAL-WORLD SEARCH ENGINE (PRIORITIES 1 & 4)
 # ============================================================
 async def fetch_bitcoin_price() -> str:
     try:
@@ -864,13 +846,13 @@ async def process_job(job: PendingJob):
         temperature = 0.88 if job.priority_tier == 1 else 1.05
 
         search_triggers = (
-            "search", "search for", "find", "playing in", "theaters", "cinema", "box office",
-            "bitcoin", "btc", "crypto", "price", "weather", "news", "current", "who won",
-            "what is", "who is", "tell me about", "history of", "where were you", "headlines",
-            "google", "look", "locate", "duckduckgo"
+            "search", "search for", "google", "look", "find", "locate", "duckduckgo",
+            "playing in", "theaters", "cinema", "box office", "bitcoin", "btc", "crypto",
+            "price", "weather", "news", "current", "who won", "what is", "who is",
+            "tell me about", "history of", "where were you", "headlines", "when", "how", "why"
         )
         prompt_lower = (job.prompt_text or "").lower()
-        needs_search = job.priority_tier in (1, 4) and any(k in prompt_lower for k in search_triggers)
+        needs_search = job.priority_tier in (1, 4) and (any(k in prompt_lower for k in search_triggers) or "?" in prompt_lower)
         
         live = await fetch_live_context(job.prompt_text) if needs_search else ""
         history = extract_relevant_context(job.prompt_text) if job.priority_tier in (1, 4) else SHORT_IDENTITY
@@ -941,9 +923,6 @@ async def process_job(job: PendingJob):
         text_hash = hashlib.md5(reply.encode("utf-8")).hexdigest() if reply else ""
         is_duplicate_text = text_hash in recent_text_hashes and text_hash != ""
 
-        # COROUTINE CORRECTION RETRY SYSTEM:
-        # If fallback or duplicate detected, slow down by 2X and retry up to 20 times.
-        # Priorities 1 and 4 are immune only if direct user query was answered with search data.
         immune = (job.priority_tier in (1, 4) and job.reference_message is not None and not is_fallback)
         if (is_fallback or is_duplicate_text) and not immune and attempt < max_retries - 1:
             backoff = base_delay * (2 ** attempt)
@@ -966,7 +945,6 @@ async def process_job(job: PendingJob):
         if text_hash:
             recent_text_hashes.append(text_hash)
 
-        # MEDIA Engine selection (CUSTOM mode for Priority 1/4 with search/context, RANDOM mode for others)
         media_mode = "CUSTOM" if job.priority_tier in (1, 4) else "RANDOM"
         media_url, file_obj, sticker = "", None, None
         want_media = (job.priority_tier in (2, 3, 5, 6, 7)) or (job.priority_tier in (1, 4) and random.random() < 0.6)
@@ -1343,7 +1321,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print(f"============================================================")
-    print(f" Oatmeal AI V47.0 Robust Media Engine & Search logged in as {bot.user}")
+    print(f" Oatmeal AI V47.1 Fixed Search & Media Engine logged in as {bot.user}")
     print(f" System Time: {datetime.now(timezone.utc).isoformat()}")
     print(f"============================================================")
     load_state()
