@@ -68,7 +68,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Oatmeal AI V66.5 – Continuous Traffic Engine Active")
+            self.wfile.write(b"Oatmeal AI V66.5 - Continuous Traffic Engine Active")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -192,7 +192,6 @@ def save_state():
 # 4. LIVE WEB SEARCH (SANITIZED QUERY & TTL CACHE)
 # ============================================================
 async def live_web_search(query: str) -> str:
-    # Clean discord mentions, markdown, and unwanted symbols
     cleaned_query = re.sub(r'<@!?\d+>', '', query)
     cleaned_query = re.sub(r'[#_*`~<>\[\]()@]', ' ', cleaned_query)
     cleaned_query = re.sub(r'\s+', ' ', cleaned_query).strip()
@@ -200,7 +199,6 @@ async def live_web_search(query: str) -> str:
     q_key = cleaned_query.lower()
     now = time.time()
     
-    # Prune expired search cache entries to prevent memory growth
     expired_keys = [k for k, (ts, _) in search_cache.items() if now - ts > 300]
     for k in expired_keys:
         search_cache.pop(k, None)
