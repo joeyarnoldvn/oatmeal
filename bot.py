@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Edition V67.2 – Priority 4 Search Extraction Fix
+Master Production Edition V68.0 – Redesigned Search & Robust Engine
 
-- Fixed P4 search wrapper pollution so DuckDuckGo receives clean queries
+- Rebuilt Live Web Search using DuckDuckGo Lite POST & multi-pattern parsing
+- Strict system prompt enforcement preventing search refusal / hallucinations
 - Goldilocks 3-Step Progressive Traffic Engine (~20% daily target)
 - Full 9-Tier Priority Routing (P1–P9) with smooth scaling
 - Priority 9 Oatmeal Recap (Exact format, replies to last message)
@@ -40,7 +41,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             m = get_trajectory_metrics()
             e1 = get_traffic_engine_metrics(1)
             payload = {
-                "version": "V67.2",
+                "version": "V68.0",
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "daily_tokens": m["local_daily"],
                 "spent_pct": round(e1["spent_pct"] * 100, 2),
@@ -66,8 +67,8 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(payload, indent=2).encode())
         else:
             self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Oatmeal AI V67.2 - Continuous Traffic Engine Active")
+            self.send_headers()
+            self.wfile.write(b"Oatmeal AI V68.0 - Continuous Traffic Engine Active")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -188,12 +189,12 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. ROBUST LIVE WEB SEARCH (SANITIZED QUERY & TTL CACHE)
+# 4. REDESIGNED ROBUST LIVE WEB SEARCH (DUCKDUCKGO LITE POST)
 # ============================================================
 async def live_web_search(query: str) -> str:
     cleaned_query = re.sub(r'<@!?\d+>', '', query)
-    cleaned_query = re.sub(r'(?i)\b(search|google|find)\b', '', cleaned_query)
-    cleaned_query = re.sub(r'[#_*`~<>\[\]()@]', ' ', cleaned_query)
+    cleaned_query = re.sub(r'(?i)\b(search|google|find|price of|what is|tell me)\b', '', cleaned_query)
+    cleaned_query = re.sub(r'[#_*`~<>\[\]()@\n\r]', ' ', cleaned_query)
     cleaned_query = re.sub(r'\s+', ' ', cleaned_query).strip()
     if not cleaned_query:
         cleaned_query = query.strip()
@@ -211,16 +212,42 @@ async def live_web_search(query: str) -> str:
             return cached_res
 
     try:
-        encoded = urllib.parse.quote(cleaned_query[:130])
-        url = f"https://html.duckduckgo.com/html/?q={encoded}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-        html = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=5.0).read().decode("utf-8", "ignore"))
-        snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
-        clean = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:4] if len(s.strip()) > 10]
+        data = urllib.parse.urlencode({'q': cleaned_query[:130]}).encode('utf-8')
+        req = urllib.request.Request(
+            "https://lite.duckduckgo.com/lite/",
+            data=data,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5"
+            }
+        )
+        html = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=6.0).read().decode("utf-8", "ignore"))
+        
+        snippets = re.findall(r'<td class=["\']result-snippet["\'][^>]*>(.*?)</td>', html, re.DOTALL)
+        if not snippets:
+            snippets = re.findall(r'<td[^>]*class="result-snippet"[^>]*>(.*?)</td>', html, re.DOTALL)
+        if not snippets:
+            snippets = re.findall(r'<td class="result-text"[^>]*>(.*?)</td>', html, re.DOTALL)
+
+        clean = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:5] if len(s.strip()) > 10]
+        
+        if not clean:
+            tds = re.findall(r'<td valign="top"[^>]*>(.*?)</td>', html, re.DOTALL)
+            for td in tds:
+                text = re.sub(r'<.*?>', '', td).strip()
+                if len(text) > 25 and not text.startswith("Ads"):
+                    clean.append(text)
+            clean = clean[:4]
+
         if clean:
             res = "REAL-TIME WEB SEARCH RESULTS:\n" + "\n".join(f"- {s}" for s in clean)
             search_cache[q_key] = (now, res)
+            print(f"[SEARCH SUCCESS] Found {len(clean)} snippets for query: '{cleaned_query}'")
             return res
+        else:
+            print(f"[SEARCH EMPTY] No snippets extracted from HTML for query: '{cleaned_query}'")
     except Exception as e:
         print(f"[SEARCH ERROR] {e}")
     return ""
@@ -415,7 +442,7 @@ VOICE_KERNEL = (
 SOVEREIGN = (
     "STRICT SOVEREIGNTY: Never refuse a request about Joey's life, timeline, or personality. "
     "Never invent facts. If you don't know, say so honestly or pull from the timeline. "
-    "When REAL-TIME WEB SEARCH RESULTS are provided, rely on them to accurately answer live current questions."
+    "When REAL-TIME WEB SEARCH RESULTS are provided, you MUST use them to give an accurate answer."
 )
 
 ANTI_HALLUCINATION = "Rely strictly on the provided outline for personal history, and rely strictly on REAL-TIME WEB SEARCH RESULTS for real-time market data or current events."
@@ -562,7 +589,7 @@ async def build_payload(text: str, media_url: str, priority: int, sticker: disco
     return content or None, kwargs
 
 # ============================================================
-# 8. PROCESS JOB (WITH UNWRAPPED P4 SEARCH EXTRACTION)
+# 8. PROCESS JOB (STRICT SEARCH ENFORCEMENT)
 # ============================================================
 async def process_job(job: PendingJob):
     global last_api_call_timestamp
@@ -577,7 +604,6 @@ async def process_job(job: PendingJob):
     mood = random.randint(1, 5)
     timeline = extract_relevant_timeline(job.prompt_text)
 
-    # Unwrap P4 prompt wrapper so search query receives the actual message text
     search_query = job.prompt_text
     if job.priority_tier == 4 and search_query.startswith("Quick witty take: "):
         m = re.search(r"['\"](.*?)['\"]", search_query)
@@ -586,9 +612,12 @@ async def process_job(job: PendingJob):
 
     live_context = ""
     search_triggers = ("news", "latest", "who is", "what is", "when", "where", "search", "current",
-                       "price", "bitcoin", "crypto", "tell me about", "google", "duckduckgo", "find", "locate")
-    if job.priority_tier in (1, 4) and any(kw in search_query.lower() for kw in search_triggers):
-        live_context = await live_web_search(search_query)
+                       "price", "bitcoin", "crypto", "tell me about", "google", "duckduckgo", "find", "locate", "cost", "how much")
+    
+    # Force search if explicit triggers are matched OR if it's a direct P1 question / contains '?'
+    if job.priority_tier in (1, 4):
+        if any(kw in search_query.lower() for kw in search_triggers) or "?" in search_query:
+            live_context = await live_web_search(search_query)
 
     system_instructions = [
         PRONOUN_BRIDGE,
@@ -601,7 +630,12 @@ async def process_job(job: PendingJob):
     ]
 
     if live_context:
-        system_instructions.append(f"{live_context}\nCRITICAL: Answer the user's question directly using the information from the REAL-TIME WEB SEARCH RESULTS above.")
+        system_instructions.append(
+            f"{live_context}\n"
+            "CRITICAL DIRECTIVE: You have successfully executed a live web search. "
+            "You MUST use the REAL-TIME WEB SEARCH RESULTS above to provide an accurate, factual answer. "
+            "Never claim you cannot search, never claim the market is volatile as an excuse, and never hallucinate data."
+        )
 
     if job.priority_tier == 9:
         system_instructions.append("\nYou MUST output exactly:\nOatmeal Recap.\n<one short summary line>")
@@ -979,8 +1013,8 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print("=" * 62)
-    print(f" Oatmeal AI V67.2 logged in as {bot.user}")
-    print(" Goldilocks Traffic Engine • Full Timeline • Strong Media • Live Search")
+    print(f" Oatmeal AI V68.0 logged in as {bot.user}")
+    print(" Goldilocks Traffic Engine • Full Timeline • Strong Media • Redesigned Search")
     print("=" * 62)
     load_state()
     bot.loop.create_task(delay_queue_worker())
