@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Edition V69.1 – Search & Cursor Fixes
+Master Production Edition V69.2 – Syntax & Search Engine Fixes
 
+- Fixed HTTP telemetry server byte literal encoding (resolved non-ASCII deployment syntax error)
 - Restored 30-second activity pause
-- Fixed P4 search unwrapping so search works flawlessly for P1 & P4
-- Fixed P8 cursor tracking to prevent message reprocessing loops
+- Robust P1 & P4 real-time search unwrapping and execution
+- Fixed P8 cursor tracking & message loop prevention
 - Strict timeline adherence & anti-hallucination enforcement
 - Goldilocks 3-Step Progressive Traffic Engine (~20% daily target)
 - Full 9-Tier Priority Routing with continuous pacing
@@ -41,7 +42,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             m = get_trajectory_metrics()
             e1 = get_traffic_engine_metrics(1)
             payload = {
-                "version": "V69.1",
+                "version": "V69.2",
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "daily_tokens": m["local_daily"],
                 "spent_pct": round(e1["spent_pct"] * 100, 2),
@@ -52,7 +53,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps(payload, indent=2).encode())
+            self.wfile.write(json.dumps(payload, indent=2).encode("utf-8"))
         elif self.path == "/state":
             payload = {
                 "replied_count": len(replied_message_ids),
@@ -65,11 +66,11 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps(payload, indent=2).encode())
+            self.wfile.write(json.dumps(payload, indent=2).encode("utf-8"))
         else:
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Oatmeal AI V69.1 – Active & Optimized")
+            self.wfile.write("Oatmeal AI V69.2 – Active & Optimized".encode("utf-8"))
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -968,7 +969,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print("=" * 62)
-    print(f" Oatmeal AI V69.1 logged in as {bot.user}")
+    print(f" Oatmeal AI V69.2 logged in as {bot.user}")
     print(" Search Refusal Fixed • 30s Activity Pause • Timeline Verified")
     print("=" * 62)
     load_state()
