@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Edition V66.5 – Definitive Unbroken Release
+Master Production Edition V67.1 – Priority Loop & Starvation Fix
 
+- Fixed P4/P5 infinite message looping by instantly locking replied message IDs
 - Goldilocks 3-Step Progressive Traffic Engine (~20% daily target)
 - Full 9-Tier Priority Routing (P1–P9) with smooth scaling
 - Priority 9 Oatmeal Recap (Exact format, replies to last message)
-- P7 & P8 Forward-Chronological Self-Mirrors (Priority 2 cursor pagination)
-- Live DuckDuckGo Web Search with Sanitized Query, TTL Cache & Header Re-Sync
-- Optimized 9-Category Wild Media Engine with dynamic category re-rolling
+- P7, P8 & P9 Forward-Chronological Cursor System
 - 30-second activity pause & 30-day spam lock
 - Atomic state persistence & telemetry server on port 10000
 """
@@ -41,7 +40,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             m = get_trajectory_metrics()
             e1 = get_traffic_engine_metrics(1)
             payload = {
-                "version": "V66.5",
+                "version": "V67.1",
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "daily_tokens": m["local_daily"],
                 "spent_pct": round(e1["spent_pct"] * 100, 2),
@@ -68,7 +67,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Oatmeal AI V66.5 - Continuous Traffic Engine Active")
+            self.wfile.write(b"Oatmeal AI V67.1 - Continuous Traffic Engine Active")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -128,7 +127,7 @@ WINDOW_SECONDS = {5: 300, 15: 900, 60: 3600}
 
 groq_api_lock = asyncio.Lock()
 last_api_call_timestamp = 0.0
-ACTIVITY_PAUSE = 30  # seconds – strict user preference restored
+ACTIVITY_PAUSE = 30  # seconds
 
 @dataclass(order=True)
 class PendingJob:
@@ -189,12 +188,15 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. LIVE WEB SEARCH (SANITIZED QUERY & TTL CACHE)
+# 4. ROBUST LIVE WEB SEARCH (SANITIZED QUERY & TTL CACHE)
 # ============================================================
 async def live_web_search(query: str) -> str:
     cleaned_query = re.sub(r'<@!?\d+>', '', query)
+    cleaned_query = re.sub(r'(?i)\b(search|google|find|price of|what is|tell me)\b', '', cleaned_query)
     cleaned_query = re.sub(r'[#_*`~<>\[\]()@]', ' ', cleaned_query)
     cleaned_query = re.sub(r'\s+', ' ', cleaned_query).strip()
+    if not cleaned_query:
+        cleaned_query = query.strip()
 
     q_key = cleaned_query.lower()
     now = time.time()
@@ -212,15 +214,15 @@ async def live_web_search(query: str) -> str:
         encoded = urllib.parse.quote(cleaned_query[:130])
         url = f"https://html.duckduckgo.com/html/?q={encoded}"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-        html = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=4.0).read().decode("utf-8", "ignore"))
+        html = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=5.0).read().decode("utf-8", "ignore"))
         snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.DOTALL)
-        clean = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:3] if len(s.strip()) > 15]
+        clean = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:4] if len(s.strip()) > 10]
         if clean:
-            res = "Live context:\n" + "\n".join(f"- {s}" for s in clean)
+            res = "REAL-TIME WEB SEARCH RESULTS:\n" + "\n".join(f"- {s}" for s in clean)
             search_cache[q_key] = (now, res)
             return res
     except Exception as e:
-        print(f"[SEARCH] {e}")
+        print(f"[SEARCH ERROR] {e}")
     return ""
 
 # ============================================================
@@ -413,10 +415,10 @@ VOICE_KERNEL = (
 SOVEREIGN = (
     "STRICT SOVEREIGNTY: Never refuse a request about Joey's life, timeline, or personality. "
     "Never invent facts. If you don't know, say so honestly or pull from the timeline. "
-    "You may be hyperbolic and playful, but never fabricate real events."
+    "When REAL-TIME WEB SEARCH RESULTS are provided, rely on them to accurately answer live current questions."
 )
 
-ANTI_HALLUCINATION = "Rely strictly on the provided outline for personal history. If unknown, say so or pivot."
+ANTI_HALLUCINATION = "Rely strictly on the provided outline for personal history, and rely strictly on REAL-TIME WEB SEARCH RESULTS for real-time market data or current events."
 
 ZERO_TOKEN_BANTER = [
     "What in the Oatmeal.",
@@ -466,7 +468,7 @@ def extract_relevant_timeline(prompt: str) -> str:
     return "Relevant timeline:\n" + "\n".join(lines[:6])
 
 # ============================================================
-# 7. MEDIA ENGINE (9 CATEGORIES, DYNAMIC RE-ROLL & RETRIES)
+# 7. OVERHAULED WILD MEDIA ENGINE (DIVERSE & NO SPAM)
 # ============================================================
 async def fetch_tenor_gif(query: str) -> Optional[str]:
     try:
@@ -492,9 +494,9 @@ async def get_wild_media(priority: int = 1, guild: discord.Guild = None) -> Tupl
     random.shuffle(queries)
     
     choices = ["gif", "photo", "youtube", "audio", "sticker"]
-    weights = [42, 35, 12, 10, 1]  # Stickers down-weighted (1%)
+    weights = [45, 40, 8, 6, 1]
 
-    for attempt in range(6):  # Optimized retry loop with dynamic category re-rolling
+    for attempt in range(8):
         chosen_cat = random.choices(choices, weights=weights, k=1)[0]
         try:
             if chosen_cat == "gif":
@@ -511,22 +513,33 @@ async def get_wild_media(priority: int = 1, guild: discord.Guild = None) -> Tupl
                     return img, None, None
             elif chosen_cat == "youtube":
                 vids = [
-                    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                    "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+                    "https://www.youtube.com/watch?v=L_LUpnjgPso",
+                    "https://www.youtube.com/watch?v=fJ9rUzIMcZQ",
+                    "https://www.youtube.com/watch?v=kJQP7kiw5Fk",
+                    "https://www.youtube.com/watch?v=9bZkp7q19f0",
+                    "https://www.youtube.com/watch?v=2vjPBrBU-TM",
+                    "https://www.youtube.com/watch?v=OPf0YbXqDm0"
                 ]
-                return random.choice(vids), None, None
+                v_choice = random.choice(vids)
+                if v_choice not in recent_media_urls:
+                    recent_media_urls.append(v_choice)
+                    return v_choice, None, None
             elif chosen_cat == "audio":
                 auds = [
                     "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
-                    "https://soundcloud.com/user-983274298/oatmeal-90s-retro-beat"
+                    "https://soundcloud.com/user-983274298/oatmeal-90s-retro-beat",
+                    "https://open.spotify.com/track/0VjLj2fER3A33A6B94MfdN"
                 ]
-                return random.choice(auds), None, None
+                a_choice = random.choice(auds)
+                if a_choice not in recent_media_urls:
+                    recent_media_urls.append(a_choice)
+                    return a_choice, None, None
             elif chosen_cat == "sticker" and guild and guild.stickers:
                 stk = random.choice(guild.stickers)
                 return "", None, stk
         except Exception:
             pass
-        await asyncio.sleep(0.4 * (2.0 ** (attempt % 3)))
+        await asyncio.sleep(0.3 * (2.0 ** (attempt % 3)))
 
     fallback = f"https://picsum.photos/seed/{random.randint(1000,9999)}/600/400"
     recent_media_urls.append(fallback)
@@ -549,7 +562,7 @@ async def build_payload(text: str, media_url: str, priority: int, sticker: disco
     return content or None, kwargs
 
 # ============================================================
-# 8. PROCESS JOB (WITH LIVE SEARCH & 5-ATTEMPT RETRY CAP)
+# 8. PROCESS JOB
 # ============================================================
 async def process_job(job: PendingJob):
     global last_api_call_timestamp
@@ -570,15 +583,23 @@ async def process_job(job: PendingJob):
     if job.priority_tier in (1, 4) and any(kw in (job.prompt_text or "").lower() for kw in search_triggers):
         live_context = await live_web_search(job.prompt_text)
 
-    system = (
-        f"{PRONOUN_BRIDGE}\n{VOICE_KERNEL}\n{SOVEREIGN}\n{ANTI_HALLUCINATION}\n"
-        f"{PERSONALITY_KERNEL}\n"
-        f"MOOD: {PERSONA_MOODS[mood]}\n"
-        f"{timeline}\n"
-        f"{live_context}\n"
-    )
+    system_instructions = [
+        PRONOUN_BRIDGE,
+        VOICE_KERNEL,
+        SOVEREIGN,
+        ANTI_HALLUCINATION,
+        PERSONALITY_KERNEL,
+        f"MOOD: {PERSONA_MOODS[mood]}",
+        timeline
+    ]
+
+    if live_context:
+        system_instructions.append(f"{live_context}\nCRITICAL: Answer the user's question directly using the information from the REAL-TIME WEB SEARCH RESULTS above.")
+
     if job.priority_tier == 9:
-        system += "\nYou MUST output exactly:\nOatmeal Recap.\n<one short summary line>"
+        system_instructions.append("\nYou MUST output exactly:\nOatmeal Recap.\n<one short summary line>")
+
+    system = "\n".join(system_instructions)
 
     reply = ""
     actual_tokens = 25
@@ -614,7 +635,7 @@ async def process_job(job: PendingJob):
 
     media_url = ""
     stk = None
-    media_prob = 0.45 if job.priority_tier == 1 else 0.82
+    media_prob = 0.30 if job.priority_tier == 1 else 0.82
     if job.priority_tier in (2, 3, 5, 6, 7) or random.random() < media_prob:
         media_url, _, stk = await get_wild_media(job.priority_tier, job.channel.guild if hasattr(job.channel, 'guild') else None)
 
@@ -623,7 +644,7 @@ async def process_job(job: PendingJob):
 
     content, kwargs = await build_payload(reply, media_url, job.priority_tier, stk)
 
-    for attempt in range(5):  # Capped at 5 retries for clean responsiveness
+    for attempt in range(5):
         try:
             if job.reference_message:
                 await job.reference_message.reply(content=content, mention_author=False, **kwargs)
@@ -636,7 +657,7 @@ async def process_job(job: PendingJob):
             await asyncio.sleep(0.8 * (2.0 ** attempt))
 
 # ============================================================
-# 9. PRIORITY COROUTINES (P1–P9) - STANDARDIZED CURSOR SYSTEM
+# 9. PRIORITY COROUTINES (P1–P9) - LOOP-SAFE & STANDARDIZED
 # ============================================================
 async def execute_priority_2():
     await bot.wait_until_ready()
@@ -724,7 +745,7 @@ async def execute_priority_4():
     print("[P4] Live Chat Genie")
     while not bot.is_closed():
         engine = get_traffic_engine_metrics(4)
-        delay = random.uniform(7, 22) * engine["freq_multiplier"] * random.uniform(1.3, 2.5)
+        delay = random.uniform(15, 35) * engine["freq_multiplier"] * random.uniform(1.3, 2.5)
         await asyncio.sleep(delay)
         if time.monotonic() < DAILY_EXHAUSTED_UNTIL or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
             continue
@@ -744,6 +765,9 @@ async def execute_priority_4():
                     if target:
                         clean = re.sub(r"<@!?\d+>", "", target.content).strip()[:130]
                         if len(clean) >= 3:
+                            # FIX: Instantly mark as replied so P4 never loops on the same message
+                            replied_message_ids.add(target.id)
+                            save_state()
                             job = PendingJob(4, time.time(), ch, f"Quick witty take: '{clean}'",
                                              reference_message=target, author_id=target.author.id)
                             await delay_queue.put(job)
@@ -857,6 +881,8 @@ async def execute_priority_5():
                 async for msg in ch.history(limit=12, oldest_first=False):
                     if msg.author.bot or msg.id in replied_message_ids:
                         continue
+                    replied_message_ids.add(msg.id)
+                    save_state()
                     job = PendingJob(5, time.time(), ch, "Short reflection.", reference_message=msg, author_id=msg.author.id)
                     await delay_queue.put(job)
                     break
@@ -947,7 +973,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print("=" * 62)
-    print(f" Oatmeal AI V66.5 logged in as {bot.user}")
+    print(f" Oatmeal AI V67.1 logged in as {bot.user}")
     print(" Goldilocks Traffic Engine • Full Timeline • Strong Media • Live Search")
     print("=" * 62)
     load_state()
