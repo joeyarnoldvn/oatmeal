@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Edition V67.1 – Priority Loop & Starvation Fix
+Master Production Edition V67.2 – Priority 4 Search Extraction Fix
 
-- Fixed P4/P5 infinite message looping by instantly locking replied message IDs
+- Fixed P4 search wrapper pollution so DuckDuckGo receives clean queries
 - Goldilocks 3-Step Progressive Traffic Engine (~20% daily target)
 - Full 9-Tier Priority Routing (P1–P9) with smooth scaling
 - Priority 9 Oatmeal Recap (Exact format, replies to last message)
@@ -40,7 +40,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             m = get_trajectory_metrics()
             e1 = get_traffic_engine_metrics(1)
             payload = {
-                "version": "V67.1",
+                "version": "V67.2",
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "daily_tokens": m["local_daily"],
                 "spent_pct": round(e1["spent_pct"] * 100, 2),
@@ -67,7 +67,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Oatmeal AI V67.1 - Continuous Traffic Engine Active")
+            self.wfile.write(b"Oatmeal AI V67.2 - Continuous Traffic Engine Active")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -192,7 +192,7 @@ def save_state():
 # ============================================================
 async def live_web_search(query: str) -> str:
     cleaned_query = re.sub(r'<@!?\d+>', '', query)
-    cleaned_query = re.sub(r'(?i)\b(search|google|find|price of|what is|tell me)\b', '', cleaned_query)
+    cleaned_query = re.sub(r'(?i)\b(search|google|find)\b', '', cleaned_query)
     cleaned_query = re.sub(r'[#_*`~<>\[\]()@]', ' ', cleaned_query)
     cleaned_query = re.sub(r'\s+', ' ', cleaned_query).strip()
     if not cleaned_query:
@@ -562,7 +562,7 @@ async def build_payload(text: str, media_url: str, priority: int, sticker: disco
     return content or None, kwargs
 
 # ============================================================
-# 8. PROCESS JOB
+# 8. PROCESS JOB (WITH UNWRAPPED P4 SEARCH EXTRACTION)
 # ============================================================
 async def process_job(job: PendingJob):
     global last_api_call_timestamp
@@ -577,11 +577,18 @@ async def process_job(job: PendingJob):
     mood = random.randint(1, 5)
     timeline = extract_relevant_timeline(job.prompt_text)
 
+    # Unwrap P4 prompt wrapper so search query receives the actual message text
+    search_query = job.prompt_text
+    if job.priority_tier == 4 and search_query.startswith("Quick witty take: "):
+        m = re.search(r"['\"](.*?)['\"]", search_query)
+        if m:
+            search_query = m.group(1)
+
     live_context = ""
     search_triggers = ("news", "latest", "who is", "what is", "when", "where", "search", "current",
                        "price", "bitcoin", "crypto", "tell me about", "google", "duckduckgo", "find", "locate")
-    if job.priority_tier in (1, 4) and any(kw in (job.prompt_text or "").lower() for kw in search_triggers):
-        live_context = await live_web_search(job.prompt_text)
+    if job.priority_tier in (1, 4) and any(kw in search_query.lower() for kw in search_triggers):
+        live_context = await live_web_search(search_query)
 
     system_instructions = [
         PRONOUN_BRIDGE,
@@ -765,7 +772,6 @@ async def execute_priority_4():
                     if target:
                         clean = re.sub(r"<@!?\d+>", "", target.content).strip()[:130]
                         if len(clean) >= 3:
-                            # FIX: Instantly mark as replied so P4 never loops on the same message
                             replied_message_ids.add(target.id)
                             save_state()
                             job = PendingJob(4, time.time(), ch, f"Quick witty take: '{clean}'",
@@ -973,7 +979,7 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print("=" * 62)
-    print(f" Oatmeal AI V67.1 logged in as {bot.user}")
+    print(f" Oatmeal AI V67.2 logged in as {bot.user}")
     print(" Goldilocks Traffic Engine • Full Timeline • Strong Media • Live Search")
     print("=" * 62)
     load_state()
