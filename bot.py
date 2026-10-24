@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
 Oatmeal AI – Joey Arnold Discord Bot (#4059)
-Master Production Edition V69.2 – Syntax & Search Engine Fixes
+Master Production Edition V69.3 – Bulletproof HTML Search & Fixes
 
-- Fixed HTTP telemetry server byte literal encoding (resolved non-ASCII deployment syntax error)
+- Switched to html.duckduckgo.com GET search with robust browser headers (fixes search failures)
 - Restored 30-second activity pause
-- Robust P1 & P4 real-time search unwrapping and execution
-- Fixed P8 cursor tracking & message loop prevention
+- Fixed P4 search unwrapping & P8 cursor tracking
 - Strict timeline adherence & anti-hallucination enforcement
 - Goldilocks 3-Step Progressive Traffic Engine (~20% daily target)
 - Full 9-Tier Priority Routing with continuous pacing
@@ -42,7 +41,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             m = get_trajectory_metrics()
             e1 = get_traffic_engine_metrics(1)
             payload = {
-                "version": "V69.2",
+                "version": "V69.3",
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "daily_tokens": m["local_daily"],
                 "spent_pct": round(e1["spent_pct"] * 100, 2),
@@ -70,7 +69,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(200)
             self.end_headers()
-            self.wfile.write("Oatmeal AI V69.2 – Active & Optimized".encode("utf-8"))
+            self.wfile.write("Oatmeal AI V69.3 – Search Active & Optimized".encode("utf-8"))
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -198,7 +197,7 @@ def save_state():
     threading.Thread(target=_write, daemon=True).start()
 
 # ============================================================
-# 4. ROBUST LIVE WEB SEARCH + CACHE
+# 4. BULLETPROOF LIVE WEB SEARCH + CACHE (HTML DUCKDUCKGO)
 # ============================================================
 async def live_web_search(query: str) -> str:
     cleaned = re.sub(r'<@!?\d+>', '', query)
@@ -218,30 +217,30 @@ async def live_web_search(query: str) -> str:
         return search_cache[q_key][1]
 
     try:
-        data = urllib.parse.urlencode({'q': cleaned}).encode('utf-8')
+        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(cleaned)}"
         req = urllib.request.Request(
-            "https://lite.duckduckgo.com/lite/",
-            data=data,
+            url,
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
             }
         )
         html = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=6).read().decode("utf-8", "ignore"))
 
-        snippets = re.findall(r'<td class=["\']result-snippet["\'][^>]*>(.*?)</td>', html, re.DOTALL)
+        snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)
         if not snippets:
-            snippets = re.findall(r'<td[^>]*class="result-snippet"[^>]*>(.*?)</td>', html, re.DOTALL)
+            snippets = re.findall(r'class="result-snippet"[^>]*>(.*?)</td>', html, re.DOTALL)
         if not snippets:
-            snippets = re.findall(r'<td class="result-text"[^>]*>(.*?)</td>', html, re.DOTALL)
+            snippets = re.findall(r'<a class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)
 
         clean = [re.sub(r'<.*?>', '', s).strip() for s in snippets[:5] if len(s.strip()) > 12]
 
         if not clean:
-            tds = re.findall(r'<td valign="top"[^>]*>(.*?)</td>', html, re.DOTALL)
-            for td in tds:
-                text = re.sub(r'<.*?>', '', td).strip()
-                if len(text) > 25 and not text.lower().startswith("ads"):
+            divs = re.findall(r'<div class="result__body"[^>]*>(.*?)</div>', html, re.DOTALL)
+            for d in divs:
+                text = re.sub(r'<.*?>', '', d).strip()
+                if len(text) > 25:
                     clean.append(text)
             clean = clean[:4]
 
@@ -250,6 +249,8 @@ async def live_web_search(query: str) -> str:
             search_cache[q_key] = (now, res)
             print(f"[SEARCH OK] {len(clean)} snippets for '{cleaned}'")
             return res
+        else:
+            print(f"[SEARCH WARN] No snippets parsed for query: '{cleaned}'")
     except Exception as e:
         print(f"[SEARCH ERR] {e}")
     return ""
@@ -854,7 +855,7 @@ async def execute_priority_8():
                     if not target:
                         continue
                     safe = re.sub(r"https?://\S+", "[media]", target.content or "Oatmeal")[:50]
-                    p8_cursors[str(ch.id)] = target.id  # FIX: Advanced cursor to prevent reprocessing loops
+                    p8_cursors[str(ch.id)] = target.id  # Advanced cursor to prevent reprocessing loops
                     save_state()
                     job = PendingJob(8, time.time(), ch, f"Short witty reflection (max 10 words): {safe}",
                                      reference_message=target, p8_channel_id=str(ch.id), p8_message_id=target.id)
@@ -969,8 +970,8 @@ async def delay_queue_worker():
 @bot.event
 async def on_ready():
     print("=" * 62)
-    print(f" Oatmeal AI V69.2 logged in as {bot.user}")
-    print(" Search Refusal Fixed • 30s Activity Pause • Timeline Verified")
+    print(f" Oatmeal AI V69.3 logged in as {bot.user}")
+    print(" HTML Search Enabled • 30s Activity Pause • Timeline Verified")
     print("=" * 62)
     load_state()
     bot.loop.create_task(delay_queue_worker())
