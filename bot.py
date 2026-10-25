@@ -286,7 +286,8 @@ async def handle_telemetry(request):
         "queue_size": delay_queue.qsize(),
     }
     return web.json_response(data)
-async def start_health_server():
+
+async def _run_web_server():
     global _web_runner
     app = web.Application()
     app.router.add_get("/telemetry", handle_telemetry)
@@ -300,13 +301,18 @@ async def start_health_server():
     await site.start()
     print(f"[TELEMETRY] Async web server active on port {port}")
     
-    # Keep the background task alive and prevent local reference garbage collection
     try:
         while True:
             await asyncio.sleep(3600)
     except asyncio.CancelledError:
         if _web_runner:
             await _web_runner.cleanup()
+
+def start_instant_web_server():
+    """Runs the aiohttp server in its own event loop thread so it binds instantly."""
+    asyncio.run(_run_web_server())
+
+
 # ============================================================
 # 7. TOKEN-FREE BIMEDIA GENERATOR (All 9 Categories & Dual Modes)
 # ============================================================
@@ -1133,10 +1139,9 @@ async def on_ready():
     print("=" * 64)
     load_state()
 
-    # Store tasks references to prevent garbage collection and allow cleanup
+    # Web server is already bound via instant thread; keep discord background loops here:
     _background_tasks = [
         asyncio.create_task(state_writer_worker()),
-        asyncio.create_task(start_health_server()),
         asyncio.create_task(delay_queue_worker()),
         asyncio.create_task(execute_priority_2()),
         asyncio.create_task(execute_priority_3()),
@@ -1187,10 +1192,14 @@ async def close_bot_resources():
     print("[SYSTEM] Cleaned up HTTP session and background workers.")
 
 if __name__ == "__main__":
+    # Start the web server immediately in a background daemon thread 
+    # so Render detects the open port instantly upon container boot.
+    web_thread = threading.Thread(target=start_instant_web_server, daemon=True)
+    web_thread.start()
+    
     try:
         bot.run(DISCORD_TOKEN)
     finally:
-        # Run final resource cleanup on exit
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -1199,4 +1208,3 @@ if __name__ == "__main__":
                 asyncio.run(close_bot_resources())
         except Exception:
             pass
-
