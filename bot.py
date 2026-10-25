@@ -811,6 +811,22 @@ def extract_relevant_timeline(prompt: str) -> str:
 # ============================================================
 # 10. JOB EXECUTION ENGINE
 # ============================================================
+
+async def build_payload(content_str: str, media_url: str = "", embed: Optional[discord.Embed] = None) -> Tuple[str, dict]:
+    """Formats text and embeds for Discord dispatch."""
+    kwargs = {}
+    final_content = content_str.strip() if content_str else ""
+    
+    if media_url and not embed:
+        if final_content:
+            final_content += f"\n{media_url}"
+        else:
+            final_content = media_url
+            
+    if embed:
+        kwargs["embed"] = embed
+        
+    return final_content, kwargs
 async def process_job(job: PendingJob, session: aiohttp.ClientSession):
     global GROQ_RATE_LIMITED_UNTIL
     dsn, dsl, mode = traffic_engine.get_allocation(job.priority_tier)
@@ -1154,6 +1170,7 @@ async def on_ready():
     ]
 
 @bot.event
+@bot.event
 async def on_message(message):
     if message.author.bot or message.guild is None or message.is_system() or message.author == bot.user:
         return
@@ -1164,7 +1181,15 @@ async def on_message(message):
 
     clean = RE_CLEAN_MENTIONS.sub("", message.content).strip()
     mentioned = bot.user in message.mentions
-    replied_to_bot = bool(message.reference and getattr(message.reference.resolved, 'author', None) == bot.user)
+    
+    # Robust check for replies to the bot (handles uncached references)
+    replied_to_bot = False
+    if message.reference:
+        if message.reference.resolved and getattr(message.reference.resolved, 'author', None) == bot.user:
+            replied_to_bot = True
+        elif message.reference.cached_message and message.reference.cached_message.author == bot.user:
+            replied_to_bot = True
+
     named = any(nick in message.content.lower() for nick in ("oatmeal", "joey", "arnold"))
 
     if mentioned or replied_to_bot or named:
