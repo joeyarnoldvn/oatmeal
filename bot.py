@@ -291,9 +291,9 @@ async def _run_web_server():
     global _web_runner
     app = web.Application()
     app.router.add_get("/telemetry", handle_telemetry)
-    app.router.add_get("/", handle_health)
-    app.router.add_head("/", handle_health)
+    app.router.add_get("/", handle_health)  # Automatically handles HEAD requests for "/"
     
+    port = int(os.environ.get("PORT", 10000))    
     port = int(os.environ.get("PORT", 10000))
     _web_runner = web.AppRunner(app)
     await _web_runner.setup()
