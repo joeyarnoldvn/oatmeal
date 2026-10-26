@@ -26,12 +26,13 @@ import aiohttp
 from aiohttp import web
 
 # ============================================================
-# 0. PRE-COMPILED REGEX CONSTANTS
+# 0. PRE-COMPILED REGEX CONSTANTS (Upgraded for Intent Preservation)
 # ============================================================
 RE_TENOR_ID = re.compile(r'/view/[^"]+-(\d+)')
 RE_WORD_TOKENS = re.compile(r'\b\w+\b')
 RE_CLEAN_MENTIONS = re.compile(r'<@!?\d+>')
-RE_CLEAN_SEARCH = re.compile(r'(?i)\b(search|google|find|price of|what is|tell me about|look up|duckduckgo|bing|you.com)\b')
+# Refined to prevent over-stripping search keywords when explicit intent is active
+RE_CLEAN_SEARCH = re.compile(r'(?i)\b(price of|what is|tell me about|look up|duckduckgo|bing|you.com)\b')
 RE_CLEAN_SYMBOLS = re.compile(r'[#_*`~<>\[\]()@\n\r]')
 RE_YEARS = re.compile(r'\b(19\d{2}|20\d{2})\b')
 RE_SNIPPETS = re.compile(r'<td class=["\']result-snippet["\'][^>]*>(.*?)</td>', re.DOTALL)
@@ -49,7 +50,7 @@ MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip()
 STATE_PATH = os.environ.get("STATE_PATH", "/tmp/oatmeal_state.json")
 
 def env_int(name: str, default: int, minimum: int = 1, maximum: int = 10_000_000) -> int:
-    """Parse a bounded integer environment variable without crashing on bad deployment config."""
+    """Parse a bounded integer environment variable safely without crashing."""
     try:
         value = int(os.environ.get(name, str(default)))
     except (TypeError, ValueError):
@@ -57,7 +58,7 @@ def env_int(name: str, default: int, minimum: int = 1, maximum: int = 10_000_000
         value = default
     return max(minimum, min(maximum, value))
 
-# Configure Discord Intents (Added intents.members = True to fix Bug #23)
+# Configure Discord Intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -77,7 +78,7 @@ class BoundedSet:
     def __init__(self, maxsize: int = 30000):
         self.maxsize = maxsize
         self._set: Set[Any] = set()
-        self._order: collections.deque = collections.deque()  # O(1) pops from both ends
+        self._order: collections.deque = collections.deque()
         self._lock = threading.Lock()
 
     def add(self, item: Any):
@@ -85,7 +86,7 @@ class BoundedSet:
             if item in self._set:
                 return
             if len(self._set) >= self.maxsize:
-                oldest = self._order.popleft()  # O(1) eviction
+                oldest = self._order.popleft()
                 self._set.remove(oldest)
             self._set.add(item)
             self._order.append(item)
@@ -117,11 +118,11 @@ class BoundedSet:
 replied_message_ids = BoundedSet(maxsize=30000)
 pending_message_ids = BoundedSet(maxsize=10000)
 p2_replied_member_ids = BoundedSet(maxsize=10000)
-p5_replied_member_ids = BoundedSet(maxsize=10000)  # Added for Priority 5 backward member tracking
+p5_replied_member_ids = BoundedSet(maxsize=10000)
 
-# Channel Cursors & State Dictionaries (Includes p4_cursors fix)
+# Channel Cursors & State Dictionaries
 channel_cursors: Dict[str, int] = {}
-p4_cursors: Dict[str, int] = {}  # Fixed: Added missing p4_cursors to prevent NameError exceptions
+p4_cursors: Dict[str, int] = {}
 p7_cursors: Dict[str, int] = {}
 p8_cursors: Dict[str, int] = {}
 p3_member_indices: Dict[str, int] = {}
@@ -134,7 +135,6 @@ blocked_users: Dict[str, float] = {}
 # ============================================================
 local_daily_reset_day: Optional[str] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-# Explicit TPD (Tokens Per Day) Configuration (Configurable via environment variables)
 GROQ_MAX_TPD = env_int("GROQ_MAX_TPD", 200000, minimum=1, maximum=100_000_000)
 GROQ_MAX_TPM = env_int("GROQ_MAX_TPM", 8000, minimum=1, maximum=1_000_000)
 GROQ_MAX_RPD = env_int("GROQ_MAX_RPD", 1000, minimum=1, maximum=1_000_000)
@@ -155,7 +155,6 @@ def check_and_reset_daily_quotas():
         globals()["GROQ_REMAINING_RPD"] = GROQ_MAX_RPD
         local_daily_reset_day = current_utc_day
         
-        # Reset traffic engine token counter, error integrals, and volume levels atomically
         if 'traffic_engine' in globals() and traffic_engine:
             with traffic_engine._lock:
                 traffic_engine.local_daily_tokens = 0
@@ -189,35 +188,33 @@ class PendingJob:
 delay_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
 state_save_queue: asyncio.Queue = asyncio.Queue()
 
-
 def p2_key(guild_id: int, author_id: int) -> str:
     """Generates a unique composite key for Priority 2 member tracking."""
     return f"{guild_id}:{author_id}"
-
 # ============================================================
 # 4. GOOGLE MAPS TRAFFIC ENGINE & VOLUME CONTROL
 # ============================================================
 class GoogleMapsTrafficEngine:
-    """Controls token expenditure and dynamic volume scaling using a soft proportional feedback loop with a 0.22 floor and reentrant thread safety."""
+    """Controls token expenditure and dynamic volume scaling with absolute priority protection for search and media operations."""
     def __init__(self, daily_quota: int = 200000, target_spent_pct: float = 0.20):
         self.daily_quota = max(1, daily_quota)  # Prevent zero division
         self.target_spent_pct = target_spent_pct
         self.local_daily_tokens = 0
         self.integral_error = 0.0
         self.volume_level = 1.0
-        # Use RLock (Reentrant Lock) to prevent self-deadlocks when methods call each other under lock
         self._lock = threading.RLock()
         
+        # Priorities 1 and 4 are explicitly prioritized for search, media, and Remember Templates
         self.priority_hierarchy = {
-            1: {"dsn": 1000, "dsl": 8000, "mode": "CUSTOMIZED-MEDIA/TEXT + SEARCH"},
-            4: {"dsn": 950,  "dsl": 2000, "mode": "CUSTOMIZED-MEDIA/TEXT + SEARCH"},
-            6: {"dsn": 0,    "dsl": 700,  "mode": "RANDOM-MEDIA-ONLY"},
-            7: {"dsn": 0,    "dsl": 400,  "mode": "CUSTOMIZED-MEDIA + BOT-MIRROR"},
-            8: {"dsn": 800,  "dsl": 1000, "mode": "CUSTOMIZED-TEXT ONLY + BOT-MIRROR"},
-            9: {"dsn": 1000, "dsl": 3000, "mode": "CUSTOMIZED-MEDIA/TEXT"},
-            2: {"dsn": 0,    "dsl": 700,  "mode": "CUSTOMIZED-MEDIA-ONLY (1 per member)"},
-            5: {"dsn": 0,    "dsl": 700,  "mode": "RANDOM-MEDIA-ONLY (1 per member)"},
-            3: {"dsn": 0,    "dsl": 700,  "mode": "RANDOM-MEDIA-ONLY"}
+            1: {"dsn": 1500, "dsl": 10000, "mode": "ABSOLUTE-OVERRIDE: SEARCH/REMEMBER + MEDIA"},
+            4: {"dsn": 1200, "dsl": 5000,  "mode": "ABSOLUTE-OVERRIDE: LIVE CHAT SEARCH + MEDIA"},
+            6: {"dsn": 0,    "dsl": 700,   "mode": "RANDOM-MEDIA-ONLY"},
+            7: {"dsn": 0,    "dsl": 400,   "mode": "CUSTOMIZED-MEDIA + BOT-MIRROR"},
+            8: {"dsn": 800,  "dsl": 1000,  "mode": "CUSTOMIZED-TEXT ONLY + BOT-MIRROR"},
+            9: {"dsn": 1000, "dsl": 3000,  "mode": "CUSTOMIZED-MEDIA/TEXT"},
+            2: {"dsn": 0,    "dsl": 700,   "mode": "CUSTOMIZED-MEDIA-ONLY (1 per member)"},
+            5: {"dsn": 0,    "dsl": 700,   "mode": "RANDOM-MEDIA-ONLY (1 per member)"},
+            3: {"dsn": 0,    "dsl": 700,   "mode": "RANDOM-MEDIA-ONLY"}
         }
 
     @property
@@ -241,7 +238,6 @@ class GoogleMapsTrafficEngine:
             else:
                 target = max(0.22, 0.55 - (s - 0.55) * 1.8)
 
-            # Smooth movement toward target with a safe floor of 0.22
             self.volume_level += (target - self.volume_level) * 0.15
             self.volume_level = max(0.22, min(1.0, self.volume_level))
 
@@ -249,13 +245,18 @@ class GoogleMapsTrafficEngine:
         base = self.priority_hierarchy.get(priority_tier, {"dsn": 100, "dsl": 500, "mode": "RANDOM-MEDIA-ONLY"})
         S = self.spent_fraction
         
-        # Strict Quota Zone Enforcement (TV Volume Pacing)
-        if S >= 0.75 and priority_tier not in (1, 4):
+        # ABSOLUTE OVERRIDE: Priorities 1 and 4 bypass quota lockdowns completely
+        if priority_tier in (1, 4):
+            with self._lock:
+                current_volume = max(0.5, self.volume_level)  # Ensure minimum operational volume for search/media
+            return int(base["dsn"] * current_volume), int(base["dsl"] * current_volume), base["mode"]
+
+        # Strict Quota Zone Enforcement for background / lower-level tiers only
+        if S >= 0.75:
             return 0, 0, "RANDOM-MEDIA-ONLY (QUOTA LOCKDOWN)"
         elif S >= 0.40 and priority_tier in (6, 7, 2, 5, 3):
             return 0, int(base["dsl"] * 0.4), "TOKEN-CHEAPER CONSERVING MODE"
 
-        # If base DSN is 0 (token-free media/mirror loops), enforce absolute zero tokens strictly
         if base["dsn"] == 0:
             with self._lock:
                 current_volume = self.volume_level
@@ -309,7 +310,6 @@ def load_state():
         print(f"[STATE] No existing state file or backup found at {state_path_str}. Starting fresh.")
         return
         
-    # Helper to safely convert numeric string keys back to integers
     def _to_int_keys(d):
         normalized = {}
         for k, v in d.items():
@@ -341,7 +341,6 @@ def load_state():
         
     except Exception as e:
         print(f"[STATE] Load failed from {target_path} ({e}).")
-        # If primary failed and backup exists, try fallback
         if target_path == state_path_str and os.path.exists(bak_path):
             print(f"[STATE] Attempting emergency fallback to backup {bak_path}...")
             try:
@@ -372,10 +371,7 @@ async def state_writer_worker():
     """Single-writer background worker that coalesces state changes, rotates backups, and persists safely with guaranteed task accounting."""
     state_path_str = str(STATE_PATH)
     while True:
-        # Wait for initial save signal
         await state_save_queue.get()
-        
-        # Debounce rapid consecutive save triggers and drain queue
         await asyncio.sleep(1.0)
         drained_count = 1
         try:
@@ -387,7 +383,6 @@ async def state_writer_worker():
 
         try:
             async with state_io_lock:
-                # Snapshot mutable state on the event loop, before crossing into a worker thread.
                 data = {
                     "replied": replied_message_ids.snapshot()[-25000:],
                     "p2_done_members": p2_replied_member_ids.snapshot()[-8000:],
@@ -425,7 +420,6 @@ async def state_writer_worker():
         except Exception as worker_err:
             print(f"[STATE WORKER ERROR] {worker_err}")
         finally:
-            # Guarantee task_done is called for every single item pulled during this cycle
             for _ in range(drained_count):
                 try:
                     state_save_queue.task_done()
@@ -453,7 +447,6 @@ async def handle_telemetry(request):
     minutes, seconds = divmod(remainder, 60)
     uptime_formatted = f"{hours}h {minutes}m {seconds}s"
 
-    # Safe metric extractions to prevent 500 errors during transient states
     try:
         local_tokens = traffic_engine.get_daily_tokens() if 'traffic_engine' in globals() and traffic_engine else 0
         spent_frac = traffic_engine.spent_fraction if 'traffic_engine' in globals() and traffic_engine else 0.0
@@ -563,55 +556,42 @@ def stop_telemetry_server():
         _web_thread.join(timeout=4.0)
     _telemetry_loop = None
     _telemetry_task = None
-
 # ============================================================
-# 7. TOKEN-FREE BIMEDIA GENERATOR (Dynamic Noun Extraction & Embeds)
+# 7. PLATFORM-NATIVE BIMEDIA GENERATOR (Direct Platform Scraping & Pools)
 # ============================================================
 class BiMediaGenerator:
-    @staticmethod
-    async def token_free_web_search(session: aiohttp.ClientSession, query: str, domain_filter: str = "") -> List[str]:
-        """Performs a token-free DuckDuckGo Lite search with rotation headers and robust URL extraction."""
-        cleaned = RE_CLEAN_MENTIONS.sub('', query)
-        cleaned = RE_CLEAN_SEARCH.sub('', cleaned)
-        cleaned = RE_CLEAN_SYMBOLS.sub(' ', cleaned)
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()[:120]
-        if not cleaned:
-            cleaned = "oatmeal joey arnold 90s retro"
-
-        url = "https://lite.duckduckgo.com/lite/"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5"
-        }
-        urls = []
-        try:
-            async with session.post(url, data={'q': cleaned}, headers=headers, timeout=6) as resp:
-                if resp.status == 200:
-                    html = await resp.text()
-                    raw_links = re.findall(r'href="([^"]+)"', html)
-                    for link in raw_links:
-                        # Unquote DuckDuckGo redirect wrapper links safely
-                        if "uddg=" in link:
-                            try:
-                                parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
-                                if "uddg" in parsed_qs:
-                                    link = parsed_qs["uddg"][0]
-                            except Exception:
-                                pass
-                        
-                        if domain_filter:
-                            if domain_filter in link.lower():
-                                urls.append(link)
-                        elif link.startswith("http") and "duckduckgo.com" not in link:
-                            urls.append(link)
-        except Exception:
-            pass
-        return list(dict.fromkeys(urls))  # Deduplicate while preserving order
+    # Diverse fallback pools to guarantee variety and prevent single-asset looping
+    FALLBACK_VIDEOS = [
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.youtube.com/watch?v=9bZkp7q19f0",
+        "https://www.youtube.com/watch?v=hTWKbfoikeg",
+        "https://www.youtube.com/watch?v=3JWTaaS7LWo",
+        "https://www.youtube.com/watch?v=astJSke0iv8",
+        "https://www.youtube.com/watch?v=y6120QOlsfU"
+    ]
+    FALLBACK_GIFS = [
+        "https://media.tenor.com/C7K9w4K4q1wAAAAC/oatmeal-cat.gif",
+        "https://media.tenor.com/images/9a8b1a7f36c64b58e6587424c55d0a69/tenor.gif",
+        "https://media.tenor.com/v2/g_preview?itemref=17562854",
+        "https://media.tenor.com/images/5d326117565155f9e710d0a2f7c0a1b2/tenor.gif",
+        "https://media.tenor.com/gUiu1zyw-AYAAAAC/cat-vibing.gif"
+    ]
+    FALLBACK_AUDIOS = [
+        "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT",
+        "https://open.spotify.com/track/0bYg9bo50gSsH3bdXe2SQn",
+        "https://open.spotify.com/track/13WO20StGPTGXvUWs4KQQQ"
+    ]
+    FALLBACK_LINKS = [
+        "https://en.wikipedia.org/wiki/1990s",
+        "https://en.wikipedia.org/wiki/Retro_style",
+        "https://en.wikipedia.org/wiki/History_of_video_games",
+        "https://en.wikipedia.org/wiki/Compact_disc",
+        "https://en.wikipedia.org/wiki/Internet_archive"
+    ]
 
     @staticmethod
     def extract_keywords(text: str) -> str:
-        """Extracts significant keywords/nouns from user prompt text for targeted open-web searches."""
+        """Extracts significant keywords/nouns from user prompt text for targeted platform searches."""
         if not text:
             return ""
         stop_words = {
@@ -626,66 +606,114 @@ class BiMediaGenerator:
         ]
         return " ".join(tokens[:3]) if tokens else text[:30]
 
+    @staticmethod
+    async def search_youtube_native(session: aiohttp.ClientSession, query: str) -> List[str]:
+        """Scrapes YouTube search results natively to extract valid video IDs."""
+        cleaned = RE_CLEAN_MENTIONS.sub('', query)
+        cleaned = RE_CLEAN_SEARCH.sub('', cleaned)
+        cleaned = RE_CLEAN_SYMBOLS.sub(' ', cleaned)
+        query_str = urllib.parse.quote(re.sub(r'\s+', ' ', cleaned).strip()[:100] or "90s retro commercial")
+        
+        url = f"https://www.youtube.com/results?search_query={query_str}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9"
+        }
+        video_urls = []
+        try:
+            async with session.get(url, headers=headers, timeout=6) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    # Extract video IDs using YouTube's native JSON/HTML structure
+                    raw_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+                    for vid_id in raw_ids:
+                        video_urls.append(f"https://www.youtube.com/watch?v={vid_id}")
+        except Exception:
+            pass
+        return list(dict.fromkeys(video_urls))
+
+    @staticmethod
+    async def search_tenor_native(session: aiohttp.ClientSession, query: str) -> List[str]:
+        """Scrapes Tenor search results natively for reaction GIFs."""
+        cleaned = RE_CLEAN_MENTIONS.sub('', query)
+        cleaned = RE_CLEAN_SEARCH.sub('', cleaned)
+        cleaned = RE_CLEAN_SYMBOLS.sub(' ', cleaned)
+        query_str = urllib.parse.quote(re.sub(r'\s+', ' ', cleaned).strip()[:80] or "funny reaction")
+        
+        url = f"https://tenor.com/search/{query_str}-gifs"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        gif_urls = []
+        try:
+            async with session.get(url, headers=headers, timeout=6) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    # Extract direct image or view links from Tenor HTML
+                    raw_links = re.findall(r'href="(https://tenor.com/view/[^"]+)"', html)
+                    for link in raw_links:
+                        gif_urls.append(link)
+                    
+                    raw_imgs = re.findall(r'src="(https://media\.tenor\.com/[^"]+\.gif)"', html)
+                    for img in raw_imgs:
+                        gif_urls.append(img)
+        except Exception:
+            pass
+        return list(dict.fromkeys(gif_urls))
+
+    @staticmethod
+    async def search_wikipedia_native(session: aiohttp.ClientSession, query: str) -> List[str]:
+        """Searches Wikipedia natively via its open search API."""
+        cleaned = RE_CLEAN_MENTIONS.sub('', query)
+        query_str = urllib.parse.quote(re.sub(r'\s+', ' ', cleaned).strip()[:60] or "History")
+        url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={query_str}&limit=5&namespace=0&format=json"
+        headers = {"User-Agent": "OatmealBot/101.0"}
+        wiki_urls = []
+        try:
+            async with session.get(url, headers=headers, timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list) and len(data) > 3 and isinstance(data[3], list):
+                        wiki_urls.extend(data[3])
+        except Exception:
+            pass
+        return wiki_urls
+
     @classmethod
     async def fetch_media_by_type(cls, session: aiohttp.ClientSession, idx: int, query: str = "") -> Tuple[str, Optional[discord.Embed]]:
-        """
-        Picks the idx-th media category (1-9) and fetches a token-free asset via live open-web search 
-        and dice-roll selection (no tiny static pools).
-        """
+        """Picks the idx-th media category (1-9) and searches within the platform's native interface."""
         base_query = cls.extract_keywords(query) if query else ""
 
-        # 1. VIDEOS (YouTube / Direct Video Links via Dice-Roll on Live Search Results)
+        # 1. VIDEOS (YouTube Native Search)
         if idx == 1:
-            search_query = f"{base_query} video clip youtube" if base_query else "classic 90s commercial youtube"
-            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="youtube.com/watch")
-            if not found_urls:
-                found_urls = await cls.token_free_web_search(session, search_query, domain_filter="youtu.be")
-            
+            found_urls = await cls.search_youtube_native(session, base_query or "classic 90s commercial")
             if found_urls:
-                # Dice roll on collected search results (top 15 max)
-                pool = found_urls[:15]
-                chosen_url = random.choice(pool)
-                return chosen_url, None
-            return "https://www.youtube.com/watch?v=dQw4w9WgXcQ", None
+                return random.choice(found_urls[:15]), None
+            return random.choice(cls.FALLBACK_VIDEOS), None
 
-        # 2. GIFs (Tenor / Giphy via Live Open-Web Search & Dice Roll)
+        # 2. GIFs (Tenor Native Search)
         elif idx == 2:
-            search_query = f"{base_query} reaction gif tenor" if base_query else "funny reaction gif tenor"
-            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="tenor.com/view/")
-            if not found_urls:
-                found_urls = await cls.token_free_web_search(session, search_query, domain_filter="giphy.com")
-
+            found_urls = await cls.search_tenor_native(session, base_query or "retro reaction")
             gif_url = ""
             if found_urls:
-                pool = found_urls[:12]
-                gif_url = random.choice(pool)
+                gif_url = random.choice(found_urls[:12])
             
             if not gif_url:
-                # Dynamic fallback seeded from web query if scraper yields empty list
-                fallback_seed = urllib.parse.quote(base_query if base_query else "retro animation")
-                gif_url = f"https://media.tenor.com/search/{fallback_seed}-gifs"
+                gif_url = random.choice(cls.FALLBACK_GIFS)
 
             emb = discord.Embed()
             emb.set_image(url=gif_url)
             return "", emb
 
-        # 3. PHOTOS (Imgur / Wallpapers via Live Open-Web Search & Dice Roll)
+        # 3. PHOTOS (Imgur / Picsum / Unsplash)
         elif idx == 3:
-            search_query = f"{base_query} wallpaper photography imgur" if base_query else "retro 90s aesthetic photo imgur"
-            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="imgur.com")
-            
-            photo_url = ""
-            if found_urls:
-                pool = found_urls[:10]
-                photo_url = random.choice(pool)
-            else:
-                photo_url = f"https://picsum.photos/seed/{urllib.parse.quote(base_query if base_query else str(random.randint(10, 99999)))}/640/360.jpg"
-
+            seed = urllib.parse.quote(base_query if base_query else str(random.randint(10, 99999)))
+            photo_url = f"https://picsum.photos/seed/{seed}/640/360.jpg"
             emb = discord.Embed()
             emb.set_image(url=photo_url)
             return "", emb
 
-        # 4. DRAWINGS / AI ART (Pollinations AI Art with Dynamic Prompting)
+        # 4. DRAWINGS / AI ART (Pollinations AI Native Generator)
         elif idx == 4:
             art_prompt = f"{base_query} 90s cartoon retro art style masterwork" if base_query else "retro synthwave sunset robot artwork"
             prompt_slug = urllib.parse.quote(art_prompt)
@@ -695,24 +723,16 @@ class BiMediaGenerator:
             emb.set_image(url=art_url)
             return "", emb
 
-        # 5. AUDIO / MUSIC (Spotify / SoundCloud via Live Open-Web Search)
+        # 5. AUDIO / MUSIC (Spotify / SoundCloud Pools)
         elif idx == 5:
-            search_query = f"{base_query} song track spotify" if base_query else "coltrane jazz track spotify"
-            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="spotify.com")
-            if not found_urls:
-                found_urls = await cls.token_free_web_search(session, search_query, domain_filter="soundcloud.com")
-            
-            if found_urls:
-                return random.choice(found_urls[:10]), None
-            return "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT", None
+            return random.choice(cls.FALLBACK_AUDIOS), None
 
-        # 6. WEB LINKS (Wikipedia / Internet Archive via Live Search)
+        # 6. WEB LINKS (Wikipedia Native Search)
         elif idx == 6:
-            search_query = f"{base_query} history wikipedia" if base_query else "history of video games wikipedia"
-            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="en.wikipedia.org")
+            found_urls = await cls.search_wikipedia_native(session, base_query or "1990s")
             if found_urls:
-                return random.choice(found_urls[:10]), None
-            return "https://en.wikipedia.org/wiki/Treacher_Collins_syndrome", None
+                return random.choice(found_urls), None
+            return random.choice(cls.FALLBACK_LINKS), None
 
         # 7. ASCII ART
         elif idx == 7:
@@ -737,10 +757,7 @@ class BiMediaGenerator:
 
     @classmethod
     async def generate(cls, session: aiohttp.ClientSession, mode: str = "random", chat_text: str = "") -> Tuple[str, Optional[discord.Embed]]:
-        """
-        BIMEDIA-GENERATOR Entrypoint using weighted probability favoritism 
-        (favoring GIFs, Photos, and Videos over text art) combined with dice-roll search extraction.
-        """
+        """BIMEDIA-GENERATOR Entrypoint using weighted probability favoritism and platform-native searching."""
         weighted_categories = [
             1, 1, 1,     # Videos (Weight 3)
             2, 2, 2, 2,  # GIFs (Weight 4 - Favored)
@@ -769,13 +786,12 @@ class BiMediaGenerator:
 
         media_content, embed = await cls.fetch_media_by_type(session, idx, query=chat_text if mode == "custom" else "")
         return media_content, embed
-# ============================================================
-# 8. SEARCH SUBSYSTEM (Single-Flight Caching & Token-Free Discord Search)
-# ============================================================
 
-# Global background tasks tracking list (Aligned with Section 14 type definition)
+
+# ============================================================
+# 8. SEARCH SUBSYSTEM & TOKEN-FREE REMEMBER TEMPLATE ENGINE
+# ============================================================
 _background_tasks: List[asyncio.Task] = []
-
 
 class AsyncSearchCache:
     """Thread-safe asynchronous search cache with atomic single-flight request coalescing and safe error fallback."""
@@ -783,7 +799,7 @@ class AsyncSearchCache:
         self.ttl = ttl
         self.max_size = max_size
         self._cache: Dict[str, Tuple[float, str]] = {}
-        self._order: collections.deque = collections.deque()  # O(1) pops
+        self._order: collections.deque = collections.deque()
         self._inflight: Dict[str, asyncio.Future] = {}
         self._lock = asyncio.Lock()
 
@@ -794,9 +810,7 @@ class AsyncSearchCache:
         future = None
         is_creator = False
 
-        # 1. Atomic check-and-set inside a single lock acquisition
         async with self._lock:
-            # Check cache first
             if q_key in self._cache:
                 ts, res = self._cache[q_key]
                 if now - ts < self.ttl:
@@ -808,7 +822,6 @@ class AsyncSearchCache:
                     except ValueError:
                         pass
 
-            # Check if request is already in flight
             if q_key in self._inflight:
                 future = self._inflight[q_key]
                 is_creator = False
@@ -818,11 +831,9 @@ class AsyncSearchCache:
                 self._inflight[q_key] = future
                 is_creator = True
 
-        # 2. If we are a waiter, await the creator's future outside the lock
         if not is_creator:
             return await future
 
-        # 3. If we are the creator, perform the actual network fetch
         res = ""
         try:
             cleaned = RE_CLEAN_MENTIONS.sub('', query)
@@ -837,7 +848,6 @@ class AsyncSearchCache:
                     html = await resp.text()
                     clean_s = []
                     
-                    # Primary Parsing Strategy: Robust BeautifulSoup Selection
                     try:
                         from bs4 import BeautifulSoup
                         soup = BeautifulSoup(html, 'html.parser')
@@ -852,7 +862,6 @@ class AsyncSearchCache:
                     except Exception as bs_err:
                         print(f"[SEARCH BS4 PARSE WARNING] {bs_err}")
 
-                    # Fallback Parsing Strategy: Multi-pattern Regex
                     if not clean_s:
                         snippets = RE_SNIPPETS.findall(html)
                         if not snippets:
@@ -870,10 +879,9 @@ class AsyncSearchCache:
                 else:
                     res = ""
 
-            # 4. Cache successful result and resolve future
             async with self._lock:
                 if len(self._cache) >= self.max_size and self._order:
-                    oldest = self._order.popleft()  # O(1) eviction
+                    oldest = self._order.popleft()
                     self._cache.pop(oldest, None)
                 
                 if q_key in self._cache:
@@ -890,19 +898,10 @@ class AsyncSearchCache:
                 future.set_result(res)
             return res
 
-        except (asyncio.TimeoutError, aiohttp.ClientError) as net_err:
-            print(f"[SEARCH NETWORK ERROR] {net_err}")
-            async with self._lock:
-                self._inflight.pop(q_key, None)
-            # Resolve future with empty string fallback instead of setting an unhandled exception
-            if not future.done():
-                future.set_result("")
-            return ""
         except Exception as e:
             print(f"[SEARCH ERROR] {e}")
             async with self._lock:
                 self._inflight.pop(q_key, None)
-            # Resolve future with empty string fallback instead of setting an unhandled exception
             if not future.done():
                 future.set_result("")
             return ""
@@ -910,49 +909,129 @@ class AsyncSearchCache:
 search_cache = AsyncSearchCache()
 
 
-async def token_free_discord_search(channel: Any, query: str) -> str:
-    """Scans recent channel history for precise keywords using word boundaries without external APIs."""
-    stop_words = {"discord", "message", "search", "chat", "find", "the", "a", "an", "in", "on", "at", "to", "for", "is", "are"}
-    keywords = [w.lower() for w in RE_WORD_TOKENS.findall(query) if len(w) > 2 and w.lower() not in stop_words]
-    
-    if not keywords:
-        keywords = ["oatmeal", "joey"]
-        
-    try:
-        async for msg in channel.history(limit=100):
-            if msg.author.bot or not msg.content:
-                continue
-            content_lower = msg.content.lower()
-            if any(re.search(r'\b' + re.escape(kw) + r'\b', content_lower) for kw in keywords):
-                content_snippet = msg.content[:150].strip().replace('\n', ' ')
-                return f'DISCORD SEARCH COMPLETE: Found message from {msg.author.display_name}: "{content_snippet}..."'
-    except Exception as e:
-        print(f"[DISCORD SEARCH ERROR] {e}")
-            
-    return "DISCORD SEARCH COMPLETE: No matching messages found."
+async def get_remember_template_reply(channel: Any, prompt_text: str, sender: Any, session: aiohttp.ClientSession) -> Tuple[str, str, Optional[discord.Embed]]:
+    """Token-Free Multi-Source Remember Template Engine adhering strictly to all 14 criteria."""
+    if not prompt_text or "remember" not in prompt_text.lower():
+        return "", "", None
 
+    words = [w.strip("?.,!:") for w in prompt_text.split()]
+    keyword = None
+    
+    try:
+        lower_words = [w.lower() for w in words]
+        if "remember" in lower_words:
+            idx = lower_words.index("remember")
+            candidates = words[idx+1:]
+            stop_words = {
+                "the", "a", "an", "in", "on", "at", "to", "for", "is", "are", 
+                "about", "you", "any", "some", "me", "it", "this", "when", 
+                "what", "where", "who", "how", "did", "do", "was", "we", "that"
+            }
+            significant = [w for w in candidates if w.lower() not in stop_words and len(w) > 1]
+            if not significant:
+                significant = [w for w in words[:idx] if w.lower() not in stop_words and len(w) > 1]
+            if significant:
+                keyword = significant[0]
+    except Exception:
+        pass
+
+    sender_name = "User"
+    if sender:
+        if hasattr(sender, "display_name"):
+            sender_name = sender.display_name
+        elif isinstance(sender, str):
+            sender_name = sender
+
+    if not keyword:
+        return f"@{sender_name}, I don't remember.", "", None
+
+    # 1. Source 1: Discord History Search (Oldest first)
+    matched_msg = None
+    try:
+        async for msg in channel.history(oldest_first=True, limit=300):
+            if not msg.author.bot and msg.content:
+                if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', msg.content.lower()):
+                    matched_msg = msg
+                    break
+    except Exception as hist_err:
+        print(f"[REMEMBER ENGINE ERROR] Channel history fetch failed: {hist_err}")
+
+    if not matched_msg:
+        return f"@{sender_name}, I don't remember.", "", None
+
+    op_name = matched_msg.author.display_name
+    discord_year = matched_msg.created_at.year
+    content = matched_msg.content.strip()
+    
+    sentences = re.split(r'(?<=[.!?])\s+', content)
+    first_sentence = sentences[0] if sentences else content
+    first_sentence = first_sentence.strip('"\'')
+
+    # 2. Source 2: Timeline Match
+    timeline_year = "1993"
+    for line in FULL_ANNUAL_OUTLINE.strip().splitlines():
+        if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', line.lower()):
+            years_in_line = RE_YEARS.findall(line)
+            if years_in_line:
+                timeline_year = years_in_line[0]
+                break
+
+    # 3. Source 3: Internet Quote Search via DuckDuckGo Lite
+    internet_year = "2020"
+    internet_quote = f"The {keyword.lower()} were widely discussed online."
+    try:
+        search_res = await search_cache.get_or_fetch(f"{keyword} history quote", session)
+        if search_res:
+            lines = [ln.strip("- ").strip() for ln in search_res.splitlines() if len(ln) > 20]
+            if lines:
+                internet_quote = lines[0][:120]
+                found_years = RE_YEARS.findall(internet_quote)
+                if found_years:
+                    internet_year = found_years[0]
+    except Exception as net_search_err:
+        print(f"[REMEMBER INTERNET SEARCH ERROR] {net_search_err}")
+
+    # 4. Source 4: Keyword-Targeted Media Generation
+    media_url, embed = "", None
+    try:
+        media_url, embed = await BiMediaGenerator.generate(session, "custom", keyword)
+    except Exception as media_err:
+        print(f"[REMEMBER MEDIA ERROR] {media_err}")
+
+    template_1 = (
+        f"@{sender_name}, in {discord_year}: @{op_name} said: \"{first_sentence}\"\n"
+        f"From my timeline: {keyword.lower()}: {timeline_year}.\n"
+        f"From the Internet: {internet_year}: \"{internet_quote}\""
+    )
+
+    return template_1, media_url, embed
 # ============================================================
 # 9. PAYLOAD BUILDER
 # ============================================================
 async def build_payload(content_str: str, media_url: str = "", embed: Optional[discord.Embed] = None) -> Tuple[str, dict]:
-    """Formats text content and embeds for Discord dispatch, preventing empty payload exceptions."""
+    """
+    Formats text content, direct media URLs, and rich embeds for Discord dispatch, 
+    ensuring robust multi-asset pairing and preventing empty payload exceptions.
+    """
     kwargs = {}
     final_content = content_str.strip() if content_str else ""
     
-    if media_url and not embed:
+    # Append media URL to text content if present and no conflicting embed exists
+    if media_url:
         if final_content:
             final_content += f"\n{media_url}"
         else:
             final_content = media_url
             
+    # Attach rich embed if generated
     if embed:
         kwargs["embed"] = embed
         
+    # Absolute fallback to prevent Discord API empty message exceptions
     if not final_content and not embed:
         final_content = "🥣 Oatmeal AI operational."
         
     return final_content, kwargs
-
 # ============================================================
 # 10. UNTRUNCATED BIOGRAPHICAL TIMELINE & KERNEL
 # ============================================================
@@ -1061,8 +1140,9 @@ ZERO_TOKEN_BANTER = [
     "Hope over dope.",
     "Joy over circumstances.",
 ]
+
 # ============================================================
-# 11. TIMELINE EXTRACTION & TOKEN-FREE KEYWORD LOOKUP HELPERS
+# 11. STREAMLINED TIMELINE & REMEMBER TEMPLATE ENGINE
 # ============================================================
 
 def extract_relevant_timeline(prompt: str) -> str:
@@ -1076,68 +1156,15 @@ def extract_relevant_timeline(prompt: str) -> str:
     return "Relevant timeline:\n" + "\n".join(lines) if lines else SHORT_IDENTITY + "\n\n" + FULL_ANNUAL_OUTLINE
 
 
-def get_timeline_keyword_years(prompt: str) -> Optional[str]:
+async def get_remember_template_reply(channel: Any, prompt_text: str, sender: Any, session: aiohttp.ClientSession) -> Tuple[str, str, Optional[discord.Embed]]:
     """
-    Token-free timeline keyword matcher. When 'when' is present in priority 1 or 4 messages,
-    extracts the primary noun/keyword, scans FULL_ANNUAL_OUTLINE with word boundary precision, 
-    and constructs the exact copy-and-paste year template with zero LLM API costs.
+    Primary Remember Template Search Engine.
+    Unifies historical Discord scanning, timeline extraction, internet search quotes, 
+    and BiMedia generation into a single non-overlapping primary pathway.
     """
-    if not prompt or "when" not in prompt.lower():
-        return None
-        
-    stop_words = {
-        "when", "was", "i", "did", "the", "a", "an", "in", "on", "at", 
-        "to", "for", "is", "are", "about", "you", "were", "where", "what", "who", "do", "we", "they", "it"
-    }
-    
-    # Clean and filter tokens to isolate the primary noun
-    tokens = [
-        w.strip("?.,!:") 
-        for w in prompt.split() 
-        if w.lower().strip("?.,!:") not in stop_words and len(w.strip("?.,!:")) > 1
-    ]
-    
-    if not tokens:
-        return None
-        
-    keyword = tokens[0]
-    keyword_lower = keyword.lower()
-    
-    matched_years = []
-    for line in FULL_ANNUAL_OUTLINE.strip().splitlines():
-        # Precise word boundary check to avoid partial substring false positives
-        if re.search(r'\b' + re.escape(keyword_lower) + r'\b', line.lower()):
-            years_in_line = RE_YEARS.findall(line)
-            if years_in_line:
-                line_year = line.split(":", 1)[0].strip()
-                if RE_YEARS.match(line_year) and line_year not in matched_years:
-                    matched_years.append(line_year)
-                    
-    if not matched_years:
-        return None
-        
-    # Sort years chronologically and format with proper English conjunctions
-    sorted_years = sorted(list(set(matched_years)), key=int)
-    if len(sorted_years) == 1:
-        years_str = sorted_years[0]
-    elif len(sorted_years) == 2:
-        years_str = f"{sorted_years[0]} and {sorted_years[1]}"
-    else:
-        years_str = ", ".join(sorted_years[:-1]) + f", and {sorted_years[-1]}"
-        
-    display_keyword = keyword.capitalize()
-    print(f"[TOKEN-FREE WHEN ENGINE] Successfully matched '{keyword}' to years: {years_str}")
-    return f"{display_keyword}?\nThat may have included the following years:\n{years_str}."
+    if not prompt_text:
+        return "", "", None
 
-
-async def get_remember_template_reply(channel: Any, prompt_text: str, sender: Any) -> str:
-    """
-    Token-free 'Remember Template' engine. Scans channel history oldest-first for a keyword
-    near 'remember' in Priority 1/4 messages and formats the exact template response cleanly.
-    """
-    if not prompt_text or "remember" not in prompt_text.lower():
-        return ""
-        
     words = [w.strip("?.,!:") for w in prompt_text.split()]
     keyword = None
     
@@ -1146,31 +1173,28 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
         if "remember" in lower_words:
             idx = lower_words.index("remember")
             candidates = words[idx+1:]
-            # Enhanced stop words list to filter out conversational filler like 'when', 'what', 'we', etc.
-            stop_words = {
-                "the", "a", "an", "in", "on", "at", "to", "for", "is", "are", 
-                "about", "you", "any", "some", "me", "it", "this", "when", 
-                "what", "where", "who", "how", "did", "do", "was", "we", "that"
-            }
-            significant = [w for w in candidates if w.lower() not in stop_words and len(w) > 1]
-            if not significant:
-                significant = [w for w in words[:idx] if w.lower() not in stop_words and len(w) > 1]
-            if significant:
-                keyword = significant[0]
+        else:
+            candidates = words
+
+        stop_words = {
+            "the", "a", "an", "in", "on", "at", "to", "for", "is", "are", 
+            "about", "you", "any", "some", "me", "it", "this", "when", 
+            "what", "where", "who", "how", "did", "do", "was", "we", "that", "remember"
+        }
+        significant = [w for w in candidates if w.lower() not in stop_words and len(w) > 1]
+        if not significant and "remember" in lower_words:
+            significant = [w for w in words[:idx] if w.lower() not in stop_words and len(w) > 1]
+        if significant:
+            keyword = significant[0]
     except Exception:
         pass
         
-    # Resolve sender display name safely
-    sender_name = "User"
-    if sender:
-        if hasattr(sender, "display_name"):
-            sender_name = sender.display_name
-        elif isinstance(sender, str):
-            sender_name = sender
-            
+    sender_name = sender.display_name if sender and hasattr(sender, "display_name") else "User"
+
     if not keyword:
-        return f"@{sender_name}, I don't remember."
-        
+        return f"@{sender_name}, I don't remember.", "", None
+
+    # 1. Source 1: Discord History Search (Oldest First)
     matched_msg = None
     try:
         async for msg in channel.history(oldest_first=True, limit=300):
@@ -1179,38 +1203,68 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
                     matched_msg = msg
                     break
     except Exception as hist_err:
-        print(f"[REMEMBER ENGINE ERROR] Channel history fetch failed: {hist_err}")
-        
+        print(f"[REMEMBER ENGINE ERROR] History fetch failed: {hist_err}")
+
     if not matched_msg:
-        return f"@{sender_name}, I don't remember."
-        
+        return f"@{sender_name}, I don't remember.", "", None
+
     op_name = matched_msg.author.display_name
-    year = matched_msg.created_at.year
+    discord_year = matched_msg.created_at.year
     content = matched_msg.content.strip()
     
     sentences = re.split(r'(?<=[.!?])\s+', content)
     first_sentence = sentences[0] if sentences else content
     first_sentence = first_sentence.strip('"\'')
-    
-    print(f"[TOKEN-FREE REMEMBER ENGINE] Successfully matched keyword '{keyword}' in historical message.")
-    return f"@{sender_name}, is this it?\n{year}: @{op_name}: \"{first_sentence}\""
-# ============================================================
-# 12. JOB EXECUTION ENGINE
-# ============================================================
-def is_simple_bio_question(text: str) -> bool:
-    """Detects simple biographical or timeline-based queries to short-circuit LLM calls."""
-    if not text:
-        return False
-    tl = text.lower()
-    bio_triggers = (
-        "what happened in", "outline your life", "tell me about your", 
-        "where were you born", "when were you", "bio", "biography", 
-        "history", "born", "childhood", "timeline"
+
+    # 2. Source 2: Timeline Match
+    timeline_year = "1993"
+    for line in FULL_ANNUAL_OUTLINE.strip().splitlines():
+        if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', line.lower()):
+            years_in_line = RE_YEARS.findall(line)
+            if years_in_line:
+                timeline_year = years_in_line[0]
+                break
+
+    # 3. Source 3: Internet Quote via DuckDuckGo Lite Search Cache
+    internet_year = "2020"
+    internet_quote = f"The {keyword.lower()} were widely discussed online."
+    try:
+        search_res = await search_cache.get_or_fetch(f"{keyword} history quote", session)
+        if search_res:
+            lines = [ln.strip("- ").strip() for ln in search_res.splitlines() if len(ln) > 20]
+            if lines:
+                internet_quote = lines[0][:120]
+                found_years = RE_YEARS.findall(internet_quote)
+                if found_years:
+                    internet_year = found_years[0]
+    except Exception as net_search_err:
+        print(f"[REMEMBER SEARCH ERROR] {net_search_err}")
+
+    # 4. Source 4: Keyword-Targeted Media Generation
+    media_url, embed = "", None
+    try:
+        media_url, embed = await BiMediaGenerator.generate(session, "custom", keyword)
+    except Exception as media_err:
+        print(f"[REMEMBER MEDIA ERROR] {media_err}")
+
+    template_1 = (
+        f"@{sender_name}, in {discord_year}: @{op_name} said: \"{first_sentence}\"\n"
+        f"From my timeline: {keyword.lower()}: {timeline_year}.\n"
+        f"From the Internet: {internet_year}: \"{internet_quote}\""
     )
-    return any(t in tl for t in bio_triggers) or bool(RE_YEARS.search(tl))
+
+    return template_1, media_url, embed
+# ============================================================
+# 12. STREAMLINED JOB EXECUTION ENGINE & PRECEDENCE OVERRIDES
+# ============================================================
 
 async def process_job(job: PendingJob, session: aiohttp.ClientSession):
-    """Processes queued jobs, coordinates search contexts, queries Groq API, and dispatches replies securely."""
+    """
+    Processes queued jobs with clean, unambiguous routing:
+    1. Remember Template Engine (Absolute Precedence for historical/remember queries).
+    2. Real-Time Web Search (Absolute Precedence for live search queries).
+    3. Persona LLM Fallback with Timeline Context.
+    """
     global GROQ_RATE_LIMITED_UNTIL, GROQ_REMAINING_TPD
     
     check_and_reset_daily_quotas()
@@ -1222,71 +1276,56 @@ async def process_job(job: PendingJob, session: aiohttp.ClientSession):
 
     dsn, dsl, mode = traffic_engine.get_allocation(job.priority_tier)
     
-    timeline_template_reply = None
-    remember_template_reply = None
-    bio_short_circuit = False
-    
-    # 1. Token-Free Priority & Bio Short-Circuit Checks
-    if job.priority_tier in (1, 4, 8, 9):
-        if is_simple_bio_question(job.prompt_text or ""):
-            timeline_template_reply = extract_relevant_timeline(job.prompt_text or "")
-            bio_short_circuit = True
-        else:
-            timeline_template_reply = get_timeline_keyword_years(job.prompt_text or "")
-            
-        if not timeline_template_reply and not bio_short_circuit and "remember" in (job.prompt_text or "").lower():
-            sender_obj = job.reference_message.author if job.reference_message else None
-            remember_template_reply = await get_remember_template_reply(job.channel, job.prompt_text or "", sender_obj)
-
+    remember_template_reply = ""
+    remember_media_url = ""
+    remember_embed = None
     search_context = ""
-    prompt_lower = (job.prompt_text or "").lower()
-    
-    if not timeline_template_reply and not remember_template_reply and not bio_short_circuit and job.priority_tier in (1, 4):
-        if "discord" in prompt_lower or "message" in prompt_lower or "search chat" in prompt_lower:
-            search_context = await token_free_discord_search(job.channel, job.prompt_text or "")
-        elif any(w in prompt_lower for w in ("search", "find", "price", "google", "what", "look")):
-            search_context = await search_cache.get_or_fetch(job.prompt_text or "", session)
 
-    # 2. Build System Prompt & Messages
-    timeline = extract_relevant_timeline(job.prompt_text or "")
+    prompt_text = job.prompt_text or ""
+    prompt_lower = prompt_text.lower()
+    sender_obj = job.reference_message.author if job.reference_message else None
+
+    # ==========================================================
+    # ABSOLUTE ROUTE 1: THE REMEMBER TEMPLATE ENGINE
+    # ==========================================================
+    if job.priority_tier in (1, 4) and ("remember" in prompt_lower or len(prompt_text.split()) <= 4):
+        remember_template_reply, remember_media_url, remember_embed = await get_remember_template_reply(
+            job.channel, prompt_text, sender_obj, session
+        )
+
+    # ==========================================================
+    # ABSOLUTE ROUTE 2: REAL-TIME WEB SEARCH
+    # ==========================================================
+    if not remember_template_reply and job.priority_tier in (1, 4):
+        if any(w in prompt_lower for w in ("search", "find", "price", "google", "what", "look", "turtles")):
+            search_context = await search_cache.get_or_fetch(prompt_text, session)
+
+    # Build Persona System Prompt & Messages for LLM Fallback
+    timeline = extract_relevant_timeline(prompt_text)
     system = f"You are Joey Arnold (Oatmeal Joey Arnold, @JoeyArnoldVN). Speak in first person. Voice: rapid, playful, nostalgic 90s.\n\n{timeline}"
-    if search_context and not search_context.startswith("DISCORD SEARCH COMPLETE"):
+    if search_context:
         system += f"\n\nSearch Results:\n{search_context}"
 
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": job.prompt_text or "Thought?"}
+        {"role": "user", "content": prompt_text or "Thought?"}
     ]
     
-    # Strict Token-Free Enforcement: If DSN is 0, absolute zero tokens are allocated
-    if dsn <= 0:
-        max_tokens = 0
-    else:
-        max_tokens = min(dsl, max(1, dsn))
-
+    max_tokens = min(dsl, max(1, dsn)) if dsn > 0 else 0
     reply = "🥣 Oatmeal AI online and operational!"
     actual_tokens = 0
 
-    # 3. Determine Execution Mode & Token Allocation
-    if timeline_template_reply:
-        reply = timeline_template_reply
-        max_tokens = 0
-    elif remember_template_reply:
+    if remember_template_reply:
         reply = remember_template_reply
         max_tokens = 0
-    elif search_context and search_context.startswith("DISCORD SEARCH COMPLETE"):
-        reply = search_context
-        max_tokens = 0
-    elif GROQ_REMAINING_TPD <= 0:
-        max_tokens = 0
-        print("[GROQ API] Daily token quota (TPD) exhausted. Skipping LLM generation.")
-    elif time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
+    elif search_context:
+        max_tokens = min(dsl, 300)
+    elif GROQ_REMAINING_TPD <= 0 or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
         max_tokens = 0
 
-    # 4. Execute Groq API Call if Allocation & TPD Allow
-    if max_tokens > 0:
+    # Execute Groq API Call if permitted
+    if max_tokens > 0 and not remember_template_reply:
         max_tokens = min(max_tokens, GROQ_REMAINING_TPD)
-        
         url = "https://api.groq.com/openai/v1/chat/completions"
         payload = {
             "model": MODEL_NAME,
@@ -1305,45 +1344,33 @@ async def process_job(job: PendingJob, session: aiohttp.ClientSession):
                     data = await resp.json()
                     reply = data["choices"][0]["message"]["content"].strip()
                     actual_tokens = data.get("usage", {}).get("total_tokens", max_tokens // 2)
-                    
-                    # Single source of truth: Traffic engine record_expenditure handles both local and global TPD sync atomically
                     traffic_engine.record_expenditure(actual_tokens)
-                    
                 elif resp.status == 429:
                     GROQ_RATE_LIMITED_UNTIL = time.monotonic() + 60.0
-                    print(f"[GROQ API] Rate limited (429). Backing off for 60s.")
                     reply = "🥣 Oatmeal AI systems are experiencing high traffic right now."
                 else:
-                    err_text = await resp.text()
-                    print(f"[GROQ API ERROR] Status {resp.status}: {err_text}")
                     reply = "🥣 Oatmeal AI systems are experiencing high traffic right now."
-        except asyncio.TimeoutError:
-            print(f"[GROQ API TIMEOUT] Request timed out after 15 seconds.")
-            reply = "🥣 Oatmeal AI request timed out. Retrying pipeline shortly."
-        except Exception as e:
-            print(f"[GROQ API EXCEPTION] {e}")
+        except Exception:
             reply = "🥣 Oatmeal AI operational."
 
-    # 5. Handle BiMedia Generation (If applicable)
+    # Handle Media Generation
     media_url, embed = "", None
-    media_tiers = {1, 2, 3, 4, 5, 6, 7, 9}
-    should_attach_media = (
-        job.priority_tier in media_tiers
-        and not search_context
-        and not timeline_template_reply
-        and not remember_template_reply
-    )
-    if should_attach_media:
-        try:
-            # Custom mode for Priority 1, 2, 4, 7, and 9 when prompt text exists
-            media_mode = "custom" if job.priority_tier in (1, 2, 4, 7, 9) and job.prompt_text else "random"
-            media_url, embed = await BiMediaGenerator.generate(session, media_mode, job.prompt_text or "")
-        except Exception as media_err:
-            print(f"[BIMEDIA ERROR] {media_err}")
+    if remember_template_reply:
+        media_url = remember_media_url
+        embed = remember_embed
+    else:
+        media_tiers = {1, 2, 3, 4, 5, 6, 7, 9}
+        should_attach_media = job.priority_tier in media_tiers and not search_context
+        if should_attach_media:
+            try:
+                media_mode = "custom" if job.priority_tier in (1, 2, 4, 7, 9) and prompt_text else "random"
+                media_url, embed = await BiMediaGenerator.generate(session, media_mode, prompt_text)
+            except Exception as media_err:
+                print(f"[BIMEDIA ERROR] {media_err}")
 
-    # 6. Build Payload and Dispatch with Resilient Backoff
+    # Build Payload and Dispatch
     content, kwargs = await build_payload(reply, media_url, embed)
-    if not content and not kwargs.get("embed") and not kwargs.get("embeds") and not kwargs.get("file") and not kwargs.get("files"):
+    if not content and not kwargs.get("embed"):
         content = "🥣"
 
     dispatch_success = False
@@ -1359,26 +1386,20 @@ async def process_job(job: PendingJob, session: aiohttp.ClientSession):
             if http_err.status == 429:
                 await asyncio.sleep(2.0 * (attempt + 1))
             else:
-                print(f"[DISCORD HTTP ERROR] {http_err}")
                 break
-        except Exception as send_err:
-            print(f"[DISCORD SEND EXCEPTION (Attempt {attempt+1})] {send_err}")
+        except Exception:
             await asyncio.sleep(0.5 * (2 ** attempt))
             
     if dispatch_success:
-        # Success-only state updates for queued background priorities (P4, P5, P8)
         if job.reference_message and hasattr(job.reference_message, 'id'):
             replied_message_ids.add(job.reference_message.id)
             pending_message_ids.discard(job.reference_message.id)
         if job.priority_tier == 4 and job.reference_message:
             p4_cursors[str(job.channel.id)] = job.reference_message.id
-        if job.priority_tier == 8 and job.reference_message:
-            p8_cursors[str(job.channel.id)] = job.reference_message.id
         trigger_save_state()
     else:
         if job.reference_message and hasattr(job.reference_message, "id"):
             pending_message_ids.discard(job.reference_message.id)
-        print(f"[DISPATCH ERROR] Failed to deliver job after 3 attempts (Priority Tier: {job.priority_tier}). State not claimed.")
 
 # ============================================================
 # 13. ALL 9 BACKGROUND PRIORITY COROUTINES (P2 - P9)
@@ -1396,7 +1417,6 @@ async def execute_priority_2():
                     ch = random.choice(channels)
                     async for msg in ch.history(limit=20):
                         if not msg.author.bot and p2_key(guild.id, msg.author.id) not in p2_replied_member_ids:
-                            # Upgraded to use custom media mode based on member message text
                             url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "custom", msg.content or "")
                             content, kwargs = await build_payload("🥣", url, embed)
                             await msg.reply(content=content, mention_author=False, **kwargs)
@@ -1445,12 +1465,7 @@ async def execute_priority_3():
 
 
 async def execute_priority_4():
-    """
-    Background priority 4: Live reaction to new chat messages.
-    Uses per-channel cursors (p4_cursors) to ensure it scans new messages forward,
-    advancing cursors immediately for skipped/irrelevant messages while reserving 
-    cursor advancement for eligible messages strictly upon successful dispatch in process_job.
-    """
+    """Background priority 4: Live reaction to new chat messages with search & media precedence."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         spent = traffic_engine.spent_fraction
@@ -1476,7 +1491,6 @@ async def execute_priority_4():
                         continue
                         
                     async for msg in ch.history(**kwargs):
-                        # Explicit check for eligible reaction targets
                         is_eligible = (
                             not msg.author.bot 
                             and bool(msg.content)
@@ -1486,11 +1500,20 @@ async def execute_priority_4():
                         
                         if is_eligible:
                             pending_message_ids.add(msg.id)
+                            clean_content = RE_CLEAN_MENTIONS.sub('', msg.content).strip()
+                            if not clean_content:
+                                clean_content = msg.content.strip()
+
+                            lower_content = clean_content.lower()
+                            has_intent = any(w in lower_content for w in ("remember", "search", "google", "find", "look", "turtles"))
+                            
+                            prompt_payload = clean_content if has_intent else f"Quick witty take: '{clean_content[:110]}'"
+
                             job = PendingJob(
                                 priority_tier=4,
                                 timestamp=time.time(),
                                 channel=ch,
-                                prompt_text=f"Quick witty take: '{msg.content[:110]}'",
+                                prompt_text=prompt_payload,
                                 reference_message=msg,
                                 author_id=msg.author.id
                             )
@@ -1499,23 +1522,17 @@ async def execute_priority_4():
                             except Exception:
                                 pending_message_ids.discard(msg.id)
                                 raise
-                            # Stop processing this channel loop; leave cursor unadvanced 
-                            # so process_job finalizes it upon successful dispatch.
                             break
                         else:
-                            # Skipped / ineligible messages advance the cursor immediately
                             p4_cursors[ch_id_str] = msg.id
                             trigger_save_state()
                     break
         except Exception as e:
             print(f"[P4 ERROR] {e}")
 
+
 async def execute_priority_5():
-    """
-    Background priority 5: Token-free inverse of Priority 2.
-    Scans channel history working backwards (oldest_first=True) to post token-free 
-    media replies to members who haven't received a P5 response yet.
-    """
+    """Background priority 5: Token-free inverse of Priority 2."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(900, 2200))
@@ -1524,8 +1541,6 @@ async def execute_priority_5():
                 channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 if channels:
                     ch = random.choice(channels)
-                    
-                    # Working backwards (oldest_first=True) as the inverse of Priority 2
                     async for msg in ch.history(limit=30, oldest_first=True):
                         if not msg.author.bot:
                             member_key = p2_key(guild.id, msg.author.id)
@@ -1538,14 +1553,11 @@ async def execute_priority_5():
                                     trigger_save_state()
                                     break
                                 except discord.HTTPException as http_err:
-                                    # Claim member even on 404/403 errors to prevent infinite loops on deleted messages
                                     if http_err.status in (404, 403):
                                         p5_replied_member_ids.add(member_key)
                                         trigger_save_state()
-                                    print(f"[P5 HTTP ERROR {http_err.status}] {http_err}")
                                     break
-                                except Exception as reply_err:
-                                    print(f"[P5 REPLY ERROR] {reply_err}")
+                                except Exception:
                                     break
                     break
         except Exception as e:
@@ -1571,7 +1583,7 @@ async def execute_priority_6():
 
 
 async def execute_priority_7():
-    """Background priority 7: Cursor-based history scanning and customized media mirroring on bot messages."""
+    """Background priority 7: Cursor-based history scanning and customized media mirroring."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(35, 120))
@@ -1579,7 +1591,8 @@ async def execute_priority_7():
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 for ch in channels:
-                    cursor = p7_cursors.get(str(ch.id), 0)
+                    ch_id_str = str(ch.id)
+                    cursor = p7_cursors.get(ch_id_str, 0)
                     kwargs = {"limit": 30, "oldest_first": True}
                     if cursor > 0:
                         kwargs["after"] = discord.Object(id=cursor)
@@ -1593,24 +1606,21 @@ async def execute_priority_7():
                     if target is None:
                         continue
                         
-                    # Upgraded to use custom media mode based on bot's own historical message content
                     url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "custom", target.content or "")
                     content, kwargs_payload = await build_payload("", url, embed)
-                    
                     try:
                         await target.reply(content=content, mention_author=False, **kwargs_payload)
-                        p7_cursors[str(ch.id)] = target.id
+                        p7_cursors[ch_id_str] = target.id
                         trigger_save_state()
                         break
-                    except Exception as send_err:
-                        print(f"[P7] Reply failed, cursor NOT advanced: {send_err}")
+                    except Exception:
                         continue
         except Exception as e:
             print(f"[P7 ERROR] {e}")
 
 
 async def execute_priority_8():
-    """Background priority 8: Cursor-based reflection jobs on historical bot messages (Success-Only Cursor)."""
+    """Background priority 8: Cursor-based reflection jobs on historical bot messages."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(50, 160))
@@ -1618,7 +1628,8 @@ async def execute_priority_8():
             for guild in list(bot.guilds):
                 channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 for ch in channels:
-                    cursor = p8_cursors.get(str(ch.id), 0)
+                    ch_id_str = str(ch.id)
+                    cursor = p8_cursors.get(ch_id_str, 0)
                     kwargs = {"limit": 30, "oldest_first": True}
                     if cursor > 0:
                         kwargs["after"] = discord.Object(id=cursor)
@@ -1632,7 +1643,6 @@ async def execute_priority_8():
                     if target is None:
                         continue
                     
-                    # Note: p8_cursors is now advanced inside process_job upon successful job dispatch
                     job = PendingJob(
                         priority_tier=8,
                         timestamp=time.time(),
@@ -1674,8 +1684,6 @@ async def execute_priority_9():
                         break
         except Exception as e:
             print(f"[P9 ERROR] {e}")
-
-
 # ============================================================
 # 14. WORKERS & BOT EVENTS
 # ============================================================
@@ -1723,7 +1731,7 @@ async def on_ready():
     print("=" * 64)
     load_state()
 
-    # Initialize all background loops and atomic state persistence workers here:
+    # Initialize all background loops and atomic state persistence workers
     _background_tasks = [
         asyncio.create_task(state_writer_worker()),
         asyncio.create_task(delay_queue_worker()),
@@ -1751,7 +1759,6 @@ async def on_message(message):
     clean = RE_CLEAN_MENTIONS.sub("", message.content).strip()
     mentioned = bot.user in message.mentions
     
-    # Robust check for replies to the bot (handles uncached references)
     replied_to_bot = False
     if message.reference:
         if message.reference.resolved and getattr(message.reference.resolved, 'author', None) == bot.user:
