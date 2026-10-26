@@ -9,12 +9,14 @@ import os
 import re
 import json
 import time
+import logging
 import asyncio
 import threading
 import random
 import urllib.parse
 import collections
 import itertools
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set, Tuple, Optional
 from datetime import datetime, timezone
@@ -24,8 +26,15 @@ import aiohttp
 from aiohttp import web
 
 # ============================================================
-# 0. PRE-COMPILED REGEX CONSTANTS
+# 0. STRUCTURED LOGGING SETUP & PRE-COMPILED REGEX CONSTANTS
 # ============================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("OatmealAI")
+
 RE_TENOR_ID = re.compile(r'/view/[^"]+-(\d+)')
 RE_WORD_TOKENS = re.compile(r'\b\w+\b')
 RE_CLEAN_MENTIONS = re.compile(r'<@!?\d+>')
@@ -36,26 +45,57 @@ RE_SNIPPETS = re.compile(r'<td class=["\']result-snippet["\'][^>]*>(.*?)</td>', 
 RE_HTML_STRIP = re.compile(r'<.*?>')
 
 # ============================================================
-# 1. CONFIG & CREDENTIALS
+# 1. ENVIRONMENT CONFIGURATION & VALIDATOR CLASS (UPGRADED)
 # ============================================================
-DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-if not DISCORD_TOKEN or not GROQ_API_KEY:
-    raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY environment variables.")
+@dataclass(frozen=True)
+class BotConfig:
+    """Immutable, type-safe configuration container validating environment settings on boot."""
+    discord_token: str
+    groq_api_key: str
+    model_name: str
+    state_path: str
+    groq_max_tpd: int
+    groq_max_tpm: int
+    groq_max_rpd: int
 
-MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip()
-STATE_PATH = os.environ.get("STATE_PATH", "/tmp/oatmeal_state.json")
+    @classmethod
+    def load_and_validate(cls) -> "BotConfig":
+        def env_int(name: str, default: int, minimum: int = 1, maximum: int = 100_000_000) -> int:
+            try:
+                val = int(os.environ.get(name, str(default)))
+                return max(minimum, min(maximum, val))
+            except (TypeError, ValueError):
+                logger.warning("Invalid integer for env var %s; defaulting to %d", name, default)
+                return default
 
-def env_int(name: str, default: int, minimum: int = 1, maximum: int = 10_000_000) -> int:
-    """Parse a bounded integer environment variable safely without crashing."""
-    try:
-        value = int(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        print(f"[CONFIG] Invalid {name}; using default {default}.")
-        value = default
-    return max(minimum, min(maximum, value))
+        d_token = os.environ.get("DISCORD_TOKEN", "").strip()
+        g_key = os.environ.get("GROQ_API_KEY", "").strip()
+        
+        if not d_token or not g_key:
+            logger.critical("Missing critical credentials: DISCORD_TOKEN or GROQ_API_KEY environment variables.")
+            raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY environment variables.")
 
-# Configure Discord Intents
+        logger.info("[CONFIG] Environment configuration successfully validated and loaded.")
+        return cls(
+            discord_token=d_token,
+            groq_api_key=g_key,
+            model_name=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip(),
+            state_path=os.environ.get("STATE_PATH", "/tmp/oatmeal_state.json").strip(),
+            groq_max_tpd=env_int("GROQ_MAX_TPD", 200000, 1, 100_000_000),
+            groq_max_tpm=env_int("GROQ_MAX_TPM", 8000, 1, 1_000_000),
+            groq_max_rpd=env_int("GROQ_MAX_RPD", 1000, 1, 1_000_000),
+        )
+
+# Initialize validated global configuration container
+CONFIG = BotConfig.load_and_validate()
+
+# Module-level convenience aliases to prevent NameError across core subsystems
+DISCORD_TOKEN = CONFIG.discord_token
+GROQ_API_KEY = CONFIG.groq_api_key
+STATE_PATH = CONFIG.state_path
+MODEL_NAME = CONFIG.model_name
+
+# Configure Discord Client Intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -67,17 +107,21 @@ bot = discord.Client(intents=intents)
 TASKS_INITIALIZED = False
 HTTP_SESSION: Optional[aiohttp.ClientSession] = None
 
+
 # ============================================================
 # 2. THREAD-SAFE BOUNDED MEMORY STRUCTURES & QUOTA GOVERNOR (UPGRADED)
 # ============================================================
 class BoundedSet:
-    """Thread-safe bounded set with O(1) additions, deletions, snapshotting, and capacity management via OrderedDict."""
+    """
+    Thread-safe bounded set with O(1) additions, deletions, snapshotting, 
+    and strict capacity management via OrderedDict.
+    """
     def __init__(self, maxsize: int = 30000):
         self.maxsize = maxsize
         self._map: collections.OrderedDict[Any, None] = collections.OrderedDict()
         self._lock = threading.Lock()
 
-    def add(self, item: Any):
+    def add(self, item: Any) -> None:
         with self._lock:
             if item in self._map:
                 self._map.move_to_end(item)
@@ -112,6 +156,7 @@ class BoundedSet:
         with self._lock:
             return f"BoundedSet(len={len(self._map)}, maxsize={self.maxsize})"
 
+
 # Core Bounded Memory Trackers
 replied_message_ids = BoundedSet(maxsize=30000)
 pending_message_ids = BoundedSet(maxsize=10000)
@@ -128,14 +173,12 @@ last_member_activity_time: Dict[Any, float] = {}
 recent_media_urls = collections.deque(maxlen=500)
 blocked_users: Dict[str, float] = {}
 
-# ============================================================
-# RATE LIMITING & TOKEN QUOTA TRACKERS
-# ============================================================
+# Rate Limiting & Quota Trackers
 local_daily_reset_day: Optional[str] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-GROQ_MAX_TPD = env_int("GROQ_MAX_TPD", 200000, minimum=1, maximum=100_000_000)
-GROQ_MAX_TPM = env_int("GROQ_MAX_TPM", 8000, minimum=1, maximum=1_000_000)
-GROQ_MAX_RPD = env_int("GROQ_MAX_RPD", 1000, minimum=1, maximum=1_000_000)
+GROQ_MAX_TPD = CONFIG.groq_max_tpd
+GROQ_MAX_TPM = CONFIG.groq_max_tpm
+GROQ_MAX_RPD = CONFIG.groq_max_rpd
 
 GROQ_REMAINING_TPD = GROQ_MAX_TPD
 GROQ_REMAINING_TPM = GROQ_MAX_TPM
@@ -143,7 +186,10 @@ GROQ_REMAINING_RPD = GROQ_MAX_RPD
 GROQ_RATE_LIMITED_UNTIL = 0.0
 
 def check_and_reset_daily_quotas():
-    """Resets daily remaining TPD and synchronizes traffic engine token counters if the UTC calendar day has changed."""
+    """
+    Resets daily remaining TPD, TPM, RPD quotas and synchronizes traffic engine 
+    token counters if the UTC calendar day has advanced.
+    """
     global local_daily_reset_day, GROQ_REMAINING_TPD, GROQ_REMAINING_TPM, GROQ_REMAINING_RPD
     current_utc_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
@@ -156,15 +202,14 @@ def check_and_reset_daily_quotas():
         if 'traffic_engine' in globals() and traffic_engine:
             with traffic_engine._lock:
                 traffic_engine.local_daily_tokens = 0
-                traffic_engine.congestion_penalty = 0.0  # Aligned with GoogleMapsTrafficEngine attribute name
+                traffic_engine.congestion_penalty = 0.0
                 traffic_engine.volume_level = 1.0
                 
-        print(f"[QUOTA] Daily token trackers and volume controller reset for new UTC day: {current_utc_day}")
+        logger.info("[QUOTA] Daily token trackers and volume controller reset for new UTC day: %s", current_utc_day)
 
 groq_api_lock = asyncio.Lock()
 state_io_lock = asyncio.Lock()
 ACTIVITY_PAUSE = 45
-
 # ============================================================
 # 3. DETERMINISTIC PRIORITY QUEUE & STATE PERSISTENCE STRUCTURES
 # ============================================================
@@ -172,7 +217,7 @@ _job_sequence = itertools.count()
 
 @dataclass(order=True)
 class PendingJob:
-    """Represents a scheduled job with deterministic priority ordering."""
+    """Represents a scheduled job with deterministic priority ordering and sequence tie-breaking."""
     priority_tier: int
     timestamp: float
     sequence: int = field(default_factory=lambda: next(_job_sequence))
@@ -188,14 +233,16 @@ def p2_key(guild_id: int, author_id: int) -> str:
     """Generates a unique composite key for Priority 2 member tracking."""
     return f"{guild_id}:{author_id}"
 
+
 # ============================================================
-# 4. GOOGLE MAPS TRAFFIC ENGINE & PID MICRO-TOKEN GOVERNOR (REINVENTED)
+# 4. GOOGLE MAPS TRAFFIC ENGINE & PID MICRO-TOKEN GOVERNOR (UPGRADED)
 # ============================================================
 class GoogleMapsTrafficEngine:
     """
     Closed-loop adaptive traffic controller inspired by network congestion control protocols.
     Dynamically throttles token allocations using error-feedback from API latencies,
     rate-limit (429) events, and quota burn rates to maintain optimal flow without hard cliffs.
+    Integrated with structured enterprise logging.
     """
     def __init__(self, daily_quota: int = 200000, target_spent_pct: float = 0.20):
         self.daily_quota = max(1, daily_quota)
@@ -230,6 +277,7 @@ class GoogleMapsTrafficEngine:
         """Injects real-time congestion feedback (e.g., on HTTP 429 or timeouts) to damp volume fluidly."""
         with self._lock:
             self.congestion_penalty = min(1.0, self.congestion_penalty + severity)
+            logger.warning("[TRAFFIC ENGINE] Congestion reported (Severity: %.2f). New penalty term: %.2f", severity, self.congestion_penalty)
             self.update_navigation()
 
     def update_navigation(self):
@@ -249,8 +297,12 @@ class GoogleMapsTrafficEngine:
             target = max(0.2, 1.0 - (quota_pressure * 0.6) - self.congestion_penalty)
             
             # Exponential Moving Average (EMA) momentum filter to eliminate abrupt scaling cliffs
+            old_vol = self.volume_level
             self.volume_level += (target - self.volume_level) * 0.25
             self.volume_level = max(0.2, min(1.0, self.volume_level))
+            
+            if abs(self.volume_level - old_vol) > 0.05:
+                logger.debug("[TRAFFIC ENGINE] Volume level adjusted: %.2f (Spent Fraction: %.2f)", self.volume_level, s)
 
     def get_allocation(self, priority_tier: int) -> Tuple[int, int, str]:
         base = self.priority_hierarchy.get(priority_tier, {"dsn": 30, "dsl": 50, "mode": "MICRO-TOKEN DEFAULT"})
@@ -282,11 +334,10 @@ class GoogleMapsTrafficEngine:
 
 traffic_engine = GoogleMapsTrafficEngine(daily_quota=GROQ_MAX_TPD)
 
-# ============================================================
-# 5. ASYNCHRONOUS SINGLE-WRITER STATE PERSISTENCE & ROLLING BACKUP ENGINE (REINVENTED)
-# ============================================================
-import hashlib
 
+# ============================================================
+# 5. ASYNCHRONOUS SINGLE-WRITER STATE PERSISTENCE & ROLLING BACKUP ENGINE (UPGRADED)
+# ============================================================
 def trigger_save_state():
     """Non-blocking trigger to request a coalesced state save operation."""
     try:
@@ -312,7 +363,7 @@ def load_state():
             break
             
     if not target_path:
-        print(f"[STATE] No existing state file or backups found at {state_path_str}. Starting fresh.")
+        logger.info("[STATE] No existing state file or backups found at %s. Starting fresh.", state_path_str)
         return
 
     def _to_int_keys(d):
@@ -328,7 +379,6 @@ def load_state():
         with open(path, "r", encoding="utf-8") as f:
             raw_content = f.read()
             
-        # Optional separation of payload and checksum if stored as a container
         try:
             container = json.loads(raw_content)
             if isinstance(container, dict) and "payload" in container and "checksum" in container:
@@ -338,7 +388,6 @@ def load_state():
                     raise ValueError("SHA-256 integrity checksum mismatch detected.")
                 return container["payload"]
             elif isinstance(container, dict):
-                # Legacy compatibility check without wrapper checksum
                 return container
         except json.JSONDecodeError as jde:
             raise ValueError(f"Invalid JSON format: {jde}")
@@ -351,13 +400,13 @@ def load_state():
         try:
             loaded_data = _verify_and_load(path)
             target_path = path
-            print(f"[STATE] Successfully verified and loaded state from {target_path}")
+            logger.info("[STATE] Successfully verified and loaded state from %s", target_path)
             break
         except Exception as err:
-            print(f"[STATE WARNING] Failed to load/verify candidate {path}: {err}")
+            logger.warning("[STATE WARNING] Failed to load/verify candidate %s: %s", path, err)
 
     if not loaded_data:
-        print("[STATE ERROR] All primary and rolling backup candidates failed verification. Starting fresh.")
+        logger.error("[STATE ERROR] All primary and rolling backup candidates failed verification. Starting fresh.")
         return
 
     try:
@@ -375,7 +424,7 @@ def load_state():
         blocked_users.update(_to_int_keys(loaded_data.get("blocked_users", {})))
         p3_member_indices.update(_to_int_keys(loaded_data.get("p3_member_indices", {})))
     except Exception as parse_err:
-        print(f"[STATE] Error populating memory structures from loaded state: {parse_err}")
+        logger.error("[STATE] Error populating memory structures from loaded state: %s", parse_err)
 
 async def state_writer_worker():
     """
@@ -451,12 +500,12 @@ async def state_writer_worker():
                                 os.remove(temp_path)
                         except OSError:
                             pass
-                        print(f"[STATE] Atomic write rotation failed: {e}")
+                        logger.error("[STATE] Atomic write rotation failed: %s", e)
 
                 await asyncio.to_thread(_write)
 
         except Exception as worker_err:
-            print(f"[STATE WORKER ERROR] {worker_err}")
+            logger.error("[STATE WORKER ERROR] %s", worker_err)
         finally:
             for _ in range(drained_count):
                 try:
@@ -465,7 +514,7 @@ async def state_writer_worker():
                     pass
 
 # ============================================================
-# 6. ASYNCHRONOUS TELEMETRY SERVER & METRICS DASHBOARD
+# 6. ASYNCHRONOUS TELEMETRY SERVER & METRICS DASHBOARD (UPGRADED)
 # ============================================================
 _web_runner = None
 _web_site = None
@@ -535,7 +584,7 @@ async def handle_telemetry(request):
     return web.json_response(data)
 
 async def _run_web_server():
-    """Initializes and runs the aiohttp telemetry and health check web server with full lifecycle control."""
+    """Initializes and runs the aiohttp telemetry and health check web server with full lifecycle control and structured logging."""
     global _web_runner, _web_site, _telemetry_loop, _telemetry_task
     _telemetry_loop = asyncio.get_running_loop()
     _telemetry_task = asyncio.current_task()
@@ -550,23 +599,23 @@ async def _run_web_server():
         await _web_runner.setup()
         _web_site = web.TCPSite(_web_runner, "0.0.0.0", port)
         await _web_site.start()
-        print(f"[TELEMETRY] Async web server and metrics dashboard active on port {port}")
+        logger.info("[TELEMETRY] Async web server and metrics dashboard active on port %d", port)
         
         while True:
             await asyncio.sleep(3600)
     except asyncio.CancelledError:
-        print("[TELEMETRY] Shutdown signal received. Cleaning up web server resources...")
+        logger.info("[TELEMETRY] Shutdown signal received. Cleaning up web server resources...")
     except Exception as e:
-        print(f"[TELEMETRY RUNTIME ERROR] {e}")
+        logger.error("[TELEMETRY RUNTIME ERROR] %s", e)
     finally:
         try:
             if _web_site:
                 await _web_site.stop()
             if _web_runner:
                 await _web_runner.cleanup()
-            print("[TELEMETRY] Web server successfully stopped and port released.")
+            logger.info("[TELEMETRY] Web server successfully stopped and port released.")
         except Exception as cleanup_err:
-            print(f"[TELEMETRY CLEANUP ERROR] {cleanup_err}")
+            logger.error("[TELEMETRY CLEANUP ERROR] %s", cleanup_err)
 
 def start_instant_web_server():
     """Start telemetry in one tracked daemon thread; safe to call once."""
@@ -577,7 +626,7 @@ def start_instant_web_server():
         try:
             asyncio.run(_run_web_server())
         except Exception as e:
-            print(f"[TELEMETRY SERVER EXCEPTION] {e}")
+            logger.error("[TELEMETRY SERVER EXCEPTION] %s", e)
     _web_thread = threading.Thread(target=_thread_target, daemon=True, name="TelemetryServerThread")
     _web_thread.start()
 
@@ -595,18 +644,20 @@ def stop_telemetry_server():
     _telemetry_loop = None
     _telemetry_task = None
 
+
 # ============================================================
-# 7. PLATFORM-NATIVE BIMEDIA GENERATOR (REINVENTED & UPGRADED)
+# 7. PLATFORM-NATIVE BIMEDIA GENERATOR (UPGRADED)
 # ============================================================
 class BiMediaGenerator:
     """
     Advanced multi-category media engine protected by an enterprise async lock,
-    featuring background asset prefetching, semantic intent mapping, and cascading fallbacks.
+    featuring background asset prefetching, semantic intent mapping, cascading fallbacks,
+    and structured enterprise logging.
     """
     
     _media_lock = asyncio.Lock()
-    _served_history = collections.deque(maxlen=250)
-    _prefetch_buffer = asyncio.Queue(maxsize=30)
+    _served_history: collections.deque = collections.deque(maxlen=250)
+    _prefetch_buffer: asyncio.Queue = asyncio.Queue(maxsize=30)
     
     FALLBACK_VIDEOS = [
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -639,26 +690,9 @@ class BiMediaGenerator:
         "https://en.wikipedia.org/wiki/Internet_archive"
     ]
 
-    @staticmethod
-    def extract_keywords(text: str) -> str:
-        """Extracts significant search tokens and phrases from user prompts for customized media queries."""
-        if not text:
-            return ""
-        stop_words = {
-            "the", "a", "an", "in", "on", "at", "to", "for", "is", "are", 
-            "about", "you", "me", "it", "this", "that", "what", "how", "why", 
-            "who", "where", "when", "oatmeal", "joey", "arnold", "bot", "hey", "please", "can"
-        }
-        tokens = [
-            w.strip("?.,!:") 
-            for w in text.split() 
-            if w.lower().strip("?.,!:") not in stop_words and len(w.strip("?.,!:")) > 1
-        ]
-        return " ".join(tokens[:4]) if tokens else text[:30]
-
     @classmethod
     async def search_youtube_api(cls, session: aiohttp.ClientSession, query: str) -> List[str]:
-        """Token-free YouTube public search via Piped API with timeout guards."""
+        """Token-free YouTube public search via Piped API with timeout guards and structured logging."""
         cleaned = re.sub(r'\s+', ' ', RE_CLEAN_SYMBOLS.sub(' ', RE_CLEAN_SEARCH.sub('', RE_CLEAN_MENTIONS.sub('', query)))).strip()
         q = urllib.parse.quote(cleaned[:100] or "90s retro commercial")
         url = f"https://pipedapi.kavin.rocks/search?q={q}&filter=videos"
@@ -672,13 +706,13 @@ class BiMediaGenerator:
                             vid_id = item["url"].split("=")[-1]
                             urls.append(f"https://www.youtube.com/watch?v={vid_id}")
                     return urls
-        except Exception:
-            pass
+        except Exception as err:
+            logger.debug("[BIMEDIA] YouTube Piped search query failed: %s", err)
         return []
 
     @classmethod
     async def search_tenor_api(cls, session: aiohttp.ClientSession, query: str) -> List[str]:
-        """Token-free Tenor public GIF search query."""
+        """Token-free Tenor public GIF search query with timeout guards."""
         cleaned = re.sub(r'\s+', ' ', RE_CLEAN_SYMBOLS.sub(' ', RE_CLEAN_SEARCH.sub('', RE_CLEAN_MENTIONS.sub('', query)))).strip()
         q = urllib.parse.quote(cleaned[:80] or "retro reaction")
         url = f"https://tenor.googleapis.com/v2/search?q={q}&key=LIVDSRZULELA&limit=25&media_filter=gif"
@@ -692,13 +726,13 @@ class BiMediaGenerator:
                         if "gif" in media:
                             urls.append(media["gif"]["url"])
                     return urls
-        except Exception:
-            pass
+        except Exception as err:
+            logger.debug("[BIMEDIA] Tenor search query failed: %s", err)
         return []
 
     @classmethod
     async def search_wikipedia_native(cls, session: aiohttp.ClientSession, query: str) -> List[str]:
-        """Token-free Wikipedia opensearch article query."""
+        """Token-free Wikipedia opensearch article query with timeout guards."""
         cleaned = RE_CLEAN_MENTIONS.sub('', query)
         query_str = urllib.parse.quote(re.sub(r'\s+', ' ', cleaned).strip()[:60] or "1990s")
         url = f"https://en.wikipedia.org/w/api.php?action=opensearch&search={query_str}&limit=10&namespace=0&format=json"
@@ -708,8 +742,8 @@ class BiMediaGenerator:
                     data = await resp.json()
                     if isinstance(data, list) and len(data) > 3 and isinstance(data[3], list):
                         return data[3]
-        except Exception:
-            pass
+        except Exception as err:
+            logger.debug("[BIMEDIA] Wikipedia search query failed: %s", err)
         return []
 
     @classmethod
@@ -724,8 +758,8 @@ class BiMediaGenerator:
 
     @classmethod
     async def fetch_media_by_type(cls, session: aiohttp.ClientSession, idx: int, query: str = "") -> Tuple[str, Optional[discord.Embed]]:
-        """Resolves media for category `idx` with intelligent category cascading."""
-        base_query = cls.extract_keywords(query) if query else ""
+        """Resolves media for category `idx` with intelligent category cascading and pre-filtered query words."""
+        base_query = query if query else ""
         cascade_attempts = 0
 
         while cascade_attempts < 3:
@@ -777,7 +811,7 @@ class BiMediaGenerator:
                 ascii_templates = [
                     "```\n  (o.o)  Oatmeal AI V102.0\n  / | \\\n _/\\_/\\_\n```",
                     "```\n  /\\_/\\\n ( o.o )  Arnold Attic\n  > ^ <\n```",
-                    "```\n    ____         _                    _ \n  / __|___   _| |_ _ __  ___ _ _  | |\n | (__/ _ \\(_-<  _| '  \\/ -_) '_| |_|\n  \\___\\___/ /_/\\__|_|_|_\\___|_|    (_)\n```"
+                    "```\n    ____         _                  _ \n  / __|___   _| |_ _ __  ___ _ _  | |\n | (__/ _ \\(_-<  _| '  \\/ -_) '_| |_|\n  \\___\\___/ /_/\\__|_|_|_\\___|_|     (_)\n```"
                 ]
                 return random.choice(ascii_templates), None
 
@@ -829,14 +863,15 @@ class BiMediaGenerator:
             return await cls.fetch_media_by_type(session, idx, query=chat_text if mode == "custom" else "")
 
 # ============================================================
-# 8. RESILIENT SEARCH SUBSYSTEM, INTENT PARSER & REMEMBER ENGINE (REINVENTED)
+# 8. RESILIENT SEARCH SUBSYSTEM, INTENT PARSER & REMEMBER ENGINE (UPGRADED)
 # ============================================================
 _background_tasks: List[asyncio.Task] = []
 
 class AsyncSearchCache:
     """
     Advanced thread-safe asynchronous search cache with O(1) LRU eviction,
-    atomic single-flight request coalescing, and multi-engine failover (DuckDuckGo Lite + Wikipedia API fallback).
+    atomic single-flight request coalescing, multi-engine failover (DuckDuckGo Lite + Wikipedia API fallback),
+    and structured enterprise logging.
     """
     def __init__(self, ttl: float = 300.0, max_size: int = 250):
         self.ttl = ttl
@@ -848,33 +883,36 @@ class AsyncSearchCache:
     async def _fetch_duckduckgo(self, session: aiohttp.ClientSession, query: str) -> str:
         url = "https://lite.duckduckgo.com/lite/"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Oabot/102.0"}
-        async with session.post(url, data={'q': query}, headers=headers, timeout=8) as resp:
-            if resp.status == 200:
-                html = await resp.text()
-                clean_s = []
-                try:
-                    from bs4 import BeautifulSoup
-                    soup = BeautifulSoup(html, 'html.parser')
-                    snippet_tags = soup.find_all(class_=re.compile(r'snippet', re.I))
-                    if not snippet_tags:
-                        snippet_tags = soup.find_all('td', class_=re.compile(r'result', re.I))
-                    for tag in snippet_tags[:3]:
-                        text = tag.get_text(strip=True)
-                        if len(text) > 15:
-                            clean_s.append(text)
-                except Exception:
-                    pass
+        try:
+            async with session.post(url, data={'q': query}, headers=headers, timeout=8) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    clean_s = []
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(html, 'html.parser')
+                        snippet_tags = soup.find_all(class_=re.compile(r'snippet', re.I))
+                        if not snippet_tags:
+                            snippet_tags = soup.find_all('td', class_=re.compile(r'result', re.I))
+                        for tag in snippet_tags[:3]:
+                            text = tag.get_text(strip=True)
+                            if len(text) > 15:
+                                clean_s.append(text)
+                    except Exception as parse_err:
+                        logger.debug("[SEARCH] BeautifulSoup HTML parse fallback triggered: %s", parse_err)
 
-                if not clean_s:
-                    snippets = RE_SNIPPETS.findall(html)
-                    if not snippets:
-                        snippets = re.findall(r'<td[^>]*class=["\']result-snippet["\'][^>]*>(.*?)</td>', html, re.DOTALL)
-                    for s in snippets[:3]:
-                        stripped = RE_HTML_STRIP.sub('', s).strip()
-                        stripped = stripped.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
-                        if len(stripped) > 15:
-                            clean_s.append(stripped)
-                return "\n".join(f"- {s}" for s in clean_s) if clean_s else ""
+                    if not clean_s:
+                        snippets = RE_SNIPPETS.findall(html)
+                        if not snippets:
+                            snippets = re.findall(r'<td[^>]*class=["\']result-snippet["\'][^>]*>(.*?)</td>', html, re.DOTALL)
+                        for s in snippets[:3]:
+                            stripped = RE_HTML_STRIP.sub('', s).strip()
+                            stripped = stripped.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
+                            if len(stripped) > 15:
+                                clean_s.append(stripped)
+                    return "\n".join(f"- {s}" for s in clean_s) if clean_s else ""
+        except Exception as ddg_err:
+            logger.debug("[SEARCH] DuckDuckGo Lite query failed: %s", ddg_err)
         return ""
 
     async def _fetch_wikipedia_fallback(self, session: aiohttp.ClientSession, query: str) -> str:
@@ -892,8 +930,8 @@ class AsyncSearchCache:
                         if snippet:
                             snippets.append(f"- [{title}] {snippet}")
                     return "\n".join(snippets)
-        except Exception:
-            pass
+        except Exception as wiki_err:
+            logger.debug("[SEARCH] Wikipedia fallback search query failed: %s", wiki_err)
         return ""
 
     async def get_or_fetch(self, query: str, session: aiohttp.ClientSession) -> str:
@@ -950,7 +988,7 @@ class AsyncSearchCache:
             return res
 
         except Exception as e:
-            print(f"[SEARCH ERROR] {e}")
+            logger.error("[SEARCH ERROR] %s", e)
             async with self._lock:
                 self._inflight.pop(q_key, None)
             if not future.done():
@@ -962,7 +1000,8 @@ search_cache = AsyncSearchCache()
 
 def parse_intent_and_keyword(prompt_text: str) -> Tuple[str, str]:
     """
-    Precision intent parser with upgraded phrase extraction and regex fallback cleaning.
+    Precision intent parser with upgraded phrase extraction and regex fallback cleaning
+    backed by structured logging support.
     """
     if not prompt_text:
         return "chat", ""
@@ -1014,7 +1053,7 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
     """
     Upgraded Phrase-Based Remember Template Engine:
     Performs concurrent asynchronous lookups across Discord history, biographical timeline outlines,
-    multi-engine search caches, and token-free media generation.
+    multi-engine search caches, and token-free media generation with structured enterprise logging.
     """
     if not prompt_text:
         return "", "", None
@@ -1042,7 +1081,7 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
                         matched_msg = msg
                         break
         except Exception as hist_err:
-            print(f"[REMEMBER HISTORY ERROR] {hist_err}")
+            logger.error("[REMEMBER HISTORY ERROR] %s", hist_err)
         return matched_msg
 
     # 2. Asynchronous Internet Search Quote via Multi-Engine Cache
@@ -1056,7 +1095,7 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
                     yrs = RE_YEARS.findall(q)
                     return q, (yrs[0] if yrs else "2020")
         except Exception as net_err:
-            print(f"[REMEMBER SEARCH ERROR] {net_err}")
+            logger.error("[REMEMBER SEARCH ERROR] %s", net_err)
         return f"The archive record concerning '{search_phrase}' remains part of history.", "1993"
 
     # 3. Asynchronous Token-Free Media Generation
@@ -1064,7 +1103,7 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
         try:
             return await BiMediaGenerator.generate(session, "custom", search_phrase)
         except Exception as media_err:
-            print(f"[REMEMBER MEDIA ERROR] {media_err}")
+            logger.error("[REMEMBER MEDIA ERROR] %s", media_err)
             return "", None
 
     matched_msg, (internet_quote, internet_year), (media_url, embed) = await asyncio.gather(
@@ -1104,33 +1143,37 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
 
     return template_reply, media_url, embed
 
-
 # ============================================================
-# 9. PAYLOAD BUILDER
+# 9. PAYLOAD BUILDER (UPGRADED)
 # ============================================================
 async def build_payload(content_str: str, media_url: str = "", embed: Optional[discord.Embed] = None) -> Tuple[str, dict]:
     """
     Formats text content, direct media URLs, and rich embeds for Discord dispatch, 
-    ensuring robust multi-asset pairing and preventing empty payload exceptions.
+    ensuring robust multi-asset pairing, structured logging telemetry, and 
+    foolproof prevention of Discord API empty payload exceptions.
     """
-    kwargs = {}
+    kwargs: dict = {}
     final_content = content_str.strip() if content_str else ""
-    
-    # Append media URL to text content if present and no conflicting embed exists
-    if media_url:
+    sanitized_media = media_url.strip() if media_url else ""
+
+    # Append media URL cleanly if present
+    if sanitized_media:
         if final_content:
-            final_content += f"\n{media_url}"
+            final_content += f"\n{sanitized_media}"
         else:
-            final_content = media_url
-            
-    # Attach rich embed if generated
-    if embed:
+            final_content = sanitized_media
+            logger.debug("[PAYLOAD] Dispatched media-only payload: %s", sanitized_media)
+
+    # Attach rich embed if provided
+    if embed is not None:
         kwargs["embed"] = embed
-        
-    # Absolute fallback to prevent Discord API empty message exceptions
-    if not final_content and not embed:
+        logger.debug("[PAYLOAD] Attached rich embed to message payload.")
+
+    # Absolute fallback guard to prevent Discord HTTP 400 Empty Message exceptions
+    if not final_content and not kwargs.get("embed"):
         final_content = "🥣 Oatmeal AI operational."
-        
+        logger.warning("[PAYLOAD WARNING] Empty payload detected. Applied operational fallback banner.")
+
     return final_content, kwargs
 # ============================================================
 # 10. UNTRUNCATED BIOGRAPHICAL TIMELINE & KERNEL
@@ -1240,9 +1283,8 @@ ZERO_TOKEN_BANTER = [
     "Hope over dope.",
     "Joy over circumstances.",
 ]
-
 # ============================================================
-# 11. STREAMLINED TIMELINE & REMEMBER TEMPLATE ENGINE (ULTRA-ROBUST)
+# 11. STREAMLINED TIMELINE & REMEMBER TEMPLATE ENGINE (UPGRADED)
 # ============================================================
 
 def extract_relevant_timeline(prompt: str) -> str:
@@ -1260,7 +1302,8 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
     """
     Ultra-Robust Phrase-Based Remember Template Engine:
     Cleans conversational prefixes, performs concurrent async lookups across Discord history,
-    biographical timeline outlines, internet search caches, and token-free media generation.
+    biographical timeline outlines, internet search caches, and token-free media generation
+    backed by structured enterprise logging.
     """
     if not prompt_text:
         return "", "", None
@@ -1289,7 +1332,7 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
                         matched_msg = msg
                         break
         except Exception as hist_err:
-            print(f"[REMEMBER HISTORY ERROR] {hist_err}")
+            logger.error("[REMEMBER HISTORY ERROR] %s", hist_err)
         return matched_msg
 
     # 2. Background task for Internet Search Quote via Cache
@@ -1303,7 +1346,7 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
                     yrs = RE_YEARS.findall(q)
                     return q, (yrs[0] if yrs else "2020")
         except Exception as net_err:
-            print(f"[REMEMBER SEARCH ERROR] {net_err}")
+            logger.error("[REMEMBER SEARCH ERROR] %s", net_err)
         return f"The archive record concerning '{search_phrase}' remains part of history.", "1993"
 
     # 3. Background task for Token-Free Media Generation
@@ -1311,7 +1354,7 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
         try:
             return await BiMediaGenerator.generate(session, "custom", search_phrase)
         except Exception as media_err:
-            print(f"[REMEMBER MEDIA ERROR] {media_err}")
+            logger.error("[REMEMBER MEDIA ERROR] %s", media_err)
             return "", None
 
     # Execute all asynchronous data lookups concurrently
@@ -1353,6 +1396,7 @@ async def get_remember_template_reply(channel: Any, prompt_text: str, sender: An
         )
 
     return template_reply, media_url, embed
+
 # ============================================================
 # 11X. HELPER: SINGLE TIMELINE LINE EXTRACTOR
 # ============================================================
@@ -1366,77 +1410,168 @@ def extract_single_timeline_line(keyword: str) -> str:
     return f"1985: Record for '{keyword}' in the Arnold Attic archive."
 
 # ============================================================
-# 12. UNIFIED JOB EXECUTION & PIPELINE DISPATCH ENGINE (UPGRADED)
+# 11.5 CENTRALIZED WORD MACHINE & ASSEMBLY LINE PIPELINE (UPGRADED)
 # ============================================================
-async def process_job(job: PendingJob, session: aiohttp.ClientSession):
+
+class WordMachine:
     """
-    Advanced modular pipeline job execution engine:
-    - Context & Intent Resolver: Handles remember/think/chat workflows securely.
-    - Adaptive LLM Dispatcher: Queries Groq with token caps, rate limits, and PID congestion telemetry.
-    - Media Orchestrator: Integrates seamlessly with BiMediaGenerator.
-    - Resilient Dispatcher: Executes rate-limit aware replies with jittered backoff.
+    Centralized controller for prompt analysis, intent parsing, 
+    and intelligent keyword extraction (Priority 2 & Priority 3 style).
     """
-    global GROQ_RATE_LIMITED_UNTIL, GROQ_REMAINING_TPD
+    STOP_WORDS = {
+        "the", "a", "an", "in", "on", "at", "to", "for", "is", "are", 
+        "about", "you", "me", "it", "this", "that", "what", "how", "why", 
+        "who", "where", "when", "oatmeal", "joey", "arnold", "bot", "hey", 
+        "please", "can", "and", "or", "but", "do", "did", "was", "we"
+    }
+
+    @classmethod
+    def flushed_keywords(cls, text: str, max_words: int = 5) -> str:
+        """Extracts up to the first N important keywords, stripping stop words and symbols."""
+        if not text:
+            return ""
+        cleaned = RE_CLEAN_MENTIONS.sub('', text)
+        cleaned = RE_CLEAN_SYMBOLS.sub(' ', cleaned)
+        words = [w.strip("?.,!:") for w in cleaned.split()]
+        important = [w for w in words if w.lower() not in cls.STOP_WORDS and len(w) > 1]
+        return " ".join(important[:max_words]) if important else text[:30]
+
+    @classmethod
+    def process_ingress(cls, prompt_text: str) -> Tuple[str, str, str]:
+        """
+        Parses intent, generates keyword-extracted phrase (for token-free media/search),
+        and preserves full clean content (for LLM think/chat).
+        """
+        intent, raw_keyword = parse_intent_and_keyword(prompt_text)
+        keyword_phrase = cls.flushed_keywords(prompt_text, max_words=5)
+        clean_content = RE_CLEAN_MENTIONS.sub('', prompt_text).strip() or prompt_text
+        
+        logger.debug("[WORD MACHINE] Ingress intent parsed: %s | Keywords: '%s'", intent, keyword_phrase)
+        return intent, keyword_phrase, clean_content
+
+
+class AssemblyLinePipeline:
+    """
+    Centralized single-job execution pipeline that routes requests through 
+    the Word Machine and forwards them token-free or via LLM to the correct service module
+    with structured logging and robust fault tolerance.
+    """
     
-    check_and_reset_daily_quotas()
-    if session is None or session.closed:
-        print("[JOB] HTTP session unavailable; releasing pending message claim.")
-        if job.reference_message:
-            pending_message_ids.discard(getattr(job.reference_message, "id", None))
-        return
+    @staticmethod
+    async def execute(job: PendingJob, session: aiohttp.ClientSession) -> Tuple[str, str, Optional[discord.Embed]]:
+        prompt_text = job.prompt_text or ""
+        sender_obj = job.reference_message.author if job.reference_message else None
+        
+        # Step 1: Pass through the Centralized Word Machine
+        intent, keyword_phrase, clean_content = WordMachine.process_ingress(prompt_text)
+        
+        reply_text = ""
+        media_url = ""
+        embed = None
+        search_context = ""
+        timeline_snippet = ""
 
-    dsn, dsl, mode = traffic_engine.get_allocation(job.priority_tier)
-    prompt_text = job.prompt_text or ""
-    sender_obj = job.reference_message.author if job.reference_message else None
-    
-    intent, keyword = parse_intent_and_keyword(prompt_text)
+        # Step 2: Route to Specialized Services based on Intent & Tier
+        try:
+            # PRIORITY 3: TARGETED MEMBER MEDIA & MENTION (TOKEN-FREE, TEXT-FREE)
+            if job.priority_tier == 3:
+                logger.debug("[PIPELINE] Routing Priority 3 member media mention job.")
+                reply_text = f"<@{job.author_id}>" if job.author_id else ""
+                target_keywords = WordMachine.flushed_keywords(prompt_text, max_words=3)
+                media_url, embed = await BiMediaGenerator.generate(session, "custom", target_keywords)
 
-    remember_template_reply = ""
-    remember_media_url = ""
-    remember_embed = None
-    search_context = ""
-    timeline_snippet = ""
+            # REMEMBER SERVICE (Token-Free local/archive lookup)
+            elif intent == "remember" and job.priority_tier in (1, 4):
+                logger.debug("[PIPELINE] Routing to Remember Template Engine (Tier %d).", job.priority_tier)
+                reply_text, media_url, embed = await get_remember_template_reply(
+                    job.channel, prompt_text, sender_obj, session
+                )
+            
+            # THINK / SEARCH SERVICE (LLM or Web Search lookup)
+            elif intent in ("think", "search") or job.priority_tier in (1, 4):
+                logger.debug("[PIPELINE] Routing to Think/Search Service (Tier %d).", job.priority_tier)
+                timeline_snippet = extract_relevant_timeline(keyword_phrase)
+                if intent == "search" or any(w in prompt_text.lower() for w in ("search", "find", "price", "google", "what", "lookup")):
+                    search_context = await search_cache.get_or_fetch(keyword_phrase, session)
+                
+                # If no template reply was generated, hand off to LLM (Think Service)
+                if not reply_text:
+                    reply_text = await AssemblyLinePipeline._dispatch_to_llm(
+                        clean_content, timeline_snippet, search_context, job.priority_tier
+                    )
 
-    # 1. Pipeline Stage: Intent Routing & Context Gathering
-    try:
-        if intent == "remember" and job.priority_tier in (1, 4):
-            remember_template_reply, remember_media_url, remember_embed = await get_remember_template_reply(
-                job.channel, prompt_text, sender_obj, session
-            )
-        elif intent == "think" and job.priority_tier in (1, 4):
-            timeline_snippet = extract_single_timeline_line(keyword)
-            if any(w in prompt_text.lower() for w in ("search", "find", "price", "google", "what", "lookup")):
-                search_context = await search_cache.get_or_fetch(prompt_text, session)
-    except Exception as pipeline_err:
-        print(f"[JOB PIPELINE ERROR] Context resolution failed: {pipeline_err}")
+            # PRIORITY 8: HISTORICAL REFLECTIONS (Self-Reply going back weeks via LLM)
+            elif job.priority_tier == 8:
+                logger.debug("[PIPELINE] Routing Priority 8 Historical Reflection.")
+                past_text = job.prompt_text or "Looking back..."
+                system_p = (
+                    f"{SHORT_IDENTITY}\n\n"
+                    f"CRITICAL CONSTRAINT: Reply with a clever, witty reflection on your past message in strict under 10 words. "
+                    f"Never break character."
+                )
+                reply_text = await AssemblyLinePipeline._dispatch_to_llm_custom(
+                    session, system_p, f"Reflect on this past message wittily: '{past_text}'", 8
+                )
 
-    # 2. Pipeline Stage: LLM Prompt Construction & Execution
-    system_prompt = (
-        f"{SHORT_IDENTITY}\n\n"
-        f"CRITICAL CONSTRAINT: Reply in one single punchy sentence under 10 words. "
-        f"Voice: rapid, playful, nostalgic 90s. Never break character."
-    )
-    if timeline_snippet:
-        system_prompt += f"\n\nHistorical Context:\n{timeline_snippet}"
-    if search_context:
-        system_prompt += f"\n\nSearch Results:\n{search_context}"
+            # PRIORITY 9: DEEP HISTORICAL RECAPS (Spanning years via LLM)
+            elif job.priority_tier == 9:
+                logger.debug("[PIPELINE] Routing Priority 9 Deep Historical Recap.")
+                recap_context = job.prompt_text or ""
+                system_p = (
+                    f"{SHORT_IDENTITY}\n\n"
+                    f"CRITICAL CONSTRAINT: Recap these historical messages spanning years in strict under 10 words with sharp, witty insight."
+                )
+                reply_text = await AssemblyLinePipeline._dispatch_to_llm_custom(
+                    session, system_p, f"Recap these historical messages:\n{recap_context}", 9
+                )
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": prompt_text or "Thought?"}
-    ]
-    
-    max_tokens = min(dsl, 50) if dsn > 0 else 0
-    reply = random.choice(ZERO_TOKEN_BANTER)
-    actual_tokens = 0
+            # PRIORITY 6: TOKEN-FREE WORD-DRIVEN MEDIA (NO TEXT)
+            elif job.priority_tier == 6:
+                logger.debug("[PIPELINE] Routing Priority 6 Token-Free Word-Driven Media.")
+                reply_text = ""  # Strictly token-free and text-free
+                media_query = job.prompt_text or "retro media"
+                media_url, embed = await BiMediaGenerator.generate(session, "custom", media_query)
+            
+            # TOKEN-FREE MEDIA / BACKGROUND SERVICE (P2, P5, P7)
+            else:
+                logger.debug("[PIPELINE] Routing background token-free media (Tier %d).", job.priority_tier)
+                reply_text = random.choice(ZERO_TOKEN_BANTER) if job.priority_tier != 2 else ""
+                media_mode = "custom" if keyword_phrase else "random"
+                media_url, embed = await BiMediaGenerator.generate(session, media_mode, keyword_phrase)
 
-    if remember_template_reply:
-        reply = remember_template_reply
-        max_tokens = 0
-    elif GROQ_REMAINING_TPD <= 0 or time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
-        max_tokens = 0
+        except Exception as pipeline_err:
+            logger.error("[PIPELINE ERROR] Assembly line failure on tier %d: %s", job.priority_tier, pipeline_err)
+            reply_text = random.choice(ZERO_TOKEN_BANTER)
 
-    if max_tokens > 0 and not remember_template_reply:
+        return reply_text, media_url, embed
+
+    @staticmethod
+    async def _dispatch_to_llm(prompt_text: str, timeline_snippet: str, search_context: str, priority_tier: int) -> str:
+        """Handles LLM generation with token capping, traffic engine integration, and dynamic rate-limit backoff."""
+        global GROQ_RATE_LIMITED_UNTIL, GROQ_REMAINING_TPD
+        
+        dsn, dsl, mode = traffic_engine.get_allocation(priority_tier)
+        max_tokens = min(dsl, 50) if dsn > 0 else 0
+        
+        if GROQ_REMAINING_TPD <= 0 or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or max_tokens <= 0:
+            logger.info("[LLM DISPATCH] Skipping API call due to quota limit or active rate-limit window. Using token-free fallback.")
+            return random.choice(ZERO_TOKEN_BANTER)
+
+        system_prompt = (
+            f"{SHORT_IDENTITY}\n\n"
+            f"CRITICAL CONSTRAINT: Reply in one single punchy sentence under 10 words. "
+            f"Voice: rapid, playful, nostalgic 90s. Never break character."
+        )
+        if timeline_snippet:
+            system_prompt += f"\n\nHistorical Context:\n{timeline_snippet}"
+        if search_context:
+            system_prompt += f"\n\nSearch Results:\n{search_context}"
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt_text}
+        ]
+
         max_tokens = min(max_tokens, GROQ_REMAINING_TPD)
         url = "https://api.groq.com/openai/v1/chat/completions"
         payload = {
@@ -1450,6 +1585,62 @@ async def process_job(job: PendingJob, session: aiohttp.ClientSession):
             "Content-Type": "application/json",
             "User-Agent": "OatmealBot/102.0"
         }
+
+        try:
+            async with groq_api_lock:
+                async with HTTP_SESSION.post(url, json=payload, headers=headers, timeout=12) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        reply = data["choices"][0]["message"]["content"].strip()
+                        actual_tokens = data.get("usage", {}).get("total_tokens", max_tokens // 2)
+                        traffic_engine.record_expenditure(actual_tokens)
+                        logger.debug("[LLM SUCCESS] Spent %d tokens for tier %d request.", actual_tokens, priority_tier)
+                        return reply
+                    elif resp.status == 429:
+                        retry_after = resp.headers.get("Retry-After")
+                        backoff_delay = float(retry_after) if retry_after and retry_after.isdigit() else 60.0
+                        GROQ_RATE_LIMITED_UNTIL = time.monotonic() + backoff_delay
+                        traffic_engine.report_congestion(severity=0.4)
+                        logger.warning("[LLM 429] Rate-limited by Groq API. Pausing LLM calls for %.1fs.", backoff_delay)
+                    else:
+                        logger.warning("[LLM API WARNING] Unexpected HTTP status %d received.", resp.status)
+                        traffic_engine.report_congestion(severity=0.15)
+        except Exception as err:
+            logger.error("[LLM DISPATCH ERROR] Exception during Groq API execution: %s", err)
+            traffic_engine.report_congestion(severity=0.3)
+            
+        return random.choice(ZERO_TOKEN_BANTER)
+
+    @staticmethod
+    async def _dispatch_to_llm_custom(session: aiohttp.ClientSession, system_prompt: str, user_prompt: str, priority_tier: int) -> str:
+        """Handles custom LLM generation for background historical tiers with traffic engine governance."""
+        global GROQ_RATE_LIMITED_UNTIL, GROQ_REMAINING_TPD
+        
+        dsn, dsl, mode = traffic_engine.get_allocation(priority_tier)
+        max_tokens = min(dsl, 30) if dsn > 0 else 0
+        
+        if GROQ_REMAINING_TPD <= 0 or time.monotonic() < GROQ_RATE_LIMITED_UNTIL or max_tokens <= 0:
+            return random.choice(ZERO_TOKEN_BANTER)
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        max_tokens = min(max_tokens, GROQ_REMAINING_TPD)
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        payload = {
+            "model": MODEL_NAME,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.8
+        }
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": "OatmealBot/102.0"
+        }
+
         try:
             async with groq_api_lock:
                 async with session.post(url, json=payload, headers=headers, timeout=12) as resp:
@@ -1458,36 +1649,37 @@ async def process_job(job: PendingJob, session: aiohttp.ClientSession):
                         reply = data["choices"][0]["message"]["content"].strip()
                         actual_tokens = data.get("usage", {}).get("total_tokens", max_tokens // 2)
                         traffic_engine.record_expenditure(actual_tokens)
+                        return reply
                     elif resp.status == 429:
                         GROQ_RATE_LIMITED_UNTIL = time.monotonic() + 60.0
-                        traffic_engine.report_congestion(severity=0.4)  # Feed 429 penalty back into PID governor
-                        reply = random.choice(ZERO_TOKEN_BANTER)
-                    else:
-                        traffic_engine.report_congestion(severity=0.15)
-                        reply = random.choice(ZERO_TOKEN_BANTER)
-        except asyncio.TimeoutError:
+                        traffic_engine.report_congestion(severity=0.4)
+        except Exception as err:
+            logger.error("[LLM CUSTOM DISPATCH ERROR] %s", err)
             traffic_engine.report_congestion(severity=0.3)
-            reply = random.choice(ZERO_TOKEN_BANTER)
-        except Exception as groq_err:
-            print(f"[GROQ API ERROR] {groq_err}")
-            reply = random.choice(ZERO_TOKEN_BANTER)
+            
+        return random.choice(ZERO_TOKEN_BANTER)
 
-    # 3. Pipeline Stage: Media Attachment Resolution
-    media_url, embed = "", None
-    if remember_template_reply:
-        media_url = remember_media_url
-        embed = remember_embed
-    else:
-        media_tiers = {1, 2, 3, 4, 5, 6, 7, 9}
-        should_attach_media = job.priority_tier in media_tiers and not search_context
-        if should_attach_media:
-            try:
-                media_mode = "custom" if job.priority_tier in (1, 2, 4, 7, 9) and prompt_text else "random"
-                media_url, embed = await BiMediaGenerator.generate(session, media_mode, prompt_text)
-            except Exception as media_err:
-                print(f"[BIMEDIA ERROR] {media_err}")
+# ============================================================
+# 12. UNIFIED JOB EXECUTION & PIPELINE DISPATCH ENGINE (UPGRADED)
+# ============================================================
+async def process_job(job: PendingJob, session: aiohttp.ClientSession):
+    """
+    Razor-thin modular job execution engine:
+    - Delegates core processing entirely to the centralized AssemblyLinePipeline.
+    - Handles rate-limit aware message replies with exponential backoff and jitter.
+    - Ensures bulletproof state tracking and pending message cleanup in a `finally` block.
+    """
+    check_and_reset_daily_quotas()
+    if session is None or session.closed:
+        logger.warning("[JOB] HTTP session unavailable; releasing pending message claim.")
+        if job.reference_message:
+            pending_message_ids.discard(getattr(job.reference_message, "id", None))
+        return
 
-    # 4. Pipeline Stage: Payload Assembly & Resilient Dispatch
+    # 1. Execute through the Centralized Assembly Line Pipeline
+    reply, media_url, embed = await AssemblyLinePipeline.execute(job, session)
+
+    # 2. Build Payload and Dispatch
     content, kwargs = await build_payload(reply, media_url, embed)
     if not content and not kwargs.get("embed"):
         content = random.choice(ZERO_TOKEN_BANTER)
@@ -1497,39 +1689,44 @@ async def process_job(job: PendingJob, session: aiohttp.ClientSession):
         try:
             if job.reference_message:
                 await job.reference_message.reply(content=content, mention_author=False, **kwargs)
-            else:
+            elif job.channel:
                 await job.channel.send(content=content, **kwargs)
             dispatch_success = True
+            logger.debug("[JOB] Successfully dispatched job tier %d to channel %s", job.priority_tier, getattr(job.channel, "id", "unknown"))
             break
         except discord.HTTPException as http_err:
             if http_err.status == 429:
-                await asyncio.sleep(2.0 * (attempt + 1) + random.uniform(0.1, 0.5))
+                backoff = 2.0 * (attempt + 1) + random.uniform(0.1, 0.5)
+                logger.warning("[JOB 429] Rate limited on dispatch attempt %d. Backing off for %.2fs", attempt + 1, backoff)
+                await asyncio.sleep(backoff)
             else:
+                logger.error("[JOB HTTP ERROR] Status %d: %s", http_err.status, http_err.text)
                 break
-        except Exception:
-            await asyncio.sleep(0.5 * (2 ** attempt) + random.uniform(0.1, 0.3))
+        except Exception as dispatch_err:
+            backoff = 0.5 * (2 ** attempt) + random.uniform(0.1, 0.3)
+            logger.error("[JOB ERROR] Dispatch attempt %d failed: %s. Retrying in %.2fs", attempt + 1, dispatch_err, backoff)
+            await asyncio.sleep(backoff)
             
-    # 5. Pipeline Stage: State Tracking & Cleanup
+    # 3. State Tracking & Cleanup
     try:
         if dispatch_success:
             if job.reference_message and hasattr(job.reference_message, 'id'):
                 replied_message_ids.add(job.reference_message.id)
-            if job.priority_tier == 4 and job.reference_message:
+            if job.priority_tier == 4 and job.reference_message and job.channel:
                 p4_cursors[str(job.channel.id)] = job.reference_message.id
             trigger_save_state()
     finally:
         if job.reference_message and hasattr(job.reference_message, "id"):
             pending_message_ids.discard(job.reference_message.id)
-
 # ============================================================
-# 13. UNIFIED BACKGROUND PRIORITY SCHEDULER (P2 - P9) (REINVENTED & UPGRADED)
+# 13. UNIFIED BACKGROUND PRIORITY SCHEDULER (UPGRADED)
 # ============================================================
-
 async def background_priority_scheduler():
     """
-    Unified background orchestrator managing priorities P2 through P9 
-    using dictionary-driven timing, dynamic jitter renewal, isolated error boundaries,
-    fixed permission checks, and precision-filtered live chat monitoring (Priority 4).
+    Unified background orchestrator managing priorities P2 through P9.
+    All background tasks act purely as lightweight triggers, pushing jobs 
+    onto the delay queue to be processed sequentially through the central assembly line,
+    backed by enterprise structured logging.
     """
     await bot.wait_until_ready()
     
@@ -1546,7 +1743,7 @@ async def background_priority_scheduler():
         4: random.uniform(20, 45), 
         5: random.uniform(900, 1800), 
         6: random.uniform(800, 2000), 
-        7: random.uniform(45, 120), 
+        7: random.uniform(45, 90),   # Tuned pacing for Priority 7 mirror replies
         8: random.uniform(120, 300), 
         9: random.uniform(1800, 3600)
     }
@@ -1626,47 +1823,67 @@ async def background_priority_scheduler():
                                 trigger_save_state()
                         break
             except Exception as e:
-                print(f"[P4 ERROR] {e}")
+                logger.error("[P4 ERROR] %s", e)
 
         # --------------------------------------------------------
-        # PRIORITY 7: Media Mirroring
+        # PRIORITY 7: Bot Media Mirror (Oldest-First Self-Reply with Media)
         # --------------------------------------------------------
         if now - last_runs[7] >= intervals[7]:
             last_runs[7] = now
-            intervals[7] = random.uniform(45, 120)
+            intervals[7] = random.uniform(45, 90)
             try:
                 for guild in list(bot.guilds):
                     channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                     for ch in channels:
                         ch_id_str = str(ch.id)
                         cursor = p7_cursors.get(ch_id_str, 0)
+                        
                         kwargs = {"limit": 30, "oldest_first": True}
                         if cursor > 0:
                             kwargs["after"] = discord.Object(id=cursor)
-                        
-                        target = None
+
+                        target_msg = None
                         async for msg in ch.history(**kwargs):
                             if msg.author == bot.user:
-                                target = msg
+                                target_msg = msg
                                 break
-                                
-                        if target is None:
+                        
+                        if target_msg is None:
                             continue
                             
-                        url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "custom", target.content or "")
-                        content, kwargs_payload = await build_payload("", url, embed)
-                        try:
-                            await target.reply(content=content, mention_author=False, **kwargs_payload)
-                            p7_cursors[ch_id_str] = target.id
-                            trigger_save_state()
-                            break
-                        except Exception:
-                            continue
+                        metadata_parts = [target_msg.content or ""]
+                        for embed in target_msg.embeds:
+                            if embed.title:
+                                metadata_parts.append(embed.title)
+                            if embed.description:
+                                metadata_parts.append(embed.description)
+                            if embed.image and embed.image.url:
+                                parsed_path = urllib.parse.urlparse(embed.image.url)
+                                metadata_parts.append(os.path.basename(parsed_path.path))
+                        
+                        raw_metadata = " ".join(metadata_parts)
+                        extracted_keywords = WordMachine.flushed_keywords(raw_metadata, max_words=4)
+                        if not extracted_keywords:
+                            extracted_keywords = "retro archive mirror"
+
+                        job = PendingJob(
+                            priority_tier=7,
+                            timestamp=time.time(),
+                            channel=ch,
+                            prompt_text=extracted_keywords,
+                            reference_message=target_msg,
+                            author_id=None
+                        )
+                        
+                        await delay_queue.put(job)
+                        p7_cursors[ch_id_str] = target_msg.id
+                        trigger_save_state()
+                        break
             except Exception as e:
-                print(f"[P7 ERROR] {e}")
+                logger.error("[P7 ERROR] %s", e)
 
         # --------------------------------------------------------
-        # PRIORITY 8: Historical Reflections
+        # PRIORITY 8: Historical Reflections (Self-Reply going back weeks)
         # --------------------------------------------------------
         if now - last_runs[8] >= intervals[8]:
             last_runs[8] = now
@@ -1683,7 +1900,7 @@ async def background_priority_scheduler():
                         
                         target = None
                         async for msg in ch.history(**kwargs):
-                            if msg.author == bot.user:
+                            if msg.author == bot.user and msg.content:
                                 target = msg
                                 break
                                 
@@ -1694,16 +1911,18 @@ async def background_priority_scheduler():
                             priority_tier=8,
                             timestamp=time.time(),
                             channel=ch,
-                            prompt_text="Reflect in under 10 words.",
+                            prompt_text=target.content,
                             reference_message=target
                         )
                         await delay_queue.put(job)
+                        p8_cursors[ch_id_str] = target.id
+                        trigger_save_state()
                         break
             except Exception as e:
-                print(f"[P8 ERROR] {e}")
+                logger.error("[P8 ERROR] %s", e)
 
         # --------------------------------------------------------
-        # PRIORITY 2: Periodic Member Media
+        # PRIORITY 2: Periodic Member Media (Text-Free, Keyword-Targeted via Word Machine)
         # --------------------------------------------------------
         if now - last_runs[2] >= intervals[2]:
             last_runs[2] = now
@@ -1713,21 +1932,26 @@ async def background_priority_scheduler():
                     channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                     if channels:
                         ch = random.choice(channels)
-                        async for msg in ch.history(limit=20):
-                            if not msg.author.bot and p2_key(guild.id, msg.author.id) not in p2_replied_member_ids:
-                                url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "custom", msg.content or "")
-                                banters = random.choice(ZERO_TOKEN_BANTER)
-                                content, kwargs = await build_payload(banters, url, embed)
-                                await msg.reply(content=content, mention_author=False, **kwargs)
+                        async for msg in ch.history(limit=25):
+                            if not msg.author.bot and p2_key(guild.id, msg.author.id) not in p2_replied_member_ids and msg.content:
+                                job = PendingJob(
+                                    priority_tier=2,
+                                    timestamp=time.time(),
+                                    channel=ch,
+                                    prompt_text=msg.content,
+                                    reference_message=msg,
+                                    author_id=msg.author.id
+                                )
+                                await delay_queue.put(job)
                                 p2_replied_member_ids.add(p2_key(guild.id, msg.author.id))
                                 trigger_save_state()
                                 break
                         break
             except Exception as e:
-                print(f"[P2 ERROR] {e}")
+                logger.error("[P2 ERROR] %s", e)
 
         # --------------------------------------------------------
-        # PRIORITY 3: Member Greetings
+        # PRIORITY 3: Randomized Member Media & Mention (Token-Free)
         # --------------------------------------------------------
         if now - last_runs[3] >= intervals[3]:
             last_runs[3] = now
@@ -1746,21 +1970,22 @@ async def background_priority_scheduler():
                     if not members:
                         continue
                         
-                    members = sorted(members, key=lambda x: x.name.lower())
-                    idx = p3_member_indices.get(str(guild.id), 0) % len(members)
-                    target = members[idx]
-                    
+                    target = random.choice(members)
                     channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                     if channels:
                         ch = random.choice(channels)
-                        url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "random")
-                        content, kwargs = await build_payload(f"@{target.name} Salutations from the Arnold Attic.", url, embed)
-                        await ch.send(content=content, **kwargs)
-                        p3_member_indices[str(guild.id)] = (idx + 1) % len(members)
+                        job = PendingJob(
+                            priority_tier=3,
+                            timestamp=time.time(),
+                            channel=ch,
+                            prompt_text=f"{target.name} {target.display_name}",
+                            author_id=target.id
+                        )
+                        await delay_queue.put(job)
                         trigger_save_state()
                     break
             except Exception as e:
-                print(f"[P3 ERROR] {e}")
+                logger.error("[P3 ERROR] %s", e)
 
         # --------------------------------------------------------
         # PRIORITY 5: Inverse Member Media
@@ -1777,40 +2002,69 @@ async def background_priority_scheduler():
                             if not msg.author.bot:
                                 member_key = p2_key(guild.id, msg.author.id)
                                 if member_key not in p5_replied_member_ids:
-                                    try:
-                                        url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "custom", msg.content or "")
-                                        banters = random.choice(ZERO_TOKEN_BANTER)
-                                        content, kwargs = await build_payload(banters, url, embed)
-                                        await msg.reply(content=content, mention_author=False, **kwargs)
-                                        p5_replied_member_ids.add(member_key)
-                                        trigger_save_state()
-                                        break
-                                    except Exception:
-                                        break
+                                    job = PendingJob(
+                                        priority_tier=5,
+                                        timestamp=time.time(),
+                                        channel=ch,
+                                        prompt_text=msg.content or "",
+                                        reference_message=msg,
+                                        author_id=msg.author.id
+                                    )
+                                    await delay_queue.put(job)
+                                    p5_replied_member_ids.add(member_key)
+                                    trigger_save_state()
+                                    break
                         break
             except Exception as e:
-                print(f"[P5 ERROR] {e}")
+                logger.error("[P5 ERROR] %s", e)
 
         # --------------------------------------------------------
-        # PRIORITY 6: Random Broadcasting
+        # PRIORITY 6: Token-Free Word-Driven Media (Last 100 Messages, No Text)
         # --------------------------------------------------------
         if now - last_runs[6] >= intervals[6]:
             last_runs[6] = now
             intervals[6] = random.uniform(800, 2000)
             try:
                 for guild in list(bot.guilds):
-                    channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
+                    channels = [
+                        c for c in guild.text_channels 
+                        if guild.me 
+                        and c.permissions_for(guild.me).send_messages 
+                        and c.permissions_for(guild.me).read_message_history
+                    ]
                     if channels:
                         ch = random.choice(channels)
-                        url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "random")
-                        content, kwargs = await build_payload("", url, embed)
-                        await ch.send(content=content, **kwargs)
+                        collected_words = []
+                        
+                        # Scan up to the last 100 messages in the channel
+                        async for msg in ch.history(limit=100):
+                            if not msg.author.bot and msg.content:
+                                words = RE_WORD_TOKENS.findall(msg.content)
+                                for w in words:
+                                    if len(w) > 2 and w.lower() not in WordMachine.STOP_WORDS:
+                                        collected_words.append(w)
+                        
+                        selected_query = ""
+                        if collected_words:
+                            sample_size = min(5, len(collected_words))
+                            chosen_words = random.sample(collected_words, sample_size)
+                            selected_query = " ".join(chosen_words)
+                        else:
+                            selected_query = "retro archive"
+
+                        job = PendingJob(
+                            priority_tier=6,
+                            timestamp=time.time(),
+                            channel=ch,
+                            prompt_text=selected_query
+                        )
+                        await delay_queue.put(job)
                         break
             except Exception as e:
-                print(f"[P6 ERROR] {e}")
+                logger.error("[P6 ERROR] %s", e)
 
         # --------------------------------------------------------
-        # PRIORITY 9: Channel Recaps (Fixed Permission Check Bug)
+        # PRIORITY 9: Deep Historical Recaps (Spanning years)
         # --------------------------------------------------------
         if now - last_runs[9] >= intervals[9]:
             last_runs[9] = now
@@ -1825,44 +2079,55 @@ async def background_priority_scheduler():
                     ]
                     if channels:
                         ch = random.choice(channels)
-                        chat_lines = []
+                        historical_lines = []
                         last_msg = None
-                        async for msg in ch.history(limit=10):
+                        
+                        async for msg in ch.history(limit=50, oldest_first=True):
                             if not msg.author.bot and msg.content:
-                                chat_lines.append(f"{msg.author.display_name}: {msg.content[:40]}")
+                                historical_lines.append(f"[{msg.created_at.strftime('%Y-%m-%d')}] {msg.author.display_name}: {msg.content[:40]}")
                                 last_msg = msg
-                        if chat_lines and last_msg:
+                                
+                        if historical_lines and last_msg:
+                            sample_context = "\n".join(historical_lines[-15:])
                             job = PendingJob(
                                 priority_tier=9,
                                 timestamp=time.time(),
                                 channel=ch,
-                                prompt_text="Summarize in under 10 words.",
+                                prompt_text=sample_context,
                                 reference_message=last_msg
                             )
                             await delay_queue.put(job)
                             break
             except Exception as e:
-                print(f"[P9 ERROR] {e}")
+                logger.error("[P9 ERROR] %s", e)
+
 # ============================================================
 # 14. WORKERS & BOT EVENTS (UPGRADED)
 # ============================================================
 async def delay_queue_worker():
-    """Asynchronous worker that pulls and processes jobs from the delay queue with guaranteed task accounting."""
+    """
+    Asynchronous worker that pulls and processes jobs from the delay queue,
+    routing them securely through the centralized Assembly Line Pipeline
+    with structured enterprise logging and robust error shielding.
+    """
     global HTTP_SESSION
     while True:
         job = None
         try:
             job = await delay_queue.get()
             while time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
-                await asyncio.sleep(2)
+                await asyncio.sleep(2.0)
+            
+            # Execute through the centralized assembly line pipeline
             await process_job(job, HTTP_SESSION)
+            
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            print(f"[WORKER ERROR] {e}")
+            logger.error("[WORKER ERROR] Unhandled exception in delay_queue_worker: %s", e)
             if job is not None and job.reference_message:
                 pending_message_ids.discard(getattr(job.reference_message, "id", None))
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.0)
         finally:
             if job is not None:
                 try:
@@ -1881,13 +2146,13 @@ async def on_ready():
         HTTP_SESSION = aiohttp.ClientSession()
 
     if TASKS_INITIALIZED:
-        print("[SYSTEM] Reconnected to Discord Gateway. Existing background workers active.")
+        logger.info("[SYSTEM] Reconnected to Discord Gateway. Existing background workers active.")
         return
 
     TASKS_INITIALIZED = True
-    print("=" * 64)
-    print(f" Oatmeal AI V102.0 Master Production Edition logged in as {bot.user}")
-    print("=" * 64)
+    logger.info("=" * 64)
+    logger.info(" Oatmeal AI V102.0 Master Production Edition logged in as %s", bot.user)
+    logger.info("=" * 64)
     load_state()
 
     # Initialize the unified background scheduler, state persistence worker, and queue worker cleanly
@@ -1900,7 +2165,7 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    """Event triggered on incoming channel messages, routing direct interactions to Priority 1."""
+    """Event triggered on incoming channel messages, routing direct interactions to Priority 1 via the pipeline."""
     if message.author.bot or message.guild is None or message.is_system() or message.author == bot.user:
         return
 
@@ -1946,7 +2211,7 @@ async def close_bot_resources():
     await asyncio.gather(*_background_tasks, return_exceptions=True)
     if HTTP_SESSION and not HTTP_SESSION.closed:
         await HTTP_SESSION.close()
-    print("[SYSTEM] Cleaned up HTTP session and background workers.")
+    logger.info("[SYSTEM] Cleaned up HTTP session and background workers.")
 
 
 async def main():
@@ -1965,4 +2230,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("[SYSTEM] Shutdown requested by operator.")
+        logger.info("[SYSTEM] Shutdown requested by operator.")
