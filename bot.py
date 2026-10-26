@@ -45,30 +45,39 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 if not DISCORD_TOKEN or not GROQ_API_KEY:
     raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY environment variables.")
 
-MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+MODEL_NAME = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip()
 STATE_PATH = os.environ.get("STATE_PATH", "/tmp/oatmeal_state.json")
 
+def env_int(name: str, default: int, minimum: int = 1, maximum: int = 10_000_000) -> int:
+    """Parse a bounded integer environment variable without crashing on bad deployment config."""
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        print(f"[CONFIG] Invalid {name}; using default {default}.")
+        value = default
+    return max(minimum, min(maximum, value))
+
+# Configure Discord Intents (Added intents.members = True to fix Bug #23)
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.messages = True
+intents.members = True  # Required for Priority 3 member iteration & fetching
+
 bot = discord.Client(intents=intents)
 
 TASKS_INITIALIZED = False
 HTTP_SESSION: Optional[aiohttp.ClientSession] = None
 
 # ============================================================
-# 2. THREAD-SAFE BOUNDED MEMORY STRUCTURES
+# 2. THREAD-SAFE BOUNDED MEMORY STRUCTURES & GLOBAL STATE
 # ============================================================
-from collections import deque
-import threading
-from typing import Set, Any, List
-
 class BoundedSet:
+    """Thread-safe bounded set with O(1) additions, deletions, and snapshotting."""
     def __init__(self, maxsize: int = 30000):
         self.maxsize = maxsize
         self._set: Set[Any] = set()
-        self._order: deque = deque()  # O(1) pops from both ends
+        self._order: collections.deque = collections.deque()  # O(1) pops from both ends
         self._lock = threading.Lock()
 
     def add(self, item: Any):
@@ -76,10 +85,21 @@ class BoundedSet:
             if item in self._set:
                 return
             if len(self._set) >= self.maxsize:
-                oldest = self._order.popleft()  # O(1) instead of O(N)
+                oldest = self._order.popleft()  # O(1) eviction
                 self._set.remove(oldest)
             self._set.add(item)
             self._order.append(item)
+
+    def discard(self, item: Any) -> None:
+        """Remove an item if present; safe to call from worker cleanup paths."""
+        with self._lock:
+            if item not in self._set:
+                return
+            self._set.remove(item)
+            try:
+                self._order.remove(item)
+            except ValueError:
+                pass
 
     def __contains__(self, item: Any) -> bool:
         with self._lock:
@@ -93,383 +113,624 @@ class BoundedSet:
         with self._lock:
             return list(self._order)
 
+# Core Bounded Memory Trackers
 replied_message_ids = BoundedSet(maxsize=30000)
+pending_message_ids = BoundedSet(maxsize=10000)
 p2_replied_member_ids = BoundedSet(maxsize=10000)
+p5_replied_member_ids = BoundedSet(maxsize=10000)  # Added for Priority 5 backward member tracking
+
+# Channel Cursors & State Dictionaries (Includes p4_cursors fix)
 channel_cursors: Dict[str, int] = {}
+p4_cursors: Dict[str, int] = {}  # Fixed: Added missing p4_cursors to prevent NameError exceptions
 p7_cursors: Dict[str, int] = {}
 p8_cursors: Dict[str, int] = {}
 p3_member_indices: Dict[str, int] = {}
 last_member_activity_time: Dict[Any, float] = {}
 recent_media_urls = collections.deque(maxlen=500)
 blocked_users: Dict[str, float] = {}
-user_message_history: Dict[int, List[Tuple[float, str]]] = {}
 
-local_daily_tokens = 0
-local_daily_reset_day = None
-GROQ_REMAINING_TPM = 8000
-GROQ_REMAINING_RPD = 1000
+# ============================================================
+# RATE LIMITING & TOKEN QUOTA TRACKERS (Unified Single Source of Truth)
+# ============================================================
+local_daily_reset_day: Optional[str] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+# Explicit TPD (Tokens Per Day) Configuration (Configurable via environment variables)
+GROQ_MAX_TPD = env_int("GROQ_MAX_TPD", 200000, minimum=1, maximum=100_000_000)
+GROQ_MAX_TPM = env_int("GROQ_MAX_TPM", 8000, minimum=1, maximum=1_000_000)
+GROQ_MAX_RPD = env_int("GROQ_MAX_RPD", 1000, minimum=1, maximum=1_000_000)
+
+GROQ_REMAINING_TPD = GROQ_MAX_TPD
+GROQ_REMAINING_TPM = GROQ_MAX_TPM
+GROQ_REMAINING_RPD = GROQ_MAX_RPD
 GROQ_RATE_LIMITED_UNTIL = 0.0
 
+def check_and_reset_daily_quotas():
+    """Resets daily remaining TPD and synchronizes traffic engine token counters if the UTC calendar day has changed."""
+    global local_daily_reset_day, GROQ_REMAINING_TPD
+    current_utc_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
+    if local_daily_reset_day != current_utc_day:
+        GROQ_REMAINING_TPD = GROQ_MAX_TPD
+        globals()["GROQ_REMAINING_TPM"] = GROQ_MAX_TPM
+        globals()["GROQ_REMAINING_RPD"] = GROQ_MAX_RPD
+        local_daily_reset_day = current_utc_day
+        
+        # Reset traffic engine token counter, error integrals, and volume levels atomically
+        if 'traffic_engine' in globals() and traffic_engine:
+            with traffic_engine._lock:
+                traffic_engine.local_daily_tokens = 0
+                traffic_engine.integral_error = 0.0
+                traffic_engine.volume_level = 1.0
+                
+        print(f"[QUOTA] Daily token trackers and volume controller reset for new UTC day: {current_utc_day}")
+
+# Synchronization Locks & Constants
 groq_api_lock = asyncio.Lock()
 state_io_lock = asyncio.Lock()
 ACTIVITY_PAUSE = 45
 
 # ============================================================
-# 3. DETERMINISTIC PRIORITY QUEUE (Sequence Counter Injection)
+# 3. DETERMINISTIC PRIORITY QUEUE & STATE PERSISTENCE STRUCTURES
 # ============================================================
 _job_sequence = itertools.count()
 
 @dataclass(order=True)
 class PendingJob:
+    """Represents a scheduled job with deterministic priority ordering."""
     priority_tier: int
     timestamp: float
     sequence: int = field(default_factory=lambda: next(_job_sequence))
     channel: Any = field(compare=False, default=None)
     prompt_text: str = field(compare=False, default="")
-    reference_message: Any = field(compare=False, default=None)  # <--- Added field
-    author_id: Optional[int] = field(compare=False, default=None) # <--- Added field
+    reference_message: Any = field(compare=False, default=None)
+    author_id: Optional[int] = field(compare=False, default=None)
 
+# Asynchronous Queues for Job Execution and State Persistence
 delay_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
-state_save_queue: asyncio.Queue = asyncio.Queue()  # <--- Add this line here
+state_save_queue: asyncio.Queue = asyncio.Queue()
 
 
 def p2_key(guild_id: int, author_id: int) -> str:
+    """Generates a unique composite key for Priority 2 member tracking."""
     return f"{guild_id}:{author_id}"
 
 # ============================================================
 # 4. GOOGLE MAPS TRAFFIC ENGINE & VOLUME CONTROL
 # ============================================================
 class GoogleMapsTrafficEngine:
+    """Controls token expenditure and dynamic volume scaling using a soft proportional feedback loop with a 0.22 floor and reentrant thread safety."""
     def __init__(self, daily_quota: int = 200000, target_spent_pct: float = 0.20):
         self.daily_quota = max(1, daily_quota)  # Prevent zero division
         self.target_spent_pct = target_spent_pct
         self.local_daily_tokens = 0
         self.integral_error = 0.0
         self.volume_level = 1.0
+        # Use RLock (Reentrant Lock) to prevent self-deadlocks when methods call each other under lock
+        self._lock = threading.RLock()
         
         self.priority_hierarchy = {
             1: {"dsn": 1000, "dsl": 8000, "mode": "CUSTOMIZED-MEDIA/TEXT + SEARCH"},
             4: {"dsn": 950,  "dsl": 2000, "mode": "CUSTOMIZED-MEDIA/TEXT + SEARCH"},
             6: {"dsn": 0,    "dsl": 700,  "mode": "RANDOM-MEDIA-ONLY"},
-            7: {"dsn": 0,    "dsl": 400,  "mode": "RANDOM-MEDIA-ONLY + MIRROR-ONLY"},
-            8: {"dsn": 800,  "dsl": 1000, "mode": "CUSTOMIZED-TEXT ONLY + MIRROR-ONLY"},
-            9: {"dsn": 1000, "dsl": 3000, "mode": "CUSTOMIZED-TEXT ONLY"},
-            2: {"dsn": 0,    "dsl": 700,  "mode": "RANDOM-MEDIA-ONLY (1 msg/member)"},
-            5: {"dsn": 0,    "dsl": 700,  "mode": "RANDOM-MEDIA-ONLY (1 msg/member)"},
+            7: {"dsn": 0,    "dsl": 400,  "mode": "CUSTOMIZED-MEDIA + BOT-MIRROR"},
+            8: {"dsn": 800,  "dsl": 1000, "mode": "CUSTOMIZED-TEXT ONLY + BOT-MIRROR"},
+            9: {"dsn": 1000, "dsl": 3000, "mode": "CUSTOMIZED-MEDIA/TEXT"},
+            2: {"dsn": 0,    "dsl": 700,  "mode": "CUSTOMIZED-MEDIA-ONLY (1 per member)"},
+            5: {"dsn": 0,    "dsl": 700,  "mode": "RANDOM-MEDIA-ONLY (1 per member)"},
             3: {"dsn": 0,    "dsl": 700,  "mode": "RANDOM-MEDIA-ONLY"}
         }
 
     @property
     def spent_fraction(self) -> float:
-        return max(0.0, min(1.0, self.local_daily_tokens / self.daily_quota))
+        with self._lock:
+            return max(0.0, min(1.0, self.local_daily_tokens / self.daily_quota))
+
+    def get_daily_tokens(self) -> int:
+        """Thread-safe accessor for the traffic engine's daily token count."""
+        with self._lock:
+            return self.local_daily_tokens
 
     def update_navigation(self):
-        S_current = self.spent_fraction
-        error = S_current - self.target_spent_pct
-        
-        # Integral Anti-Windup Clamping (prevents infinite growth)
-        self.integral_error = max(-2.0, min(2.0, self.integral_error + error))
-        
-        Kp, Ki = 1.5, 0.2
-        adjustment = (Kp * error) + (Ki * self.integral_error)
-        new_volume = 1.0 - adjustment
-        
-        step = 0.01
-        if new_volume > self.volume_level:
-            self.volume_level = min(new_volume, self.volume_level + step)
-        elif new_volume < self.volume_level:
-            self.volume_level = max(new_volume, self.volume_level - step)
+        """Calculates volume level adjustments using a smooth proportional controller with a hard 0.22 floor."""
+        with self._lock:
+            s = max(0.0, min(1.0, self.local_daily_tokens / self.daily_quota))
+            if s < 0.25:
+                target = 1.0
+            elif s < 0.55:
+                target = 1.0 - (s - 0.25) * 1.3
+            else:
+                target = max(0.22, 0.55 - (s - 0.55) * 1.8)
 
-        self.volume_level = max(0.05, min(1.0, self.volume_level))
+            # Smooth movement toward target with a safe floor of 0.22
+            self.volume_level += (target - self.volume_level) * 0.15
+            self.volume_level = max(0.22, min(1.0, self.volume_level))
 
     def get_allocation(self, priority_tier: int) -> Tuple[int, int, str]:
         base = self.priority_hierarchy.get(priority_tier, {"dsn": 100, "dsl": 500, "mode": "RANDOM-MEDIA-ONLY"})
         S = self.spent_fraction
         
-        if S >= 0.70 and priority_tier not in (1, 4):
-            return 0, 0, "RANDOM-MEDIA-ONLY (TOKEN-FREE)"
+        # Strict Quota Zone Enforcement (TV Volume Pacing)
+        if S >= 0.75 and priority_tier not in (1, 4):
+            return 0, 0, "RANDOM-MEDIA-ONLY (QUOTA LOCKDOWN)"
         elif S >= 0.40 and priority_tier in (6, 7, 2, 5, 3):
-            return 0, int(base["dsl"] * 0.5), "TOKEN-CHEAPER RANDOM-MEDIA-ONLY"
+            return 0, int(base["dsl"] * 0.4), "TOKEN-CHEAPER CONSERVING MODE"
 
-        effective_dsn = int(base["dsn"] * self.volume_level)
-        effective_dsl = int(base["dsl"] * self.volume_level)
-        return effective_dsn, effective_dsl, base["mode"]
+        # If base DSN is 0 (token-free media/mirror loops), enforce absolute zero tokens strictly
+        if base["dsn"] == 0:
+            with self._lock:
+                current_volume = self.volume_level
+            effective_dsl = int(base["dsl"] * current_volume) if S < 0.40 else int(base["dsl"] * 0.2)
+            return 0, effective_dsl, base["mode"]
+
+        with self._lock:
+            current_volume = self.volume_level
+
+        effective_dsn = int(base["dsn"] * current_volume)
+        effective_dsl = int(base["dsl"] * current_volume)
+        return max(1, effective_dsn), max(1, effective_dsl), base["mode"]
 
     def record_expenditure(self, tokens: int):
-        self.local_daily_tokens += max(1, tokens)
+        """Atomically records token expenditure, updates navigation control, and synchronizes global TPD tracking."""
+        global GROQ_REMAINING_TPD
+        spent = max(0, int(tokens or 0))
+        if spent <= 0:
+            return
+        with self._lock:
+            self.local_daily_tokens += spent
+            GROQ_REMAINING_TPD = max(0, GROQ_REMAINING_TPD - spent)
         self.update_navigation()
 
-traffic_engine = GoogleMapsTrafficEngine()
-# ============================================================
-# 5. ASYNCHRONOUS SINGLE-WRITER STATE PERSISTENCE
-# ============================================================
+# Initialize traffic engine synchronized with GROQ_MAX_TPD from Section 2
+traffic_engine = GoogleMapsTrafficEngine(daily_quota=GROQ_MAX_TPD)
 
+# ============================================================
+# 5. ASYNCHRONOUS SINGLE-WRITER STATE PERSISTENCE & BACKUP ROTATION
+# ============================================================
 def trigger_save_state():
+    """Non-blocking trigger to request a state save operation."""
     try:
         state_save_queue.put_nowait(True)
     except Exception:
         pass
 
 def load_state():
-    global channel_cursors, p7_cursors, p8_cursors, blocked_users, p3_member_indices
-    if not os.path.exists(STATE_PATH):
+    """Loads persistent state from JSON storage into memory structures with intelligent primary/backup recovery and integer key normalization."""
+    global channel_cursors, p4_cursors, p7_cursors, p8_cursors, blocked_users, p3_member_indices
+    state_path_str = str(STATE_PATH)
+    bak_path = state_path_str + ".bak"
+    
+    target_path = None
+    if os.path.exists(state_path_str):
+        target_path = state_path_str
+    elif os.path.exists(bak_path):
+        print(f"[STATE] Primary state file missing (interrupted write detected). Falling back to backup {bak_path}...")
+        target_path = bak_path
+    else:
+        print(f"[STATE] No existing state file or backup found at {state_path_str}. Starting fresh.")
         return
+        
+    # Helper to safely convert numeric string keys back to integers
+    def _to_int_keys(d):
+        normalized = {}
+        for k, v in d.items():
+            try:
+                normalized[int(k)] = v
+            except ValueError:
+                normalized[k] = v
+        return normalized
+
     try:
-        with open(STATE_PATH, "r", encoding="utf-8") as f:
+        with open(target_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             
         for item in data.get("replied", []):
             replied_message_ids.add(item)
         for item in data.get("p2_done_members", []):
             p2_replied_member_ids.add(item)
+        for item in data.get("p5_done_members", []):
+            p5_replied_member_ids.add(item)
             
-        channel_cursors.update(data.get("cursors", {}))
-        p7_cursors.update(data.get("p7_cursors", {}))
-        p8_cursors.update(data.get("p8_cursors", {}))
-        blocked_users.update(data.get("blocked_users", {}))
-        p3_member_indices.update(data.get("p3_member_indices", {}))
-        print(f"[STATE] Successfully loaded state from {STATE_PATH}")
+        channel_cursors.update(_to_int_keys(data.get("cursors", {})))
+        p4_cursors.update(_to_int_keys(data.get("p4_cursors", {})))
+        p7_cursors.update(_to_int_keys(data.get("p7_cursors", {})))
+        p8_cursors.update(_to_int_keys(data.get("p8_cursors", {})))
+        blocked_users.update(_to_int_keys(data.get("blocked_users", {})))
+        p3_member_indices.update(_to_int_keys(data.get("p3_member_indices", {})))
+        
+        print(f"[STATE] Successfully loaded state from {target_path}")
+        
     except Exception as e:
-        print(f"[STATE] Load failed: {e}")
+        print(f"[STATE] Load failed from {target_path} ({e}).")
+        # If primary failed and backup exists, try fallback
+        if target_path == state_path_str and os.path.exists(bak_path):
+            print(f"[STATE] Attempting emergency fallback to backup {bak_path}...")
+            try:
+                with open(bak_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("backup state root must be a JSON object")
+                for item in data.get("replied", []):
+                    replied_message_ids.add(item)
+                for item in data.get("p2_done_members", []):
+                    p2_replied_member_ids.add(item)
+                for item in data.get("p5_done_members", []):
+                    p5_replied_member_ids.add(item)
+                    
+                channel_cursors.update(_to_int_keys(data.get("cursors", {})))
+                p4_cursors.update(_to_int_keys(data.get("p4_cursors", {})))
+                p7_cursors.update(_to_int_keys(data.get("p7_cursors", {})))
+                p8_cursors.update(_to_int_keys(data.get("p8_cursors", {})))
+                blocked_users.update(_to_int_keys(data.get("blocked_users", {})))
+                p3_member_indices.update(_to_int_keys(data.get("p3_member_indices", {})))
+                print(f"[STATE] Successfully recovered state from backup {bak_path}")
+            except Exception as bak_e:
+                print(f"[STATE] Emergency backup recovery also failed: {bak_e}")
+        else:
+            print(f"[STATE] No valid recovery path remaining. Starting fresh.")
 
 async def state_writer_worker():
+    """Single-writer background worker that coalesces state changes, rotates backups, and persists safely with guaranteed task accounting."""
+    state_path_str = str(STATE_PATH)
     while True:
+        # Wait for initial save signal
         await state_save_queue.get()
         
-        while not state_save_queue.empty():
-            try:
+        # Debounce rapid consecutive save triggers and drain queue
+        await asyncio.sleep(1.0)
+        drained_count = 1
+        try:
+            while True:
                 state_save_queue.get_nowait()
-                state_save_queue.task_done()
-            except asyncio.QueueEmpty:
-                break
-                
-        state_save_queue.task_done()
+                drained_count += 1
+        except asyncio.QueueEmpty:
+            pass
 
-        async with state_io_lock:
-            def _write():
+        try:
+            async with state_io_lock:
+                # Snapshot mutable state on the event loop, before crossing into a worker thread.
+                data = {
+                    "replied": replied_message_ids.snapshot()[-25000:],
+                    "p2_done_members": p2_replied_member_ids.snapshot()[-8000:],
+                    "p5_done_members": p5_replied_member_ids.snapshot()[-8000:],
+                    "cursors": dict(channel_cursors),
+                    "p4_cursors": dict(p4_cursors),
+                    "p7_cursors": dict(p7_cursors),
+                    "p8_cursors": dict(p8_cursors),
+                    "blocked_users": dict(blocked_users),
+                    "p3_member_indices": dict(p3_member_indices),
+                }
+                def _write():
+                    temp_path = state_path_str + ".tmp"
+                    bak_path = state_path_str + ".bak"
+                    try:
+                        directory = os.path.dirname(state_path_str)
+                        if directory:
+                            os.makedirs(directory, exist_ok=True)
+                        with open(temp_path, "w", encoding="utf-8") as f:
+                            json.dump(data, f, indent=2, ensure_ascii=False)
+                            f.flush()
+                            os.fsync(f.fileno())
+                        if os.path.exists(state_path_str):
+                            os.replace(state_path_str, bak_path)
+                        os.replace(temp_path, state_path_str)
+                    except Exception as e:
+                        try:
+                            if os.path.exists(temp_path):
+                                os.remove(temp_path)
+                        except OSError:
+                            pass
+                        print(f"[STATE] Write operation failed: {e}")
+                await asyncio.to_thread(_write)
+
+        except Exception as worker_err:
+            print(f"[STATE WORKER ERROR] {worker_err}")
+        finally:
+            # Guarantee task_done is called for every single item pulled during this cycle
+            for _ in range(drained_count):
                 try:
-                    dir_name = os.path.dirname(STATE_PATH)
-                    if dir_name:  # Only create directory if path contains one
-                        os.makedirs(dir_name, exist_ok=True)
-                        
-                    data = {
-                        "replied": replied_message_ids.snapshot()[-25000:],
-                        "p2_done_members": p2_replied_member_ids.snapshot()[-8000:],
-                        "cursors": channel_cursors,
-                        "p7_cursors": p7_cursors,
-                        "p8_cursors": p8_cursors,
-                        "blocked_users": blocked_users,
-                        "p3_member_indices": p3_member_indices,
-                    }
-                    temp_path = STATE_PATH + ".tmp"
-                    with open(temp_path, "w", encoding="utf-8") as f:
-                        json.dump(data, f, indent=4, ensure_ascii=False)
-                    os.replace(temp_path, STATE_PATH)
-                except Exception as e:
-                    print(f"[STATE] Write failed: {e}")
+                    state_save_queue.task_done()
+                except ValueError:
+                    pass
 
-            await asyncio.to_thread(_write)
 # ============================================================
-# 6. ASYNCHRONOUS TELEMETRY SERVER (aiohttp.web)
+# 6. ASYNCHRONOUS TELEMETRY SERVER & METRICS DASHBOARD
 # ============================================================
 _web_runner = None
+_web_site = None
+_bot_start_time = time.time()
+_telemetry_loop = None
+_telemetry_task = None
+_web_thread = None
 
 async def handle_health(request):
+    """Lightweight health check endpoint for container lifecycle probes."""
     return web.Response(text="Oatmeal AI V101.0 Operational")
 
 async def handle_telemetry(request):
+    """Detailed telemetry metrics endpoint returning uptime, token quotas, queue stats, and cache health with defensive error handling."""
+    uptime_seconds = int(time.time() - _bot_start_time)
+    hours, remainder = divmod(uptime_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    uptime_formatted = f"{hours}h {minutes}m {seconds}s"
+
+    # Safe metric extractions to prevent 500 errors during transient states
+    try:
+        local_tokens = traffic_engine.get_daily_tokens() if 'traffic_engine' in globals() and traffic_engine else 0
+        spent_frac = traffic_engine.spent_fraction if 'traffic_engine' in globals() and traffic_engine else 0.0
+        vol_level = traffic_engine.volume_level if 'traffic_engine' in globals() and traffic_engine else 1.0
+    except Exception:
+        local_tokens, spent_frac, vol_level = 0, 0.0, 1.0
+
+    try:
+        rem_tpd = GROQ_REMAINING_TPD if 'GROQ_REMAINING_TPD' in globals() else 0
+    except Exception:
+        rem_tpd = 0
+
+    try:
+        d_q_size = delay_queue.qsize() if 'delay_queue' in globals() and delay_queue else 0
+        s_q_size = state_save_queue.qsize() if 'state_save_queue' in globals() and state_save_queue else 0
+        rep_tracked = len(replied_message_ids) if 'replied_message_ids' in globals() else 0
+        p2_tracked = len(p2_replied_member_ids) if 'p2_replied_member_ids' in globals() else 0
+    except Exception:
+        d_q_size, s_q_size, rep_tracked, p2_tracked = 0, 0, 0, 0
+
+    try:
+        cache_entries = len(search_cache._cache) if 'search_cache' in globals() and search_cache else 0
+        cache_inflight = len(search_cache._inflight) if 'search_cache' in globals() and search_cache else 0
+    except Exception:
+        cache_entries, cache_inflight = 0, 0
+
     data = {
         "status": "online",
-        "local_daily_tokens": traffic_engine.local_daily_tokens,
-        "spent_fraction": traffic_engine.spent_fraction,
-        "volume_level": traffic_engine.volume_level,
-        "queue_size": delay_queue.qsize(),
+        "uptime": uptime_formatted,
+        "uptime_seconds": uptime_seconds,
+        "token_metrics": {
+            "local_daily_tokens": local_tokens,
+            "groq_remaining_tpd": rem_tpd,
+            "spent_fraction": spent_frac,
+            "volume_level": vol_level
+        },
+        "queues_and_memory": {
+            "delay_queue_size": d_q_size,
+            "state_save_queue_size": s_q_size,
+            "replied_messages_tracked": rep_tracked,
+            "p2_done_members_tracked": p2_tracked
+        },
+        "subsystems": {
+            "search_cache_entries": cache_entries,
+            "search_cache_inflight": cache_inflight,
+        }
     }
     return web.json_response(data)
 
 async def _run_web_server():
-    global _web_runner
+    """Initializes and runs the aiohttp telemetry and health check web server with full lifecycle control."""
+    global _web_runner, _web_site, _telemetry_loop, _telemetry_task
+    _telemetry_loop = asyncio.get_running_loop()
+    _telemetry_task = asyncio.current_task()
+    
     app = web.Application()
     app.router.add_get("/telemetry", handle_telemetry)
-    app.router.add_get("/", handle_health)  # Automatically handles HEAD requests for "/"
+    app.router.add_get("/", handle_health)
     
-    port = int(os.environ.get("PORT", 10000))    
     port = int(os.environ.get("PORT", 10000))
-    _web_runner = web.AppRunner(app)
-    await _web_runner.setup()
-    site = web.TCPSite(_web_runner, "0.0.0.0", port)
-    await site.start()
-    print(f"[TELEMETRY] Async web server active on port {port}")
-    
     try:
+        _web_runner = web.AppRunner(app)
+        await _web_runner.setup()
+        _web_site = web.TCPSite(_web_runner, "0.0.0.0", port)
+        await _web_site.start()
+        print(f"[TELEMETRY] Async web server and metrics dashboard active on port {port}")
+        
         while True:
             await asyncio.sleep(3600)
     except asyncio.CancelledError:
-        if _web_runner:
-            await _web_runner.cleanup()
+        print("[TELEMETRY] Shutdown signal received. Cleaning up web server resources...")
+    except Exception as e:
+        print(f"[TELEMETRY RUNTIME ERROR] {e}")
+    finally:
+        try:
+            if _web_site:
+                await _web_site.stop()
+            if _web_runner:
+                await _web_runner.cleanup()
+            print("[TELEMETRY] Web server successfully stopped and port released.")
+        except Exception as cleanup_err:
+            print(f"[TELEMETRY CLEANUP ERROR] {cleanup_err}")
 
 def start_instant_web_server():
-    """Runs the aiohttp server in its own event loop thread so it binds instantly."""
-    asyncio.run(_run_web_server())
+    """Start telemetry in one tracked daemon thread; safe to call once."""
+    global _web_thread
+    if _web_thread and _web_thread.is_alive():
+        return
+    def _thread_target():
+        try:
+            asyncio.run(_run_web_server())
+        except Exception as e:
+            print(f"[TELEMETRY SERVER EXCEPTION] {e}")
+    _web_thread = threading.Thread(target=_thread_target, daemon=True, name="TelemetryServerThread")
+    _web_thread.start()
 
+def stop_telemetry_server():
+    """Cancel only the telemetry server task and wait briefly for its thread to exit."""
+    global _telemetry_loop, _telemetry_task, _web_thread
+    loop, task = _telemetry_loop, _telemetry_task
+    if loop and loop.is_running() and task and not task.done():
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+        except RuntimeError:
+            pass
+    if _web_thread and _web_thread.is_alive() and threading.current_thread() is not _web_thread:
+        _web_thread.join(timeout=4.0)
+    _telemetry_loop = None
+    _telemetry_task = None
 
 # ============================================================
-# 7. TOKEN-FREE BIMEDIA GENERATOR (All 9 Categories & Dual Modes)
+# 7. TOKEN-FREE BIMEDIA GENERATOR (Dynamic Noun Extraction & Embeds)
 # ============================================================
 class BiMediaGenerator:
     @staticmethod
     async def token_free_web_search(session: aiohttp.ClientSession, query: str, domain_filter: str = "") -> List[str]:
-        """Performs a token-free DuckDuckGo Lite search and extracts matching URLs."""
+        """Performs a token-free DuckDuckGo Lite search with rotation headers and robust URL extraction."""
         cleaned = RE_CLEAN_MENTIONS.sub('', query)
         cleaned = RE_CLEAN_SEARCH.sub('', cleaned)
         cleaned = RE_CLEAN_SYMBOLS.sub(' ', cleaned)
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()[:100]
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()[:120]
         if not cleaned:
-            cleaned = "oatmeal joey arnold 90s"
+            cleaned = "oatmeal joey arnold 90s retro"
 
         url = "https://lite.duckduckgo.com/lite/"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5"
+        }
         urls = []
         try:
             async with session.post(url, data={'q': cleaned}, headers=headers, timeout=6) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    # Extract href links from duckduckgo lite results
-                    raw_links = re.findall(r'class="result-link"[^>]*href="([^"]+)"', html)
+                    raw_links = re.findall(r'href="([^"]+)"', html)
                     for link in raw_links:
-                        # Unquote DuckDuckGo redirect wrapper links if present
+                        # Unquote DuckDuckGo redirect wrapper links safely
                         if "uddg=" in link:
-                            parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
-                            if "uddg" in parsed_qs:
-                                link = parsed_qs["uddg"][0]
+                            try:
+                                parsed_qs = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
+                                if "uddg" in parsed_qs:
+                                    link = parsed_qs["uddg"][0]
+                            except Exception:
+                                pass
                         
                         if domain_filter:
                             if domain_filter in link.lower():
                                 urls.append(link)
-                        else:
+                        elif link.startswith("http") and "duckduckgo.com" not in link:
                             urls.append(link)
         except Exception:
             pass
-        return urls
+        return list(dict.fromkeys(urls))  # Deduplicate while preserving order
+
+    @staticmethod
+    def extract_keywords(text: str) -> str:
+        """Extracts significant keywords/nouns from user prompt text for targeted open-web searches."""
+        if not text:
+            return ""
+        stop_words = {
+            "the", "a", "an", "in", "on", "at", "to", "for", "is", "are", 
+            "about", "you", "me", "it", "this", "that", "what", "how", "why", 
+            "who", "where", "when", "oatmeal", "joey", "arnold", "bot", "hey", "please", "can"
+        }
+        tokens = [
+            w.strip("?.,!:") 
+            for w in text.split() 
+            if w.lower().strip("?.,!:") not in stop_words and len(w.strip("?.,!:")) > 2
+        ]
+        return " ".join(tokens[:3]) if tokens else text[:30]
 
     @classmethod
     async def fetch_media_by_type(cls, session: aiohttp.ClientSession, idx: int, query: str = "") -> Tuple[str, Optional[discord.Embed]]:
         """
-        Picks the idx-th media category (1-9) and fetches a token-free media asset.
-        Implements dice-roll / random indexing to pick the N-th result from search to prevent repetition.
+        Picks the idx-th media category (1-9) and fetches a token-free asset via live open-web search 
+        and dice-roll selection (no tiny static pools).
         """
-        dice_roll = random.randint(0, 7)  # Simulated dice roll index for search result selection
+        base_query = cls.extract_keywords(query) if query else ""
 
-        # 1. VIDEOS (YouTube, TikTok, etc.)
+        # 1. VIDEOS (YouTube / Direct Video Links via Dice-Roll on Live Search Results)
         if idx == 1:
-            search_query = query if query else random.choice(["classic 90s commercial youtube", "star wars clip youtube", "retro cartoon youtube", "tiktok viral meme"])
+            search_query = f"{base_query} video clip youtube" if base_query else "classic 90s commercial youtube"
             found_urls = await cls.token_free_web_search(session, search_query, domain_filter="youtube.com/watch")
             if not found_urls:
                 found_urls = await cls.token_free_web_search(session, search_query, domain_filter="youtu.be")
             
             if found_urls:
-                selected_item = found_urls[dice_roll % len(found_urls)]
-                return selected_item, None
-            return random.choice(["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://www.youtube.com/watch?v=jNQXAC9IVRw"]), None
+                # Dice roll on collected search results (top 15 max)
+                pool = found_urls[:15]
+                chosen_url = random.choice(pool)
+                return chosen_url, None
+            return "https://www.youtube.com/watch?v=dQw4w9WgXcQ", None
 
-        # 2. GIFs (Tenor.com and web sources)
+        # 2. GIFs (Tenor / Giphy via Live Open-Web Search & Dice Roll)
         elif idx == 2:
-            q = query if query else random.choice(["reaction", "star wars", "funny meme", "retro 90s", "thinking", "happy"])
-            encoded_q = urllib.parse.quote(f"{q} gifs")
-            tenor_url = f"https://tenor.com/search/{encoded_q}"
-            headers = {"User-Agent": "Mozilla/5.0"}
-            gif_url = ""
-            try:
-                async with session.get(tenor_url, headers=headers, timeout=4) as resp:
-                    if resp.status == 200:
-                        html = await resp.text()
-                        ids = RE_TENOR_ID.findall(html)
-                        if ids:
-                            selected_id = ids[dice_roll % len(ids)]
-                            gif_url = f"https://media.tenor.com/{selected_id}/tenor.gif"
-            except Exception:
-                pass
+            search_query = f"{base_query} reaction gif tenor" if base_query else "funny reaction gif tenor"
+            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="tenor.com/view/")
+            if not found_urls:
+                found_urls = await cls.token_free_web_search(session, search_query, domain_filter="giphy.com")
 
-            if not gif_url:
-                gif_url = "https://media.tenor.com/2U5Vn4_h2zEAAAAC/happy-happy-joy-joy-ren-and-stimpy.gif"
+            gif_url = ""
+            if found_urls:
+                pool = found_urls[:12]
+                gif_url = random.choice(pool)
             
+            if not gif_url:
+                # Dynamic fallback seeded from web query if scraper yields empty list
+                fallback_seed = urllib.parse.quote(base_query if base_query else "retro animation")
+                gif_url = f"https://media.tenor.com/search/{fallback_seed}-gifs"
+
             emb = discord.Embed()
             emb.set_image(url=gif_url)
             return "", emb
 
-        # 3. PHOTOS (Picsum, Imgflip, Imgur, Pixabay with backups)
+        # 3. PHOTOS (Imgur / Wallpapers via Live Open-Web Search & Dice Roll)
         elif idx == 3:
-            photo_source_type = random.choice(["picsum", "search_photo"])
-            if photo_source_type == "picsum":
-                photo_url = f"https://picsum.photos/seed/{random.randint(10, 99999)}/640/360.jpg"
+            search_query = f"{base_query} wallpaper photography imgur" if base_query else "retro 90s aesthetic photo imgur"
+            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="imgur.com")
+            
+            photo_url = ""
+            if found_urls:
+                pool = found_urls[:10]
+                photo_url = random.choice(pool)
             else:
-                search_query = query if query else random.choice(["nature photography", "retro 90s photo", "architecture wallpaper", "funny cat"])
-                found_urls = await cls.token_free_web_search(session, search_query, domain_filter="imgur.com")
-                if not found_urls:
-                    found_urls = await cls.token_free_web_search(session, search_query, domain_filter="pixabay.com")
-                
-                photo_url = found_urls[dice_roll % len(found_urls)] if found_urls else f"https://picsum.photos/seed/{random.randint(10, 99999)}/640/360.jpg"
+                photo_url = f"https://picsum.photos/seed/{urllib.parse.quote(base_query if base_query else str(random.randint(10, 99999)))}/640/360.jpg"
 
             emb = discord.Embed()
             emb.set_image(url=photo_url)
             return "", emb
 
-        # 4. DRAWINGS (Pollinations AI & custom text prompts)
+        # 4. DRAWINGS / AI ART (Pollinations AI Art with Dynamic Prompting)
         elif idx == 4:
-            prompt_slug = urllib.parse.quote(query if query else random.choice(["retro synthwave sunset", "90s cartoon robot", "cyberpunk city street", "oil painting of a robotic cat"]))
+            art_prompt = f"{base_query} 90s cartoon retro art style masterwork" if base_query else "retro synthwave sunset robot artwork"
+            prompt_slug = urllib.parse.quote(art_prompt)
             art_url = f"https://pollinations.ai/p/{prompt_slug}?width=640&height=360&seed={random.randint(1, 99999)}"
+            
             emb = discord.Embed()
             emb.set_image(url=art_url)
             return "", emb
 
-        # 5. AUDIO / MUSIC (Spotify, SoundCloud, Bandcamp, Apple Music, Audiomack, Mixcloud)
+        # 5. AUDIO / MUSIC (Spotify / SoundCloud via Live Open-Web Search)
         elif idx == 5:
-            platform_domain = random.choice(["spotify.com", "soundcloud.com", "bandcamp.com", "audiomack.com"])
-            search_query = query if query else random.choice(["coltrane jazz track", "90s rock song", "synthwave soundtrack", "ambient study mix"])
-            found_urls = await cls.token_free_web_search(session, search_query, domain_filter=platform_domain)
+            search_query = f"{base_query} song track spotify" if base_query else "coltrane jazz track spotify"
+            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="spotify.com")
+            if not found_urls:
+                found_urls = await cls.token_free_web_search(session, search_query, domain_filter="soundcloud.com")
             
             if found_urls:
-                return found_urls[dice_roll % len(found_urls)], None
-            return random.choice([
-                "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT", 
-                "https://soundcloud.com/coltrane-official/my-favorite-things"
-            ]), None
+                return random.choice(found_urls[:10]), None
+            return "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT", None
 
-        # 6. WEB LINKS (Wikipedia, Internet Archive, etc.)
+        # 6. WEB LINKS (Wikipedia / Internet Archive via Live Search)
         elif idx == 6:
-            target_domain = random.choice(["en.wikipedia.org", "archive.org"])
-            search_query = query if query else random.choice(["history of video games", "Treacher Collins syndrome", "Star Wars expanded universe", "1985 in science"])
-            found_urls = await cls.token_free_web_search(session, search_query, domain_filter=target_domain)
-            
+            search_query = f"{base_query} history wikipedia" if base_query else "history of video games wikipedia"
+            found_urls = await cls.token_free_web_search(session, search_query, domain_filter="en.wikipedia.org")
             if found_urls:
-                return found_urls[dice_roll % len(found_urls)], None
-            return random.choice([
-                "https://en.wikipedia.org/wiki/Treacher_Collins_syndrome", 
-                "https://archive.org/details/softwarelibrary_msdos_games"
-            ]), None
+                return random.choice(found_urls[:10]), None
+            return "https://en.wikipedia.org/wiki/Treacher_Collins_syndrome", None
 
         # 7. ASCII ART
         elif idx == 7:
             ascii_templates = [
                 "```\n  (o.o)  Oatmeal AI V101.0\n  / | \\\n _/\\_/\\_\n```",
                 "```\n  /\\_/\\\n ( o.o )  Arnold Attic\n  > ^ <\n```",
-                "```\n   ____        _                   _ \n  / __|___  _| |_ _ __  ___ _ _  | |\n | (__/ _ \\(_-<  _| '  \\/ -_) '_| |_|\n  \\___\\___/ /_/\\__|_|_|_\\___|_|   (_)\n```",
-                "```\n    _______\n   //  |ion|\n  //_______|\n  O       O\n```"
+                "```\n   ____        _                   _ \n  / __|___  _| |_ _ __  ___ _ _  | |\n | (__/ _ \\(_-<  _| '  \\/ -_) '_| |_|\n  \\___\\___/ /_/\\__|_|_|_\\___|_|   (_)\n```"
             ]
             return random.choice(ascii_templates), None
 
-        # 8. EMOTICONS (Discord custom emoticons, unicode emoticons, kaomoji)
+        # 8. EMOTICONS
         elif idx == 8:
-            emoticons = [
-                "(ง'̀-'́)ง", "¯\\_(ツ)_/¯", "( ͡° ͜ʖ ͡°)", "(⌐■_■)", 
-                "(づ｡◕‿‿◕｡)づ", "ಠ_ಠ", "(ʘ__ʘ)", "ᕕ( ᐛ )ᕗ", 
-                ":rofl:", ":sunglasses:", ":fire:", ":robot:"
-            ]
+            emoticons = ["(ง'̀-'́)ง", "¯\\_(ツ)_/¯", "( ͡° ͜ʖ ͡°)", "(⌐■_■)", "(づ｡◕‿‿◕｡)づ", "ಠ_ಠ", "(ʘ__ʘ)"]
             return random.choice(emoticons), None
 
-        # 9. INTERNAL & EXTERNAL STICKERS / BADGES
+        # 9. STICKERS / BADGES
         elif idx == 9:
-            stickers = ["⭐", "🥣", "🚀", "🕹️", "📼", "🔥", "💡", "🏆", "🎯", "🛡️"]
+            stickers = ["⭐", "🥣", "🚀", "🕹️", "📼", "🔥", "💡", "🏆", "🎯"]
             return random.choice(stickers), None
 
         return "🥣", None
@@ -477,14 +738,23 @@ class BiMediaGenerator:
     @classmethod
     async def generate(cls, session: aiohttp.ClientSession, mode: str = "random", chat_text: str = "") -> Tuple[str, Optional[discord.Embed]]:
         """
-        BIMEDIA-GENERATOR Entrypoint:
-        - RANDOMIZED MEDIA GENERATOR: Selects random media TYPE (1-9) and embeds/displays random data.
-        - CUSTOMIZED MEDIA GENERATOR: Selects random media TYPE, parses text from chat token-free, searches items, and replies.
+        BIMEDIA-GENERATOR Entrypoint using weighted probability favoritism 
+        (favoring GIFs, Photos, and Videos over text art) combined with dice-roll search extraction.
         """
-        # Select random media type category (1 to 9)
-        idx = random.randint(1, 9)
+        weighted_categories = [
+            1, 1, 1,     # Videos (Weight 3)
+            2, 2, 2, 2,  # GIFs (Weight 4 - Favored)
+            3, 3, 3,     # Photos (Weight 3)
+            4, 4,        # Drawings (Weight 2)
+            5,           # Audio (Weight 1)
+            6,           # Links (Weight 1)
+            7,           # ASCII (Weight 1)
+            8,           # Emoticons (Weight 1)
+            9            # Stickers (Weight 1)
+        ]
+        
+        idx = random.choice(weighted_categories)
 
-        # If Customized mode is invoked with chat context, target or map categories dynamically
         if mode == "custom" and chat_text:
             tl = chat_text.lower()
             if any(w in tl for w in ("video", "youtube", "clip", "watch", "tiktok")): idx = 1
@@ -497,19 +767,23 @@ class BiMediaGenerator:
             elif any(w in tl for w in ("emote", "smile", "face")): idx = 8
             elif any(w in tl for w in ("sticker", "badge", "star")): idx = 9
 
-        # Execute token-free fetch based on selected type and chat text query
         media_content, embed = await cls.fetch_media_by_type(session, idx, query=chat_text if mode == "custom" else "")
         return media_content, embed
+# ============================================================
+# 8. SEARCH SUBSYSTEM (Single-Flight Caching & Token-Free Discord Search)
+# ============================================================
 
-# ============================================================
-# 8. SEARCH SUBSYSTEM (Single-Flight Caching & Non-Blocking)
-# ============================================================
+# Global background tasks tracking list (Aligned with Section 14 type definition)
+_background_tasks: List[asyncio.Task] = []
+
+
 class AsyncSearchCache:
+    """Thread-safe asynchronous search cache with atomic single-flight request coalescing and safe error fallback."""
     def __init__(self, ttl: float = 300.0, max_size: int = 200):
         self.ttl = ttl
         self.max_size = max_size
         self._cache: Dict[str, Tuple[float, str]] = {}
-        self._order: deque = deque()  # O(1) pops
+        self._order: collections.deque = collections.deque()  # O(1) pops
         self._inflight: Dict[str, asyncio.Future] = {}
         self._lock = asyncio.Lock()
 
@@ -517,40 +791,39 @@ class AsyncSearchCache:
         q_key = query.lower().strip()
         now = time.monotonic()
 
-        # 1. Fast path: Check cache inside lock, then release immediately
+        future = None
+        is_creator = False
+
+        # 1. Atomic check-and-set inside a single lock acquisition
         async with self._lock:
+            # Check cache first
             if q_key in self._cache:
                 ts, res = self._cache[q_key]
                 if now - ts < self.ttl:
                     return res
                 else:
                     self._cache.pop(q_key, None)
-                    # Note: deque removal requires iteration, but with max_size=200 it's tiny. 
-                    # Alternatively, handle stale keys lazily during insertion.
+                    try:
+                        self._order.remove(q_key)
+                    except ValueError:
+                        pass
 
-            # 2. Check if already in-flight
+            # Check if request is already in flight
             if q_key in self._inflight:
                 future = self._inflight[q_key]
-            else:
-                future = None
-
-        # If it was in-flight, await it OUTSIDE the lock!
-        if future is not None:
-            return await future
-
-        # 3. Register ourselves as the creator of this in-flight future
-        async with self._lock:
-            # Double check under lock
-            if q_key in self._inflight:
-                future = self._inflight[q_key]
+                is_creator = False
             else:
                 loop = asyncio.get_running_loop()
                 future = loop.create_future()
                 self._inflight[q_key] = future
+                is_creator = True
 
-        if future is not self._inflight.get(q_key):
+        # 2. If we are a waiter, await the creator's future outside the lock
+        if not is_creator:
             return await future
 
+        # 3. If we are the creator, perform the actual network fetch
+        res = ""
         try:
             cleaned = RE_CLEAN_MENTIONS.sub('', query)
             cleaned = RE_CLEAN_SEARCH.sub('', cleaned)
@@ -558,138 +831,130 @@ class AsyncSearchCache:
             cleaned = re.sub(r'\s+', ' ', cleaned).strip()[:120]
 
             url = "https://lite.duckduckgo.com/lite/"
-            headers = {"User-Agent": "Mozilla/5.0"}
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
             async with session.post(url, data={'q': cleaned}, headers=headers, timeout=10) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    snippets = RE_SNIPPETS.findall(html)
-                    clean_s = [RE_HTML_STRIP.sub('', s).strip() for s in snippets[:4] if len(s.strip()) > 15]
+                    clean_s = []
+                    
+                    # Primary Parsing Strategy: Robust BeautifulSoup Selection
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(html, 'html.parser')
+                        snippet_tags = soup.find_all(class_=re.compile(r'snippet', re.I))
+                        if not snippet_tags:
+                            snippet_tags = soup.find_all('td', class_=re.compile(r'result', re.I))
+                        
+                        for tag in snippet_tags[:4]:
+                            text = tag.get_text(strip=True)
+                            if len(text) > 15:
+                                clean_s.append(text)
+                    except Exception as bs_err:
+                        print(f"[SEARCH BS4 PARSE WARNING] {bs_err}")
+
+                    # Fallback Parsing Strategy: Multi-pattern Regex
+                    if not clean_s:
+                        snippets = RE_SNIPPETS.findall(html)
+                        if not snippets:
+                            snippets = re.findall(r'<td[^>]*class=["\']result-snippet["\'][^>]*>(.*?)</td>', html, re.DOTALL)
+                        if not snippets:
+                            snippets = re.findall(r'<div[^>]*class=["\']result__snippet["\'][^>]*>(.*?)</div>', html, re.DOTALL)
+
+                        for s in snippets[:4]:
+                            stripped = RE_HTML_STRIP.sub('', s).strip()
+                            stripped = stripped.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">")
+                            if len(stripped) > 15:
+                                clean_s.append(stripped)
+
                     res = "REAL-TIME SEARCH RESULTS:\n" + "\n".join(f"- {s}" for s in clean_s) if clean_s else ""
                 else:
                     res = ""
 
+            # 4. Cache successful result and resolve future
             async with self._lock:
-                if len(self._cache) >= self.max_size:
+                if len(self._cache) >= self.max_size and self._order:
                     oldest = self._order.popleft()  # O(1) eviction
                     self._cache.pop(oldest, None)
+                
+                if q_key in self._cache:
+                    try:
+                        self._order.remove(q_key)
+                    except ValueError:
+                        pass
+                        
                 self._cache[q_key] = (time.monotonic(), res)
                 self._order.append(q_key)
-                
-                future.set_result(res)
                 self._inflight.pop(q_key, None)
+
+            if not future.done():
+                future.set_result(res)
             return res
-        except Exception as e:
+
+        except (asyncio.TimeoutError, aiohttp.ClientError) as net_err:
+            print(f"[SEARCH NETWORK ERROR] {net_err}")
             async with self._lock:
                 self._inflight.pop(q_key, None)
-                if not future.done():
-                    future.set_exception(e)
+            # Resolve future with empty string fallback instead of setting an unhandled exception
+            if not future.done():
+                future.set_result("")
             return ""
+        except Exception as e:
+            print(f"[SEARCH ERROR] {e}")
+            async with self._lock:
+                self._inflight.pop(q_key, None)
+            # Resolve future with empty string fallback instead of setting an unhandled exception
+            if not future.done():
+                future.set_result("")
+            return ""
+
 search_cache = AsyncSearchCache()
 
-async def token_free_discord_search(channel: Any, query: str) -> str:
-    keywords = [w.lower() for w in RE_WORD_TOKENS.findall(query) if len(w) > 2 and w.lower() != "discord"]
-    if not keywords:
-        keywords = ["oatmeal", "joey"]
-    async for msg in channel.history(limit=100):
-        if msg.author.bot:
-            continue
-        if any(kw in (msg.content or "").lower() for kw in keywords):
-            return f"DISCORD SEARCH COMPLETE: Found message from {msg.author.display_name}: \"{msg.content[:150]}+\""
-    return "DISCORD SEARCH COMPLETE: No matching messages found."
-
-### **Section 10: Job Execution Engine (`process_job`)**
 
 async def token_free_discord_search(channel: Any, query: str) -> str:
-    keywords = [w.lower() for w in RE_WORD_TOKENS.findall(query) if len(w) > 2 and w.lower() != "discord"]
+    """Scans recent channel history for precise keywords using word boundaries without external APIs."""
+    stop_words = {"discord", "message", "search", "chat", "find", "the", "a", "an", "in", "on", "at", "to", "for", "is", "are"}
+    keywords = [w.lower() for w in RE_WORD_TOKENS.findall(query) if len(w) > 2 and w.lower() not in stop_words]
+    
     if not keywords:
         keywords = ["oatmeal", "joey"]
-    async for msg in channel.history(limit=100):
-        if msg.author.bot:
-            continue
-        if any(kw in (msg.content or "").lower() for kw in keywords):
-            return f"DISCORD SEARCH COMPLETE: Found message from {msg.author.display_name}: \"{msg.content[:150]}+\""
+        
+    try:
+        async for msg in channel.history(limit=100):
+            if msg.author.bot or not msg.content:
+                continue
+            content_lower = msg.content.lower()
+            if any(re.search(r'\b' + re.escape(kw) + r'\b', content_lower) for kw in keywords):
+                content_snippet = msg.content[:150].strip().replace('\n', ' ')
+                return f'DISCORD SEARCH COMPLETE: Found message from {msg.author.display_name}: "{content_snippet}..."'
+    except Exception as e:
+        print(f"[DISCORD SEARCH ERROR] {e}")
+            
     return "DISCORD SEARCH COMPLETE: No matching messages found."
-
-async def process_job(job: PendingJob, session: aiohttp.ClientSession):
-    global GROQ_RATE_LIMITED_UNTIL
-    dsn, dsl, mode = traffic_engine.get_allocation(job.priority_tier)
-    timeline = extract_relevant_timeline(job.prompt_text or "")
-    
-    search_context = ""
-    prompt_lower = (job.prompt_text or "").lower()
-    
-    if job.priority_tier in (1, 4) and "discord" in prompt_lower:
-        search_context = await token_free_discord_search(job.channel, job.prompt_text)
-    elif job.priority_tier == 1 and any(w in prompt_lower for w in ("search", "find", "price", "google", "what", "look")):
-        search_context = await search_cache.get_or_fetch(job.prompt_text, session)
-
-    system = f"You are Joey Arnold (Oatmeal Joey Arnold, @JoeyArnoldVN). Speak in first person. Voice: rapid, playful, nostalgic 90s.\n\n{timeline}"
-    if search_context and not search_context.startswith("DISCORD SEARCH COMPLETE"):
-        system += f"\n\nSearch Results:\n{search_context}"
-
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": job.prompt_text or "Thought?"}
-    ]
-    
-    max_tokens = min(dsl, max(12, dsn))
-    reply = "Oatmeal AI operational."
-    actual_tokens = 5
-
-    if search_context and search_context.startswith("DISCORD SEARCH COMPLETE"):
-        reply = search_context
-        max_tokens = 0
-    elif time.time() < GROQ_RATE_LIMITED_UNTIL:
-        max_tokens = 0
-
-    if max_tokens > 0:
-        url = "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)"
-        payload = {
-            "model": MODEL_NAME,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": 0.72
-        }
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-            "User-Agent": "OatmealBot/101.0"
-        }
-        try:
-            async with session.post(url, json=payload, headers=headers, timeout=15) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    reply = data["choices"][0]["message"]["content"].strip()
-                    actual_tokens = data.get("usage", {}).get("total_tokens", max_tokens // 2)
-                    traffic_engine.record_expenditure(actual_tokens)
-                elif resp.status == 429:
-                    GROQ_RATE_LIMITED_UNTIL = time.time() + 60.0
-                    print(f"[GROQ API] Rate limited (429). Backing off for 60s.")
-                else:
-                    err_text = await resp.text()
-                    print(f"[GROQ API ERROR] Status {resp.status}: {err_text}")
-        except Exception as e:
-            print(f"[GROQ API EXCEPTION] {e}")
-
-    media_url, embed = "", None
-    if not search_context and (job.priority_tier in (2, 3, 6, 7, 9) or random.random() < 0.35):
-        media_url, embed = await BiMediaGenerator.generate(session, "custom" if job.prompt_text else "random", job.prompt_text or "")
-
-    content, kwargs = await build_payload(reply, media_url, embed)
-
-    for attempt in range(3):
-        try:
-            if job.reference_message:
-                await job.reference_message.reply(content=content, mention_author=False, **kwargs)
-            else:
-                await job.channel.send(content=content, **kwargs)
-            break
-        except Exception:
-            await asyncio.sleep(0.5 * (2 ** attempt))
-
 
 # ============================================================
-# 9. UNTRUNCATED BIOGRAPHICAL TIMELINE & KERNEL
+# 9. PAYLOAD BUILDER
+# ============================================================
+async def build_payload(content_str: str, media_url: str = "", embed: Optional[discord.Embed] = None) -> Tuple[str, dict]:
+    """Formats text content and embeds for Discord dispatch, preventing empty payload exceptions."""
+    kwargs = {}
+    final_content = content_str.strip() if content_str else ""
+    
+    if media_url and not embed:
+        if final_content:
+            final_content += f"\n{media_url}"
+        else:
+            final_content = media_url
+            
+    if embed:
+        kwargs["embed"] = embed
+        
+    if not final_content and not embed:
+        final_content = "🥣 Oatmeal AI operational."
+        
+    return final_content, kwargs
+
+# ============================================================
+# 10. UNTRUNCATED BIOGRAPHICAL TIMELINE & KERNEL
 # ============================================================
 FULL_ANNUAL_OUTLINE = """
 1985: BORN Monday 11 February 1985 at 6 AM in Forest Grove, Oregon, trailer #163 Rose Grove mobile home park. BORN with Treacher Collins syndrome (affecting facial bones, ears, and hearing). PARENTS Marilyn Morehead (from Seattle) and Don Rasp (from Los Angeles, his dad Peter Rasp from Amsterdam). HOME CHURCH Cornelius Community Baptist Church (CCBC) 1985-2002. STARTED wearing glasses between 1985-1987.
@@ -796,52 +1061,196 @@ ZERO_TOKEN_BANTER = [
     "Hope over dope.",
     "Joy over circumstances.",
 ]
+# ============================================================
+# 11. TIMELINE EXTRACTION & TOKEN-FREE KEYWORD LOOKUP HELPERS
+# ============================================================
 
-# ============================================================
-# 9. UNTRUNCATED BIOGRAPHICAL TIMELINE & KERNEL
-# ============================================================
-# (Keep your FULL_ANNUAL_OUTLINE and persona constants above this)
 def extract_relevant_timeline(prompt: str) -> str:
+    """Extracts relevant biographical timeline lines matching mentioned years or returns the full outline."""
     if not prompt:
         return SHORT_IDENTITY + "\n\n" + FULL_ANNUAL_OUTLINE
     years = set(RE_YEARS.findall(prompt))
+    if not years:
+        return SHORT_IDENTITY + "\n\n" + FULL_ANNUAL_OUTLINE
     lines = [ln for ln in FULL_ANNUAL_OUTLINE.strip().splitlines() if any(ln.startswith(f"{y}:") for y in years)]
     return "Relevant timeline:\n" + "\n".join(lines) if lines else SHORT_IDENTITY + "\n\n" + FULL_ANNUAL_OUTLINE
 
-# ============================================================
-# 10. JOB EXECUTION ENGINE
-# ============================================================
 
-async def build_payload(content_str: str, media_url: str = "", embed: Optional[discord.Embed] = None) -> Tuple[str, dict]:
-    """Formats text and embeds for Discord dispatch."""
-    kwargs = {}
-    final_content = content_str.strip() if content_str else ""
-    
-    if media_url and not embed:
-        if final_content:
-            final_content += f"\n{media_url}"
-        else:
-            final_content = media_url
-            
-    if embed:
-        kwargs["embed"] = embed
+def get_timeline_keyword_years(prompt: str) -> Optional[str]:
+    """
+    Token-free timeline keyword matcher. When 'when' is present in priority 1 or 4 messages,
+    extracts the primary noun/keyword, scans FULL_ANNUAL_OUTLINE with word boundary precision, 
+    and constructs the exact copy-and-paste year template with zero LLM API costs.
+    """
+    if not prompt or "when" not in prompt.lower():
+        return None
         
-    return final_content, kwargs
-async def process_job(job: PendingJob, session: aiohttp.ClientSession):
-    global GROQ_RATE_LIMITED_UNTIL
-    dsn, dsl, mode = traffic_engine.get_allocation(job.priority_tier)
-    timeline = extract_relevant_timeline(job.prompt_text or "")
+    stop_words = {
+        "when", "was", "i", "did", "the", "a", "an", "in", "on", "at", 
+        "to", "for", "is", "are", "about", "you", "were", "where", "what", "who", "do", "we", "they", "it"
+    }
     
+    # Clean and filter tokens to isolate the primary noun
+    tokens = [
+        w.strip("?.,!:") 
+        for w in prompt.split() 
+        if w.lower().strip("?.,!:") not in stop_words and len(w.strip("?.,!:")) > 1
+    ]
+    
+    if not tokens:
+        return None
+        
+    keyword = tokens[0]
+    keyword_lower = keyword.lower()
+    
+    matched_years = []
+    for line in FULL_ANNUAL_OUTLINE.strip().splitlines():
+        # Precise word boundary check to avoid partial substring false positives
+        if re.search(r'\b' + re.escape(keyword_lower) + r'\b', line.lower()):
+            years_in_line = RE_YEARS.findall(line)
+            if years_in_line:
+                line_year = line.split(":", 1)[0].strip()
+                if RE_YEARS.match(line_year) and line_year not in matched_years:
+                    matched_years.append(line_year)
+                    
+    if not matched_years:
+        return None
+        
+    # Sort years chronologically and format with proper English conjunctions
+    sorted_years = sorted(list(set(matched_years)), key=int)
+    if len(sorted_years) == 1:
+        years_str = sorted_years[0]
+    elif len(sorted_years) == 2:
+        years_str = f"{sorted_years[0]} and {sorted_years[1]}"
+    else:
+        years_str = ", ".join(sorted_years[:-1]) + f", and {sorted_years[-1]}"
+        
+    display_keyword = keyword.capitalize()
+    print(f"[TOKEN-FREE WHEN ENGINE] Successfully matched '{keyword}' to years: {years_str}")
+    return f"{display_keyword}?\nThat may have included the following years:\n{years_str}."
+
+
+async def get_remember_template_reply(channel: Any, prompt_text: str, sender: Any) -> str:
+    """
+    Token-free 'Remember Template' engine. Scans channel history oldest-first for a keyword
+    near 'remember' in Priority 1/4 messages and formats the exact template response cleanly.
+    """
+    if not prompt_text or "remember" not in prompt_text.lower():
+        return ""
+        
+    words = [w.strip("?.,!:") for w in prompt_text.split()]
+    keyword = None
+    
+    try:
+        lower_words = [w.lower() for w in words]
+        if "remember" in lower_words:
+            idx = lower_words.index("remember")
+            candidates = words[idx+1:]
+            # Enhanced stop words list to filter out conversational filler like 'when', 'what', 'we', etc.
+            stop_words = {
+                "the", "a", "an", "in", "on", "at", "to", "for", "is", "are", 
+                "about", "you", "any", "some", "me", "it", "this", "when", 
+                "what", "where", "who", "how", "did", "do", "was", "we", "that"
+            }
+            significant = [w for w in candidates if w.lower() not in stop_words and len(w) > 1]
+            if not significant:
+                significant = [w for w in words[:idx] if w.lower() not in stop_words and len(w) > 1]
+            if significant:
+                keyword = significant[0]
+    except Exception:
+        pass
+        
+    # Resolve sender display name safely
+    sender_name = "User"
+    if sender:
+        if hasattr(sender, "display_name"):
+            sender_name = sender.display_name
+        elif isinstance(sender, str):
+            sender_name = sender
+            
+    if not keyword:
+        return f"@{sender_name}, I don't remember."
+        
+    matched_msg = None
+    try:
+        async for msg in channel.history(oldest_first=True, limit=300):
+            if not msg.author.bot and msg.content:
+                if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', msg.content.lower()):
+                    matched_msg = msg
+                    break
+    except Exception as hist_err:
+        print(f"[REMEMBER ENGINE ERROR] Channel history fetch failed: {hist_err}")
+        
+    if not matched_msg:
+        return f"@{sender_name}, I don't remember."
+        
+    op_name = matched_msg.author.display_name
+    year = matched_msg.created_at.year
+    content = matched_msg.content.strip()
+    
+    sentences = re.split(r'(?<=[.!?])\s+', content)
+    first_sentence = sentences[0] if sentences else content
+    first_sentence = first_sentence.strip('"\'')
+    
+    print(f"[TOKEN-FREE REMEMBER ENGINE] Successfully matched keyword '{keyword}' in historical message.")
+    return f"@{sender_name}, is this it?\n{year}: @{op_name}: \"{first_sentence}\""
+# ============================================================
+# 12. JOB EXECUTION ENGINE
+# ============================================================
+def is_simple_bio_question(text: str) -> bool:
+    """Detects simple biographical or timeline-based queries to short-circuit LLM calls."""
+    if not text:
+        return False
+    tl = text.lower()
+    bio_triggers = (
+        "what happened in", "outline your life", "tell me about your", 
+        "where were you born", "when were you", "bio", "biography", 
+        "history", "born", "childhood", "timeline"
+    )
+    return any(t in tl for t in bio_triggers) or bool(RE_YEARS.search(tl))
+
+async def process_job(job: PendingJob, session: aiohttp.ClientSession):
+    """Processes queued jobs, coordinates search contexts, queries Groq API, and dispatches replies securely."""
+    global GROQ_RATE_LIMITED_UNTIL, GROQ_REMAINING_TPD
+    
+    check_and_reset_daily_quotas()
+    if session is None or session.closed:
+        print("[JOB] HTTP session unavailable; releasing pending message claim.")
+        if job.reference_message:
+            pending_message_ids.discard(getattr(job.reference_message, "id", None))
+        return
+
+    dsn, dsl, mode = traffic_engine.get_allocation(job.priority_tier)
+    
+    timeline_template_reply = None
+    remember_template_reply = None
+    bio_short_circuit = False
+    
+    # 1. Token-Free Priority & Bio Short-Circuit Checks
+    if job.priority_tier in (1, 4, 8, 9):
+        if is_simple_bio_question(job.prompt_text or ""):
+            timeline_template_reply = extract_relevant_timeline(job.prompt_text or "")
+            bio_short_circuit = True
+        else:
+            timeline_template_reply = get_timeline_keyword_years(job.prompt_text or "")
+            
+        if not timeline_template_reply and not bio_short_circuit and "remember" in (job.prompt_text or "").lower():
+            sender_obj = job.reference_message.author if job.reference_message else None
+            remember_template_reply = await get_remember_template_reply(job.channel, job.prompt_text or "", sender_obj)
+
     search_context = ""
     prompt_lower = (job.prompt_text or "").lower()
-    if job.priority_tier == 1:
-        if "discord" in prompt_lower:
-            search_context = await token_free_discord_search(job.channel, job.prompt_text)
+    
+    if not timeline_template_reply and not remember_template_reply and not bio_short_circuit and job.priority_tier in (1, 4):
+        if "discord" in prompt_lower or "message" in prompt_lower or "search chat" in prompt_lower:
+            search_context = await token_free_discord_search(job.channel, job.prompt_text or "")
         elif any(w in prompt_lower for w in ("search", "find", "price", "google", "what", "look")):
-            search_context = await search_cache.get_or_fetch(job.prompt_text, session)
+            search_context = await search_cache.get_or_fetch(job.prompt_text or "", session)
 
+    # 2. Build System Prompt & Messages
+    timeline = extract_relevant_timeline(job.prompt_text or "")
     system = f"You are Joey Arnold (Oatmeal Joey Arnold, @JoeyArnoldVN). Speak in first person. Voice: rapid, playful, nostalgic 90s.\n\n{timeline}"
-    if search_context:
+    if search_context and not search_context.startswith("DISCORD SEARCH COMPLETE"):
         system += f"\n\nSearch Results:\n{search_context}"
 
     messages = [
@@ -849,15 +1258,35 @@ async def process_job(job: PendingJob, session: aiohttp.ClientSession):
         {"role": "user", "content": job.prompt_text or "Thought?"}
     ]
     
-    max_tokens = min(dsl, max(12, dsn))
-    reply = "Oatmeal AI operational."
-    actual_tokens = 5  # Lower default cost if skipped
+    # Strict Token-Free Enforcement: If DSN is 0, absolute zero tokens are allocated
+    if dsn <= 0:
+        max_tokens = 0
+    else:
+        max_tokens = min(dsl, max(1, dsn))
 
-    # Check if currently globally rate limited
-    if time.time() < GROQ_RATE_LIMITED_UNTIL:
-        max_tokens = 0  # Skip API call to save rate limit quota
+    reply = "🥣 Oatmeal AI online and operational!"
+    actual_tokens = 0
 
+    # 3. Determine Execution Mode & Token Allocation
+    if timeline_template_reply:
+        reply = timeline_template_reply
+        max_tokens = 0
+    elif remember_template_reply:
+        reply = remember_template_reply
+        max_tokens = 0
+    elif search_context and search_context.startswith("DISCORD SEARCH COMPLETE"):
+        reply = search_context
+        max_tokens = 0
+    elif GROQ_REMAINING_TPD <= 0:
+        max_tokens = 0
+        print("[GROQ API] Daily token quota (TPD) exhausted. Skipping LLM generation.")
+    elif time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
+        max_tokens = 0
+
+    # 4. Execute Groq API Call if Allocation & TPD Allow
     if max_tokens > 0:
+        max_tokens = min(max_tokens, GROQ_REMAINING_TPD)
+        
         url = "https://api.groq.com/openai/v1/chat/completions"
         payload = {
             "model": MODEL_NAME,
@@ -876,49 +1305,100 @@ async def process_job(job: PendingJob, session: aiohttp.ClientSession):
                     data = await resp.json()
                     reply = data["choices"][0]["message"]["content"].strip()
                     actual_tokens = data.get("usage", {}).get("total_tokens", max_tokens // 2)
+                    
+                    # Single source of truth: Traffic engine record_expenditure handles both local and global TPD sync atomically
                     traffic_engine.record_expenditure(actual_tokens)
+                    
                 elif resp.status == 429:
-                    # Respect rate limits and back off for 60 seconds
-                    GROQ_RATE_LIMITED_UNTIL = time.time() + 60.0
+                    GROQ_RATE_LIMITED_UNTIL = time.monotonic() + 60.0
                     print(f"[GROQ API] Rate limited (429). Backing off for 60s.")
+                    reply = "🥣 Oatmeal AI systems are experiencing high traffic right now."
                 else:
                     err_text = await resp.text()
                     print(f"[GROQ API ERROR] Status {resp.status}: {err_text}")
+                    reply = "🥣 Oatmeal AI systems are experiencing high traffic right now."
+        except asyncio.TimeoutError:
+            print(f"[GROQ API TIMEOUT] Request timed out after 15 seconds.")
+            reply = "🥣 Oatmeal AI request timed out. Retrying pipeline shortly."
         except Exception as e:
             print(f"[GROQ API EXCEPTION] {e}")
+            reply = "🥣 Oatmeal AI operational."
 
+    # 5. Handle BiMedia Generation (If applicable)
     media_url, embed = "", None
-    if not search_context and (job.priority_tier in (2, 3, 6, 7, 9) or random.random() < 0.35):
-        media_url, embed = await BiMediaGenerator.generate(session, "custom" if job.prompt_text else "random", job.prompt_text or "")
+    media_tiers = {1, 2, 3, 4, 5, 6, 7, 9}
+    should_attach_media = (
+        job.priority_tier in media_tiers
+        and not search_context
+        and not timeline_template_reply
+        and not remember_template_reply
+    )
+    if should_attach_media:
+        try:
+            # Custom mode for Priority 1, 2, 4, 7, and 9 when prompt text exists
+            media_mode = "custom" if job.priority_tier in (1, 2, 4, 7, 9) and job.prompt_text else "random"
+            media_url, embed = await BiMediaGenerator.generate(session, media_mode, job.prompt_text or "")
+        except Exception as media_err:
+            print(f"[BIMEDIA ERROR] {media_err}")
 
+    # 6. Build Payload and Dispatch with Resilient Backoff
     content, kwargs = await build_payload(reply, media_url, embed)
+    if not content and not kwargs.get("embed") and not kwargs.get("embeds") and not kwargs.get("file") and not kwargs.get("files"):
+        content = "🥣"
 
+    dispatch_success = False
     for attempt in range(3):
         try:
             if job.reference_message:
                 await job.reference_message.reply(content=content, mention_author=False, **kwargs)
             else:
                 await job.channel.send(content=content, **kwargs)
+            dispatch_success = True
             break
-        except Exception:
+        except discord.HTTPException as http_err:
+            if http_err.status == 429:
+                await asyncio.sleep(2.0 * (attempt + 1))
+            else:
+                print(f"[DISCORD HTTP ERROR] {http_err}")
+                break
+        except Exception as send_err:
+            print(f"[DISCORD SEND EXCEPTION (Attempt {attempt+1})] {send_err}")
             await asyncio.sleep(0.5 * (2 ** attempt))
+            
+    if dispatch_success:
+        # Success-only state updates for queued background priorities (P4, P5, P8)
+        if job.reference_message and hasattr(job.reference_message, 'id'):
+            replied_message_ids.add(job.reference_message.id)
+            pending_message_ids.discard(job.reference_message.id)
+        if job.priority_tier == 4 and job.reference_message:
+            p4_cursors[str(job.channel.id)] = job.reference_message.id
+        if job.priority_tier == 8 and job.reference_message:
+            p8_cursors[str(job.channel.id)] = job.reference_message.id
+        trigger_save_state()
+    else:
+        if job.reference_message and hasattr(job.reference_message, "id"):
+            pending_message_ids.discard(job.reference_message.id)
+        print(f"[DISPATCH ERROR] Failed to deliver job after 3 attempts (Priority Tier: {job.priority_tier}). State not claimed.")
 
 # ============================================================
-# 11. ALL 9 BACKGROUND PRIORITY COROUTINES (P2 - P9)
+# 13. ALL 9 BACKGROUND PRIORITY COROUTINES (P2 - P9)
 # ============================================================
+
 async def execute_priority_2():
+    """Background priority 2: Periodic customized media replies to active members."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(900, 2200))
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 if channels:
                     ch = random.choice(channels)
-                    url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "random")
-                    content, kwargs = await build_payload("🥣", url, embed)
                     async for msg in ch.history(limit=20):
                         if not msg.author.bot and p2_key(guild.id, msg.author.id) not in p2_replied_member_ids:
+                            # Upgraded to use custom media mode based on member message text
+                            url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "custom", msg.content or "")
+                            content, kwargs = await build_payload("🥣", url, embed)
                             await msg.reply(content=content, mention_author=False, **kwargs)
                             p2_replied_member_ids.add(p2_key(guild.id, msg.author.id))
                             trigger_save_state()
@@ -927,15 +1407,16 @@ async def execute_priority_2():
         except Exception as e:
             print(f"[P2 ERROR] {e}")
 
+
 async def execute_priority_3():
+    """Background priority 3: Periodic personalized greetings to guild members."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(1600, 4200))
         try:
             for guild in list(bot.guilds):
-                # Safely get members; fallback to fetching if cache is empty
                 members = [m for m in guild.members if not m.bot]
-                if not members and guild.chunked == False:
+                if not members and not guild.chunked:
                     try:
                         async for m in guild.fetch_members(limit=50):
                             if not m.bot:
@@ -949,30 +1430,62 @@ async def execute_priority_3():
                 members = sorted(members, key=lambda x: x.name.lower())
                 idx = p3_member_indices.get(str(guild.id), 0) % len(members)
                 target = members[idx]
-                p3_member_indices[str(guild.id)] = (idx + 1) % len(members)
-                trigger_save_state()
                 
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 if channels:
                     ch = random.choice(channels)
                     url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "random")
                     content, kwargs = await build_payload(f"@{target.name} Salutations from the Arnold Attic.", url, embed)
                     await ch.send(content=content, **kwargs)
+                    p3_member_indices[str(guild.id)] = (idx + 1) % len(members)
+                    trigger_save_state()
                 break
         except Exception as e:
             print(f"[P3 ERROR] {e}")
+
+
 async def execute_priority_4():
+    """
+    Background priority 4: Live reaction to new chat messages.
+    Uses per-channel cursors (p4_cursors) to ensure it scans new messages forward,
+    advancing cursors immediately for skipped/irrelevant messages while reserving 
+    cursor advancement for eligible messages strictly upon successful dispatch in process_job.
+    """
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(random.uniform(18, 40))
+        spent = traffic_engine.spent_fraction
+        base_min = 15 + int(spent * 60)
+        base_max = 35 + int(spent * 120)
+        await asyncio.sleep(random.uniform(base_min, base_max))
+        
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 for ch in channels:
-                    async for msg in ch.history(limit=10):
-                        if not msg.author.bot and msg.content and msg.id not in replied_message_ids:
-                            replied_message_ids.add(msg.id)
+                    ch_id_str = str(ch.id)
+                    cursor = p4_cursors.get(ch_id_str, 0)
+                    
+                    kwargs = {"limit": 10, "oldest_first": True}
+                    if cursor > 0:
+                        kwargs["after"] = discord.Object(id=cursor)
+                    else:
+                        latest_msgs = [m async for m in ch.history(limit=1)]
+                        if latest_msgs:
+                            p4_cursors[ch_id_str] = latest_msgs[0].id
                             trigger_save_state()
+                        continue
+                        
+                    async for msg in ch.history(**kwargs):
+                        # Explicit check for eligible reaction targets
+                        is_eligible = (
+                            not msg.author.bot 
+                            and bool(msg.content)
+                            and msg.id not in replied_message_ids 
+                            and msg.id not in pending_message_ids
+                        )
+                        
+                        if is_eligible:
+                            pending_message_ids.add(msg.id)
                             job = PendingJob(
                                 priority_tier=4,
                                 timestamp=time.time(),
@@ -980,40 +1493,73 @@ async def execute_priority_4():
                                 prompt_text=f"Quick witty take: '{msg.content[:110]}'",
                                 reference_message=msg,
                                 author_id=msg.author.id
-)
-                            await delay_queue.put(job)
+                            )
+                            try:
+                                await delay_queue.put(job)
+                            except Exception:
+                                pending_message_ids.discard(msg.id)
+                                raise
+                            # Stop processing this channel loop; leave cursor unadvanced 
+                            # so process_job finalizes it upon successful dispatch.
                             break
+                        else:
+                            # Skipped / ineligible messages advance the cursor immediately
+                            p4_cursors[ch_id_str] = msg.id
+                            trigger_save_state()
                     break
         except Exception as e:
             print(f"[P4 ERROR] {e}")
 
 async def execute_priority_5():
+    """
+    Background priority 5: Token-free inverse of Priority 2.
+    Scans channel history working backwards (oldest_first=True) to post token-free 
+    media replies to members who haven't received a P5 response yet.
+    """
     await bot.wait_until_ready()
     while not bot.is_closed():
-        await asyncio.sleep(random.uniform(700, 2100))
+        await asyncio.sleep(random.uniform(900, 2200))
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 if channels:
                     ch = random.choice(channels)
-                    async for msg in ch.history(limit=5):
-                        if not msg.author.bot and msg.id not in replied_message_ids:
-                            replied_message_ids.add(msg.id)
-                            trigger_save_state()
-                            job = PendingJob(5, time.time(), ch, "Short reflection.", reference_message=msg, author_id=msg.author.id)
-                            await delay_queue.put(job)
-                            break
+                    
+                    # Working backwards (oldest_first=True) as the inverse of Priority 2
+                    async for msg in ch.history(limit=30, oldest_first=True):
+                        if not msg.author.bot:
+                            member_key = p2_key(guild.id, msg.author.id)
+                            if member_key not in p5_replied_member_ids:
+                                try:
+                                    url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "custom", msg.content or "")
+                                    content, kwargs = await build_payload("🥣", url, embed)
+                                    await msg.reply(content=content, mention_author=False, **kwargs)
+                                    p5_replied_member_ids.add(member_key)
+                                    trigger_save_state()
+                                    break
+                                except discord.HTTPException as http_err:
+                                    # Claim member even on 404/403 errors to prevent infinite loops on deleted messages
+                                    if http_err.status in (404, 403):
+                                        p5_replied_member_ids.add(member_key)
+                                        trigger_save_state()
+                                    print(f"[P5 HTTP ERROR {http_err.status}] {http_err}")
+                                    break
+                                except Exception as reply_err:
+                                    print(f"[P5 REPLY ERROR] {reply_err}")
+                                    break
                     break
         except Exception as e:
             print(f"[P5 ERROR] {e}")
 
+
 async def execute_priority_6():
+    """Background priority 6: Standalone token-free random media broadcasting."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(1000, 3200))
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 if channels:
                     ch = random.choice(channels)
                     url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "random")
@@ -1023,13 +1569,15 @@ async def execute_priority_6():
         except Exception as e:
             print(f"[P6 ERROR] {e}")
 
+
 async def execute_priority_7():
+    """Background priority 7: Cursor-based history scanning and customized media mirroring on bot messages."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(35, 120))
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 for ch in channels:
                     cursor = p7_cursors.get(str(ch.id), 0)
                     kwargs = {"limit": 30, "oldest_first": True}
@@ -1040,16 +1588,16 @@ async def execute_priority_7():
                     async for msg in ch.history(**kwargs):
                         if msg.author == bot.user:
                             target = msg
-                            break  # Stop at the first valid older bot message found
+                            break
                             
                     if target is None:
                         continue
                         
-                    url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "random")
+                    # Upgraded to use custom media mode based on bot's own historical message content
+                    url, embed = await BiMediaGenerator.generate(HTTP_SESSION, "custom", target.content or "")
                     content, kwargs_payload = await build_payload("", url, embed)
                     
                     try:
-                        # ✅ SUCCESS-ONLY: Send first, advance cursor ONLY on verified success
                         await target.reply(content=content, mention_author=False, **kwargs_payload)
                         p7_cursors[str(ch.id)] = target.id
                         trigger_save_state()
@@ -1062,12 +1610,13 @@ async def execute_priority_7():
 
 
 async def execute_priority_8():
+    """Background priority 8: Cursor-based reflection jobs on historical bot messages (Success-Only Cursor)."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(50, 160))
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages]
                 for ch in channels:
                     cursor = p8_cursors.get(str(ch.id), 0)
                     kwargs = {"limit": 30, "oldest_first": True}
@@ -1078,15 +1627,12 @@ async def execute_priority_8():
                     async for msg in ch.history(**kwargs):
                         if msg.author == bot.user:
                             target = msg
-                            break  # Stop at the first valid older bot message found
+                            break
                             
                     if target is None:
                         continue
-                        
-                    # ✅ SUCCESS-ONLY: Update cursor ONLY after verifying a target bot message was found
-                    p8_cursors[str(ch.id)] = target.id
-                    trigger_save_state()
                     
+                    # Note: p8_cursors is now advanced inside process_job upon successful job dispatch
                     job = PendingJob(
                         priority_tier=8,
                         timestamp=time.time(),
@@ -1098,13 +1644,16 @@ async def execute_priority_8():
                     break
         except Exception as e:
             print(f"[P8 ERROR] {e}")
+
+
 async def execute_priority_9():
+    """Background priority 9: Channel recap generation from recent chat context."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         await asyncio.sleep(random.uniform(2800, 5800))
         try:
             for guild in list(bot.guilds):
-                channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
+                channels = [c for c in guild.text_channels if guild.me and c.permissions_for(guild.me).send_messages and c.permissions_for(guild.me).read_message_history]
                 if channels:
                     ch = random.choice(channels)
                     chat_lines = []
@@ -1114,33 +1663,52 @@ async def execute_priority_9():
                             chat_lines.append(f"{msg.author.display_name}: {msg.content[:60]}")
                             last_msg = msg
                     if chat_lines and last_msg:
-                        job = PendingJob(9, time.time(), ch, "Summarize this recent channel chat as an Oatmeal Recap.", reference_message=last_msg)
+                        job = PendingJob(
+                            priority_tier=9,
+                            timestamp=time.time(),
+                            channel=ch,
+                            prompt_text="Summarize this recent channel chat as an Oatmeal Recap.",
+                            reference_message=last_msg
+                        )
                         await delay_queue.put(job)
                         break
         except Exception as e:
             print(f"[P9 ERROR] {e}")
 
+
 # ============================================================
-# 12. WORKERS & BOT EVENTS
+# 14. WORKERS & BOT EVENTS
 # ============================================================
 async def delay_queue_worker():
+    """Asynchronous worker that pulls and processes jobs from the delay queue with guaranteed task accounting."""
     global HTTP_SESSION
     while True:
+        job = None
         try:
             job = await delay_queue.get()
             while time.monotonic() < GROQ_RATE_LIMITED_UNTIL:
                 await asyncio.sleep(2)
             await process_job(job, HTTP_SESSION)
-            delay_queue.task_done()
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             print(f"[WORKER ERROR] {e}")
+            if job is not None and job.reference_message:
+                pending_message_ids.discard(getattr(job.reference_message, "id", None))
             await asyncio.sleep(1)
+        finally:
+            if job is not None:
+                try:
+                    delay_queue.task_done()
+                except ValueError:
+                    pass
 
 # Keep track of active background tasks so they don't duplicate on reconnect
-_background_tasks = []
+_background_tasks: List[asyncio.Task] = []
 
 @bot.event
 async def on_ready():
+    """Event triggered when the bot successfully connects to the Discord gateway."""
     global TASKS_INITIALIZED, HTTP_SESSION, _background_tasks
     if HTTP_SESSION is None or HTTP_SESSION.closed:
         HTTP_SESSION = aiohttp.ClientSession()
@@ -1155,7 +1723,7 @@ async def on_ready():
     print("=" * 64)
     load_state()
 
-    # Web server is already bound via instant thread; keep discord background loops here:
+    # Initialize all background loops and atomic state persistence workers here:
     _background_tasks = [
         asyncio.create_task(state_writer_worker()),
         asyncio.create_task(delay_queue_worker()),
@@ -1169,9 +1737,10 @@ async def on_ready():
         asyncio.create_task(execute_priority_9())
     ]
 
-@bot.event
+
 @bot.event
 async def on_message(message):
+    """Event triggered on incoming channel messages, routing direct interactions to Priority 1."""
     if message.author.bot or message.guild is None or message.is_system() or message.author == bot.user:
         return
 
@@ -1193,9 +1762,8 @@ async def on_message(message):
     named = any(nick in message.content.lower() for nick in ("oatmeal", "joey", "arnold"))
 
     if mentioned or replied_to_bot or named:
-        if message.id not in replied_message_ids:
-            replied_message_ids.add(message.id)
-            trigger_save_state()
+        if message.id not in replied_message_ids and message.id not in pending_message_ids:
+            pending_message_ids.add(message.id)
             job = PendingJob(
                 priority_tier=1,
                 timestamp=now,
@@ -1204,10 +1772,15 @@ async def on_message(message):
                 reference_message=message,
                 author_id=author_id
             )
-            await delay_queue.put(job)
+            try:
+                await delay_queue.put(job)
+            except Exception:
+                pending_message_ids.discard(message.id)
+                raise
 
-# Graceful cleanup handler when the bot shuts down
+
 async def close_bot_resources():
+    """Graceful cleanup handler for background workers and HTTP sessions upon shutdown."""
     global HTTP_SESSION, _background_tasks
     for task in _background_tasks:
         task.cancel()
@@ -1216,20 +1789,21 @@ async def close_bot_resources():
         await HTTP_SESSION.close()
     print("[SYSTEM] Cleaned up HTTP session and background workers.")
 
-if __name__ == "__main__":
-    # Start the web server immediately in a background daemon thread 
-    # so Render detects the open port instantly upon container boot.
-    web_thread = threading.Thread(target=start_instant_web_server, daemon=True)
-    web_thread.start()
-    
+
+async def main():
+    """Run the Discord client with explicit async resource cleanup."""
+    start_instant_web_server()
     try:
-        bot.run(DISCORD_TOKEN)
+        async with bot:
+            await bot.start(DISCORD_TOKEN)
     finally:
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.run_until_complete(close_bot_resources())
-            else:
-                asyncio.run(close_bot_resources())
-        except Exception:
-            pass
+            await close_bot_resources()
+        finally:
+            stop_telemetry_server()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("[SYSTEM] Shutdown requested by operator.")
